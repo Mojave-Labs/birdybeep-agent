@@ -1,5 +1,10 @@
 # Agent Instructions
 
+> **READ `CLAUDE.md` FIRST — it is the canonical engineering contract for this repo.** Everything below is a supplement.
+
+## 🪶 Agentic-first, and the one rule you cannot break
+The human is only an **orchestrator and final-product tester**. You own design → implement → **verify against real harnesses** → ship. This CLI edits real config in users' home dirs and hooks into real coding agents, so **no code reaches `git push` until you've run it for real**: install/uninstall into an isolated temp `HOME`, fire actual Claude Code / Codex / OpenCode events, and assert the normalized event is delivered to a live `wrangler dev` backend — on the macOS/Linux/Windows matrix, with current config snapshots. A unit test of the mapper is necessary but **not sufficient**. "It should work" is a forbidden completion claim. A pre-push hook + CI **block** unverified pushes; never `--no-verify` or weaken a test. Tokens never get written to repo files. Full details in `CLAUDE.md`.
+
 This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
 
 > **Architecture in one line:** Issues live in a local Dolt database
