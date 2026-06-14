@@ -14,4 +14,5 @@ export {
   mergeCodexConfig,
   TRUST_INSTRUCTIONS,
 } from "./install";
+export { CodexMappingError, normalizeCodexEvent } from "./normalize";
 export { codexConfigDir, codexConfigFile, type CodexPathOptions } from "./paths";

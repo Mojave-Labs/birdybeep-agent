@@ -111,13 +111,32 @@ Launch integration with an expected **one-time hook trust** caveat. Install user
 
 | Codex surface/event | BirdyBeep event | Session effect | Notify default |
 |---|---|---|---|
-| `notify` command | `needs_input` / `agent_completed` | upsert/update | Yes |
+| `notify` (`agent-turn-complete`) | `agent_completed` | completed | Yes (user can disable) |
 | `SessionStart` | `session_started` / `session_resumed` | upsert session | No |
 | `PermissionRequest` | `approval_required` | waiting for approval | Yes |
 | `PostToolUse` | `tool_finished` | activity update | No |
 | `SubagentStart` | `subagent_started` | running | No |
-| `SubagentStop` | `subagent_completed` | running/completed subtask | Optional (later) |
+| `SubagentStop` | `subagent_completed` | running/completed subtask | No |
 | `Stop` | `agent_completed` | completed | Yes (user can disable) |
+
+> **Reconciliation — verified against the current Codex source (`openai/codex`,
+> `codex-rs/hooks`), not the PRD §9.6 table** (which conflated two surfaces):
+> - **Two distinct surfaces.** Codex `config.toml` supports BOTH a top-level `notify`
+>   program (turn-complete) AND a Claude-Code-style `[[hooks.X]]` lifecycle engine.
+>   `notify` JSON arrives on **argv** (kebab-case, keyed by `type`); hook JSON arrives
+>   on **stdin** (snake_case, keyed by `hook_event_name`). `birdybeep hook codex` accepts
+>   either shape; `normalizeEvent` dispatches on whichever key is present.
+> - **`notify` emits ONLY `agent-turn-complete`** → `agent_completed`. It never fires for
+>   a needs-input/approval state, so the PRD's "`notify` → `needs_input`" mapping is
+>   dropped. The approval/needs-input signal is the **`PermissionRequest` hook** →
+>   `approval_required`.
+> - **Trust.** `[[hooks.X]]` entries are trust-gated (by command hash) via `/hooks`;
+>   `notify` is NOT trust-gated. Install therefore surfaces `needs_trust` (CX-TRUST) until
+>   the first hook event proves trust was granted.
+> - **Registered hooks:** `SessionStart`, `PermissionRequest`, `PostToolUse`,
+>   `SubagentStart`, `SubagentStop`. The `Stop` hook is intentionally NOT registered
+>   (`notify` already covers turn-complete; registering both double-fires) — but
+>   `normalizeEvent` still maps a `Stop` payload to `agent_completed` if one arrives.
 
 Expected post-install message:
 
