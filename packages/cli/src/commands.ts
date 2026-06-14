@@ -6,6 +6,8 @@
 import { createAgentCommand } from "./commands/agent";
 import { createDoctorCommand } from "./commands/doctor";
 import { createHookCommand } from "./commands/hook";
+import { createLogoutCommand } from "./commands/logout";
+import { createQueueCommand } from "./commands/queue";
 import { createStatusCommand } from "./commands/status";
 import { type Command, type CommandContext, EXIT } from "./framework";
 
@@ -26,12 +28,7 @@ export function buildCommands(): Command[] {
       usage: "birdybeep login [--code <pairing-code>]",
       run: stub("birdybeep-agent-v2h"),
     },
-    {
-      name: "logout",
-      summary: "Remove the local machine token",
-      usage: "birdybeep logout",
-      run: stub("birdybeep-agent-1ev"),
-    },
+    createLogoutCommand(),
     createStatusCommand(),
     {
       name: "test",
@@ -42,19 +39,7 @@ export function buildCommands(): Command[] {
     createDoctorCommand(),
     createAgentCommand(),
     createHookCommand(),
-    {
-      name: "queue",
-      summary: "Local event-queue maintenance",
-      usage: "birdybeep queue <clear>",
-      subcommands: [
-        {
-          name: "clear",
-          summary: "Clear the local offline event queue (debug)",
-          usage: "birdybeep queue clear",
-          run: stub("birdybeep-agent-zrj"),
-        },
-      ],
-    },
+    createQueueCommand(),
     {
       name: "report-status",
       summary: "Internal: report integration status to the backend",
