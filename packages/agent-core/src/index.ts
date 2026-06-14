@@ -10,8 +10,10 @@
  */
 export * from "./adapter";
 export * from "./api";
+export * from "./dedup";
 export * from "./event";
 export * from "./fingerprint";
+export * from "./hook";
 export * from "./normalize";
 export * from "./paths";
 export * from "./primitives";
