@@ -1,0 +1,12 @@
+# Normalize line endings to LF in the repo, regardless of contributor OS.
+# This keeps `prettier --check` and (later) adapter config-snapshot tests stable
+# across the macOS/Linux/Windows CI matrix, and gives Windows contributors a
+# clean checkout even with core.autocrlf=true.
+* text=auto eol=lf
+
+# Binary/generated artifacts that must never be line-ending munged.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+pnpm-lock.yaml -diff linguist-generated
