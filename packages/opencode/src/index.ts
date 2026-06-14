@@ -46,3 +46,4 @@ export {
   opencodeStatusReport,
   type StatusReport,
 } from "./status";
+export { removeBirdyBeepPlugin, uninstallOpenCode } from "./uninstall";

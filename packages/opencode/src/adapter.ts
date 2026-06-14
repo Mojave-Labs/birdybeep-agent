@@ -10,20 +10,17 @@ import { detectOpenCode } from "./detect";
 import { installOpenCode } from "./install";
 import { normalizeOpenCodeEvent } from "./normalize";
 import { opencodeDoctor, opencodeStatus } from "./status";
+import { uninstallOpenCode } from "./uninstall";
 
 /** Stable BirdyBeep harness id for OpenCode (§9.7). */
 export const OPENCODE_HARNESS_ID = "opencode";
-
-function notImplemented(ticket: string): Promise<never> {
-  return Promise.reject(new Error(`OpenCode adapter: not implemented yet (${ticket})`));
-}
 
 export const opencodeAdapter: AgentAdapter = {
   id: "opencode",
   displayName: "OpenCode",
   detect: () => detectOpenCode(),
   install: (options) => installOpenCode(options ?? {}),
-  uninstall: () => notImplemented("OC-UNINSTALL"),
+  uninstall: (options) => uninstallOpenCode(options ?? {}),
   status: () => opencodeStatus(),
   doctor: () => opencodeDoctor(),
   normalizeEvent: (input) => normalizeOpenCodeEvent(input),
