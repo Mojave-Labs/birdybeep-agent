@@ -18,3 +18,9 @@ AGENTS.md
 BUILD-PLAN.md
 CLAUDE.md
 docs/SPEC.md
+
+# Generated-config examples — verbatim installer output, kept byte-for-byte in
+# lockstep with the adapters' __snapshots__. Owned by the installer, not the formatter.
+examples/claude-code/settings.json
+examples/codex/config.toml
+examples/opencode/opencode.json
