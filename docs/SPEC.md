@@ -81,17 +81,29 @@ Install behavior is **idempotent**, backs up existing config, adds only BirdyBee
 
 Highest-priority MVP integration. Install user-level hook config using the command hook `birdybeep hook claude`; add only BirdyBeep-managed entries; preserve + back up existing settings.
 
-| Claude Code event | BirdyBeep event | Session effect | Notify default |
+| Claude Code hook event | BirdyBeep event (§10.1) | Session status | Notify default |
 |---|---|---|---|
-| `SessionStart` | `session_started` / `session_resumed` | upsert session | No |
-| `PermissionRequest` | `approval_required` | waiting for approval | Yes |
-| `Notification` | `needs_input` | waiting for input | Yes |
-| `Stop` | `agent_completed` | completed | Yes (user can disable) |
-| `StopFailure` | `agent_failed` | failed | Yes |
-| `SubagentStart` | `subagent_started` | running | No |
-| `SubagentStop` | `subagent_completed` | running/completed subtask | Optional (later) |
-| `TaskCreated` | `task_created` | running | No |
-| `TaskCompleted` | `task_completed` | running/completed subtask | Optional (later) |
+| `SessionStart` | `session_started` / `session_resumed` | `starting` / `running` | No |
+| `Notification` (`permission_prompt`) | `approval_required` | `waiting_for_approval` | Yes |
+| `Notification` (`idle_prompt`) | `agent_idle` | `idle` | Yes |
+| `Notification` (other) | `needs_input` | `waiting_for_input` | Yes |
+| `PermissionRequest` | `approval_required` | `waiting_for_approval` | Yes |
+| `Stop` | `agent_completed` | `completed` | Yes (user can disable) |
+| `StopFailure` | `agent_failed` | `failed` | Yes |
+| `SubagentStop` | `subagent_completed` | `running` / `completed` | No (MVP) |
+
+> **Reconciliation note (§9.5 ↔ §10.1).** The adapter registers and maps only events
+> Claude Code actually fires, to event types that already exist in §10.1 — no
+> wire-contract change:
+> - `PermissionRequest` and `Notification`+`permission_prompt` both surface approval;
+>   both map to `approval_required` and are de-duplicated at delivery (CC-E2E confirms
+>   which fires in-version).
+> - `StopFailure`'s failure `error_type` is carried into event `metadata`.
+> - **`SubagentStart`** is not a Claude Code hook event → not registered/mapped.
+> - **`TaskCreated` / `TaskCompleted`** are **deferred for MVP**: their natural targets
+>   `task_created` / `task_completed` are NOT in the §10.1 vocabulary (the PRD marks
+>   Task\* "optional later"). Adding them is a coordinated wire-contract change, made in
+>   the product `packages/schemas` first — not done here.
 
 ## 6. Codex integration (PRD §9.6, §21.2)
 

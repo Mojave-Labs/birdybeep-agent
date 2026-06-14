@@ -5,17 +5,14 @@
  * (user hooks preserved), and writes NO token (the command reads the token from the
  * secure store at event time).
  *
- * §9.5 RECONCILIATION: the §9.5 table lists conceptual events, but Claude Code only
- * fires hooks for its REAL hook_event_names. We register the four real hooks BirdyBeep
- * consumes — SessionStart, Notification, Stop, SubagentStop — and the normalizer
- * (CC-NORMALIZE) maps their payloads to BirdyBeep events:
- *   - "PermissionRequest" → delivered via Notification{notification_type:"permission_prompt"}
- *   - "StopFailure"        → delivered via Stop (failure conveyed in the payload)
- *   - SubagentStart / TaskCreated / TaskCompleted → no Claude Code hook event exists,
- *     so there is nothing to register (they cannot fire as hooks).
- * Registering non-existent hook keys would silently never fire (e.g. approvals lost),
- * so we register the real events instead. This is client-side mapping, not a change
- * to the wire event contract (§10.2 event_types are unchanged).
+ * §9.5 RECONCILIATION (see docs/SPEC.md §9.5): we register the REAL Claude Code hook
+ * events BirdyBeep consumes — SessionStart, Notification, PermissionRequest, Stop,
+ * StopFailure, SubagentStop — and the normalizer (CC-NORMALIZE) maps their payloads
+ * to EXISTING §10.1 event types. PermissionRequest and Notification{permission_prompt}
+ * both surface approval (de-duplicated at delivery). NOT registered: SubagentStart
+ * (not a Claude Code hook event) and TaskCreated/TaskCompleted (deferred for MVP — their
+ * targets task_created/task_completed are not in §10.1; adding them is a coordinated
+ * wire-contract change). This is client-side mapping, not a change to the wire contract.
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -33,7 +30,9 @@ export const HOOK_TIMEOUT_SECONDS = 10;
 export const BIRDYBEEP_HOOK_EVENTS = [
   "SessionStart",
   "Notification",
+  "PermissionRequest",
   "Stop",
+  "StopFailure",
   "SubagentStop",
 ] as const;
 

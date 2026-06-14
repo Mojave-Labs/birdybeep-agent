@@ -10,10 +10,10 @@ import type {
   IntegrationStatus,
   UninstallResult,
 } from "@birdybeep/agent-core";
-import type { BirdyBeepAgentEvent } from "@birdybeep/agent-core";
 
 import { detectClaudeCode } from "./detect";
 import { installClaudeCode } from "./install";
+import { normalizeClaudeCodeEvent } from "./normalize";
 
 /** Stable BirdyBeep harness id for Claude Code (§9.5). */
 export const CLAUDE_CODE_HARNESS_ID = "claude_code";
@@ -30,5 +30,5 @@ export const claudeCodeAdapter: AgentAdapter = {
   uninstall: (): Promise<UninstallResult> => notImplemented("CC-UNINSTALL"),
   status: (): Promise<IntegrationStatus> => notImplemented("CC-STATUS-DOCTOR"),
   doctor: (): Promise<DoctorResult> => notImplemented("CC-STATUS-DOCTOR"),
-  normalizeEvent: (): Promise<BirdyBeepAgentEvent> => notImplemented("CC-NORMALIZE"),
+  normalizeEvent: (input) => normalizeClaudeCodeEvent(input),
 };
