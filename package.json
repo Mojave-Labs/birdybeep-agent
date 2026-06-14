@@ -18,9 +18,13 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check:pack": "node scripts/check-pack.mjs",
+    "changeset": "changeset",
+    "changeset:version": "changeset version",
+    "changeset:status": "changeset status",
     "prepare": "node scripts/install-hooks.mjs"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@eslint/js": "^9",
     "@types/node": "^22",
     "eslint": "^9",
