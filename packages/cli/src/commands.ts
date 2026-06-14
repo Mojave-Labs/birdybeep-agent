@@ -3,6 +3,7 @@
  * Each command's real logic lands in its own a-cli ticket and replaces the stub here;
  * the framework (help / flags / routing / config dir / exit codes) is ticket-independent.
  */
+import { createAgentCommand } from "./commands/agent";
 import { createHookCommand } from "./commands/hook";
 import { type Command, type CommandContext, EXIT } from "./framework";
 
@@ -47,25 +48,7 @@ export function buildCommands(): Command[] {
       usage: "birdybeep doctor [--json]",
       run: stub("birdybeep-agent-dxl"),
     },
-    {
-      name: "agent",
-      summary: "Install or uninstall harness adapters",
-      usage: "birdybeep agent <install|uninstall> [all|claude|codex|opencode]",
-      subcommands: [
-        {
-          name: "install",
-          summary: "Install adapters (all | claude | codex | opencode)",
-          usage: "birdybeep agent install [all|claude|codex|opencode]",
-          run: stub("birdybeep-agent-60n"),
-        },
-        {
-          name: "uninstall",
-          summary: "Restore harness config to its pre-install state",
-          usage: "birdybeep agent uninstall [all|claude|codex|opencode]",
-          run: stub("birdybeep-agent-diq"),
-        },
-      ],
-    },
+    createAgentCommand(),
     createHookCommand(),
     {
       name: "queue",
