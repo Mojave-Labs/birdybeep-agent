@@ -31,5 +31,8 @@
   },
   "dependencies": {
     "@birdybeep/agent-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@birdybeep/test-harness": "workspace:*"
   }
 }

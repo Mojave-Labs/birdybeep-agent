@@ -69,6 +69,10 @@ importers:
       '@birdybeep/agent-core':
         specifier: workspace:*
         version: link:../agent-core
+    devDependencies:
+      '@birdybeep/test-harness':
+        specifier: workspace:*
+        version: link:../test-harness
 
   packages/opencode:
     dependencies:
