@@ -9,6 +9,7 @@
  * agent-core epic (CORE-*) tickets — see `bd ready`.
  */
 export * from "./event";
+export * from "./normalize";
 export * from "./primitives";
 
 /** Package version marker — replaced by the real build/version pipeline (REL-*). */
