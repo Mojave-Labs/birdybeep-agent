@@ -1,14 +1,13 @@
 /**
- * @birdybeep/opencode — the OpenCode adapter (plugin).
- *
- * Placeholder for the A-MONOREPO scaffold. OpenCode loads its plugin only after a
- * restart, so the adapter surfaces `needs_restart` until the plugin is live. Real
- * plugin/install/normalize logic lands in the a-opencode epic tickets.
+ * @birdybeep/opencode — the OpenCode adapter (plugin). Implements the agent-core
+ * `AgentAdapter` contract for OpenCode's user-level plugin + config (§9.7). OpenCode
+ * loads plugins only at startup, so install surfaces `needs_restart` until the next launch.
  */
-import { type AdapterMeta } from "@birdybeep/agent-core";
-
-/** Stable BirdyBeep harness id for OpenCode (§9.7). */
-export const OPENCODE_HARNESS_ID = "opencode";
-
-/** Adapter identity, typed against agent-core's shared shape. */
-export const opencodeMeta: AdapterMeta = { harness: OPENCODE_HARNESS_ID };
+export { OPENCODE_HARNESS_ID, opencodeAdapter } from "./adapter";
+export { detectOpenCode, type OpenCodeDetectOptions } from "./detect";
+export {
+  opencodeConfigDir,
+  opencodeConfigFile,
+  type OpenCodePathOptions,
+  opencodePluginDir,
+} from "./paths";
