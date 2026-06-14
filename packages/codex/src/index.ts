@@ -16,3 +16,12 @@ export {
 } from "./install";
 export { CodexMappingError, normalizeCodexEvent } from "./normalize";
 export { codexConfigDir, codexConfigFile, type CodexPathOptions } from "./paths";
+export {
+  clearCodexTrust,
+  codexTrustMarkerIsStrict,
+  codexTrustMarkerPath,
+  type CodexTrustOptions,
+  hasCodexEventBeenSeen,
+  recordCodexEventSeen,
+  runCodexHook,
+} from "./trust";
