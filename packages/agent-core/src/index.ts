@@ -4,11 +4,12 @@
  * `packages/schemas`), the normalizer/redaction layer, the 24h local queue, the
  * sender, the machine token store, and the `AgentAdapter` interface.
  *
- * This file is an intentional placeholder for the A-MONOREPO scaffold: it ships a
- * stable version marker and a minimal adapter-meta shape so the workspace builds,
- * type-checks, and proves cross-package imports. Real schema/queue/sender/token
- * logic lands in the agent-core epic (CORE-*) tickets — see `bd ready`.
+ * The canonical event schema + enums (CORE-SCHEMA) are exported below. The
+ * normalizer/queue/sender/token-store/adapter-interface land in the remaining
+ * agent-core epic (CORE-*) tickets — see `bd ready`.
  */
+export * from "./event";
+export * from "./primitives";
 
 /** Package version marker — replaced by the real build/version pipeline (REL-*). */
 export const AGENT_CORE_VERSION = "0.0.0";

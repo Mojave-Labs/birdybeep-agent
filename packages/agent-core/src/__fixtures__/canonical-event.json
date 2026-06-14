@@ -1,0 +1,14 @@
+{
+  "event_id": "evt_local_01JZ...",
+  "event_type": "approval_required",
+  "occurred_at": "2026-06-11T12:34:56.000Z",
+  "harness": "claude_code",
+  "harness_version": "1.0.0",
+  "source_session_id": "native-session-id",
+  "machine": { "label": "MacBook Pro", "os": "macos" },
+  "workspace": { "cwd": "/Users/alex/code/birdybeep", "repo_name": "birdybeep", "branch": "main" },
+  "status": "waiting_for_approval",
+  "title": "Claude Code needs approval",
+  "body": "birdybeep · mobile · npm test",
+  "metadata": { "tool": "Bash", "command_summary": "npm test" }
+}
