@@ -22,3 +22,12 @@ if command -v bd >/dev/null 2>&1; then
   if [ $_bd_exit -ne 0 ]; then exit $_bd_exit; fi
 fi
 # --- END BEADS INTEGRATION v1.0.4 ---
+
+# --- BEGIN BIRDYBEEP PRE-PUSH GATE ---
+# Managed by scripts/install-hooks.mjs (A-PREPUSH). Runs AFTER beads sync.
+# Bypassing with --no-verify defeats the agentic-first testing mandate.
+_bb_root=$(git rev-parse --show-toplevel 2>/dev/null || echo .)
+if [ -f "$_bb_root/scripts/pre-push.mjs" ]; then
+  node "$_bb_root/scripts/pre-push.mjs" || exit $?
+fi
+# --- END BIRDYBEEP PRE-PUSH GATE ---
