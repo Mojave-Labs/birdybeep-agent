@@ -9,6 +9,7 @@ import type { AgentAdapter } from "@birdybeep/agent-core";
 import { detectOpenCode } from "./detect";
 import { installOpenCode } from "./install";
 import { normalizeOpenCodeEvent } from "./normalize";
+import { opencodeDoctor, opencodeStatus } from "./status";
 
 /** Stable BirdyBeep harness id for OpenCode (§9.7). */
 export const OPENCODE_HARNESS_ID = "opencode";
@@ -23,7 +24,7 @@ export const opencodeAdapter: AgentAdapter = {
   detect: () => detectOpenCode(),
   install: (options) => installOpenCode(options ?? {}),
   uninstall: () => notImplemented("OC-UNINSTALL"),
-  status: () => notImplemented("OC-STATUS-DOCTOR"),
-  doctor: () => notImplemented("OC-STATUS-DOCTOR"),
+  status: () => opencodeStatus(),
+  doctor: () => opencodeDoctor(),
   normalizeEvent: (input) => normalizeOpenCodeEvent(input),
 };

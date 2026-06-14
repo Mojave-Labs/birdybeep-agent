@@ -38,3 +38,11 @@ export {
   recordOpenCodeEventSeen,
   runOpenCodeHook,
 } from "./restart";
+export {
+  OPENCODE_ADAPTER_VERSION,
+  opencodeDoctor,
+  opencodeStatus,
+  type OpenCodeStatusOptions,
+  opencodeStatusReport,
+  type StatusReport,
+} from "./status";
