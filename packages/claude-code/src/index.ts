@@ -15,4 +15,11 @@ export {
 } from "./install";
 export { ClaudeCodeMappingError, normalizeClaudeCodeEvent } from "./normalize";
 export { claudeConfigDir, claudeSettingsPath } from "./paths";
+export {
+  CLAUDE_CODE_ADAPTER_VERSION,
+  claudeCodeDoctor,
+  claudeCodeStatus,
+  claudeCodeStatusReport,
+  type StatusReport,
+} from "./status";
 export { removeBirdyBeepHooks, uninstallClaudeCode } from "./uninstall";
