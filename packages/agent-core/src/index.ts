@@ -8,6 +8,7 @@
  * normalizer/queue/sender/token-store/adapter-interface land in the remaining
  * agent-core epic (CORE-*) tickets — see `bd ready`.
  */
+export * from "./adapter";
 export * from "./event";
 export * from "./fingerprint";
 export * from "./normalize";
