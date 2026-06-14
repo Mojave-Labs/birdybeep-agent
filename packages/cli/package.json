@@ -30,5 +30,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "@birdybeep/agent-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@birdybeep/test-harness": "workspace:*"
   }
 }

@@ -62,7 +62,15 @@ importers:
         specifier: workspace:*
         version: link:../test-harness
 
-  packages/cli: {}
+  packages/cli:
+    dependencies:
+      '@birdybeep/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+    devDependencies:
+      '@birdybeep/test-harness':
+        specifier: workspace:*
+        version: link:../test-harness
 
   packages/codex:
     dependencies:
