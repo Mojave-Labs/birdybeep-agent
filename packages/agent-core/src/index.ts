@@ -13,6 +13,7 @@ export * from "./normalize";
 export * from "./paths";
 export * from "./primitives";
 export * from "./queue";
+export * from "./token-store";
 
 /** Package version marker — replaced by the real build/version pipeline (REL-*). */
 export const AGENT_CORE_VERSION = "0.0.0";
