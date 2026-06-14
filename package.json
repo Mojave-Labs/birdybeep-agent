@@ -17,6 +17,7 @@
     "test": "turbo run test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "check:pack": "node scripts/check-pack.mjs",
     "prepare": "node scripts/install-hooks.mjs"
   },
   "devDependencies": {

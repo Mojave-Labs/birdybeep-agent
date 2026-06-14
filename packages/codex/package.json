@@ -35,5 +35,8 @@
   },
   "devDependencies": {
     "@birdybeep/test-harness": "workspace:*"
+  },
+  "engines": {
+    "node": ">=20.11.0"
   }
 }
