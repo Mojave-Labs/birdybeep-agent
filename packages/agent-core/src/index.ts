@@ -22,3 +22,7 @@ export interface AdapterMeta {
   /** Stable harness id, e.g. `"claude_code"`, `"codex"`, `"opencode"`. */
   readonly harness: string;
 }
+
+// TEMPORARY — A-CI gate-bites proof. Deliberate TS2322 type error to confirm CI
+// turns red. This lives only on the throwaway ci/gate-bites-proof branch.
+export const CI_GATE_PROOF: number = "this is not a number";
