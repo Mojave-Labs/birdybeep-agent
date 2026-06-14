@@ -17,6 +17,14 @@ export {
 export { CodexMappingError, normalizeCodexEvent } from "./normalize";
 export { codexConfigDir, codexConfigFile, type CodexPathOptions } from "./paths";
 export {
+  CODEX_ADAPTER_VERSION,
+  codexDoctor,
+  codexStatus,
+  type CodexStatusOptions,
+  codexStatusReport,
+  type StatusReport,
+} from "./status";
+export {
   clearCodexTrust,
   codexTrustMarkerIsStrict,
   codexTrustMarkerPath,

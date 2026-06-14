@@ -9,6 +9,7 @@ import type { AgentAdapter } from "@birdybeep/agent-core";
 import { detectCodex } from "./detect";
 import { installCodex } from "./install";
 import { normalizeCodexEvent } from "./normalize";
+import { codexDoctor, codexStatus } from "./status";
 
 /** Stable BirdyBeep harness id for Codex (§9.6). */
 export const CODEX_HARNESS_ID = "codex";
@@ -23,7 +24,7 @@ export const codexAdapter: AgentAdapter = {
   detect: () => detectCodex(),
   install: (options) => installCodex(options ?? {}),
   uninstall: () => notImplemented("CX-UNINSTALL"),
-  status: () => notImplemented("CX-STATUS-DOCTOR"),
-  doctor: () => notImplemented("CX-STATUS-DOCTOR"),
+  status: () => codexStatus(),
+  doctor: () => codexDoctor(),
   normalizeEvent: (input) => normalizeCodexEvent(input),
 };
