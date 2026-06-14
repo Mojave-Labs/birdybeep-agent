@@ -1,0 +1,32 @@
+name: Setup workspace
+description: Install pnpm + Node, restore the Turbo cache, and install dependencies with a frozen lockfile.
+
+# Mirrors the private product repo's .github/actions/setup so both halves of
+# BirdyBeep set up identically. Cross-OS safe: pnpm/action-setup + setup-node and
+# `shell: bash` (Git Bash ships on the Windows runner) work on macOS/Linux/Windows.
+runs:
+  using: composite
+  steps:
+    # pnpm version is read from the root package.json "packageManager" field.
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+
+    - name: Install Node
+      uses: actions/setup-node@v5
+      with:
+        node-version: "22"
+        cache: pnpm
+
+    # Reproducible install — fails if pnpm-lock.yaml is out of sync.
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    # Turbo's local cache, restored across runs so unchanged tasks are skipped.
+    - name: Restore Turbo cache
+      uses: actions/cache@v4
+      with:
+        path: .turbo
+        key: turbo-${{ github.job }}-${{ runner.os }}-${{ github.sha }}
+        restore-keys: |
+          turbo-${{ github.job }}-${{ runner.os }}-

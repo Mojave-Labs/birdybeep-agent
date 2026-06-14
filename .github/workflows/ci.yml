@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Newer pushes to the same ref cancel in-flight runs.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Force bash on every run-step so the same commands work on the Windows runner
+# (whose default shell is pwsh) as on macOS/Linux.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # One job per OS — the CLI installs into and edits config on all three, so the
+  # full gate (lint + typecheck + unit/snapshot tests + build + format) must be
+  # green everywhere. The adapter E2E suite (A-TEST-HARNESS) and config-snapshot
+  # tests plug into `pnpm test` as they land; this matrix already runs them.
+  verify:
+    name: verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Don't cancel the other OSes when one fails — we want to see which OS broke.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm format:check
