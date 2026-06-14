@@ -47,6 +47,10 @@ importers:
       zod:
         specifier: ^4
         version: 4.4.3
+    devDependencies:
+      '@birdybeep/test-harness':
+        specifier: workspace:*
+        version: link:../test-harness
 
   packages/claude-code:
     dependencies:

@@ -31,5 +31,8 @@
   },
   "dependencies": {
     "zod": "^4"
+  },
+  "devDependencies": {
+    "@birdybeep/test-harness": "workspace:*"
   }
 }
