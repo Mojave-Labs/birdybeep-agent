@@ -233,6 +233,14 @@ type AgentSessionStatus =
 
 ## 11. Security, privacy & what's sent (PRD §15.1–15.3)
 
+**Pairing protocol (PROVISIONAL — confirm with the product repo before live `login`):**
+The CLI `login` uses a device-authorization-style flow: `POST /v1/cli/pair` returns a short
+URL + user code + poll token (short-lived, no token); the CLI polls `POST /v1/cli/pair/poll`
+until it returns `{ status: "paired", machine_token }`. The token is stored in the secure
+store only. These endpoint paths/field names are NOT a §10.1 event-schema concern and are
+**not yet pinned in the product repo** — the live `birdybeep login` E2E is a deferred
+follow-up; the client is stub-tested against this provisional shape.
+
 **Tokens:**
 - The pairing QR contains only short-lived pairing info — **never a durable token**.
 - Machine tokens are shown once; the server stores only token **hashes**.

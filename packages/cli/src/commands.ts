@@ -6,6 +6,7 @@
 import { createAgentCommand } from "./commands/agent";
 import { createDoctorCommand } from "./commands/doctor";
 import { createHookCommand } from "./commands/hook";
+import { createLoginCommand } from "./commands/login";
 import { createLogoutCommand } from "./commands/logout";
 import { createQueueCommand } from "./commands/queue";
 import { createStatusCommand } from "./commands/status";
@@ -23,12 +24,7 @@ function stub(ticket: string): (ctx: CommandContext) => number {
 /** Build the full §9.4 command tree. */
 export function buildCommands(): Command[] {
   return [
-    {
-      name: "login",
-      summary: "Pair this machine with your BirdyBeep account (QR or manual)",
-      usage: "birdybeep login [--code <pairing-code>]",
-      run: stub("birdybeep-agent-v2h"),
-    },
+    createLoginCommand(),
     createLogoutCommand(),
     createStatusCommand(),
     createTestCommand(),

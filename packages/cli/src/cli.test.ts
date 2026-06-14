@@ -138,7 +138,8 @@ describe("errors + exit codes", () => {
 
   it("a not-yet-implemented command exits non-zero with a ticket reference", async () => {
     const out = capture();
-    const code = await runCli(["login"], {
+    // `report-status` is the last remaining stub in the default registry.
+    const code = await runCli(["report-status"], {
       stdout: out.writer,
       stderr: out.writer,
       ensureConfig: false,
