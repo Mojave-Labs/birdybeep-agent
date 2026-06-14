@@ -9,6 +9,7 @@ import { createHookCommand } from "./commands/hook";
 import { createLogoutCommand } from "./commands/logout";
 import { createQueueCommand } from "./commands/queue";
 import { createStatusCommand } from "./commands/status";
+import { createTestCommand } from "./commands/test";
 import { type Command, type CommandContext, EXIT } from "./framework";
 
 /** Placeholder run for a command whose logic lands in a later ticket. */
@@ -30,12 +31,7 @@ export function buildCommands(): Command[] {
     },
     createLogoutCommand(),
     createStatusCommand(),
-    {
-      name: "test",
-      summary: "Send a test event end-to-end",
-      usage: "birdybeep test",
-      run: stub("birdybeep-agent-msn"),
-    },
+    createTestCommand(),
     createDoctorCommand(),
     createAgentCommand(),
     createHookCommand(),
