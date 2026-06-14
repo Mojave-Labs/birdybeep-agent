@@ -9,6 +9,7 @@
  * agent-core epic (CORE-*) tickets — see `bd ready`.
  */
 export * from "./event";
+export * from "./fingerprint";
 export * from "./normalize";
 export * from "./paths";
 export * from "./primitives";
