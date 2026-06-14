@@ -220,3 +220,69 @@ describe("agent install <harness> + edge cases", () => {
     expect(selectAdapters("nope", all)).toBe("unknown");
   });
 });
+
+describe("agent uninstall", () => {
+  it("install all → uninstall all restores every config byte-for-byte", async () => {
+    sandbox = createSandbox();
+    const home = sandbox.home;
+    seedAll(home);
+    const originals = [
+      claudeSettingsPath(home),
+      codexConfigFile({ home }),
+      opencodeConfigFile({ home }),
+    ].map((p) => readFileSync(p, "utf8"));
+
+    const cmd = createAgentCommand({ adapters: adapters() });
+    await runCli(["agent", "install", "all"], {
+      commands: [cmd],
+      stdout: capture().writer,
+      stderr: capture().writer,
+      ensureConfig: false,
+    });
+
+    const out = capture();
+    const code = await runCli(["agent", "uninstall", "all", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.OK);
+    const restored = [
+      claudeSettingsPath(home),
+      codexConfigFile({ home }),
+      opencodeConfigFile({ home }),
+    ].map((p) => readFileSync(p, "utf8"));
+    expect(restored).toEqual(originals); // byte-for-byte original (no BirdyBeep references)
+    for (const c of restored) {
+      expect(c).not.toContain(CLAUDE_HOOK);
+      expect(c).not.toContain(BIRDYBEEP_PLUGIN_REF);
+    }
+  });
+
+  it("is a no-op when nothing is installed (idempotent, exit 0)", async () => {
+    sandbox = createSandbox();
+    const out = capture();
+    const code = await runCli(["agent", "uninstall", "all", "--json"], {
+      commands: [createAgentCommand({ adapters: adapters() })],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.OK);
+    const parsed = JSON.parse(out.text()) as { results: { changed: boolean }[] };
+    expect(parsed.results.every((r) => !r.changed)).toBe(true);
+  });
+
+  it("rejects an unknown uninstall target with USAGE", async () => {
+    sandbox = createSandbox();
+    const out = capture();
+    const code = await runCli(["agent", "uninstall", "bogus"], {
+      commands: [createAgentCommand({ adapters: adapters() })],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.USAGE);
+  });
+});

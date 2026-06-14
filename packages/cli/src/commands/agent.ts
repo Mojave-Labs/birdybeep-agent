@@ -98,14 +98,58 @@ async function installSelected(adapters: AgentAdapter[], ctx: CommandContext): P
   return EXIT.OK;
 }
 
+interface UninstallOutcome {
+  harness: string;
+  displayName: string;
+  changed: boolean;
+  removedFiles: string[];
+  restoredFiles: string[];
+}
+
+async function uninstallSelected(adapters: AgentAdapter[], ctx: CommandContext): Promise<number> {
+  const target = ctx.args[0] ?? "all";
+  const selected = selectAdapters(target, adapters);
+  if (selected === "unknown") {
+    ctx.io.errline(
+      `birdybeep agent uninstall: unknown target "${target}" (expected ${AGENT_TARGETS.join("|")}).`,
+    );
+    return EXIT.USAGE;
+  }
+
+  const outcomes: UninstallOutcome[] = [];
+  for (const adapter of selected) {
+    // Uninstall is safe + idempotent even if nothing is installed (a no-op).
+    const result = await adapter.uninstall();
+    outcomes.push({
+      harness: adapter.id,
+      displayName: adapter.displayName,
+      changed: result.changed,
+      removedFiles: result.removedFiles,
+      restoredFiles: result.restoredFiles,
+    });
+  }
+
+  if (ctx.flags.json) {
+    ctx.io.result({ target, results: outcomes });
+    return EXIT.OK;
+  }
+  for (const o of outcomes) {
+    if (!o.changed) {
+      ctx.io.line(`–  ${o.displayName}: nothing to remove`);
+      continue;
+    }
+    const touched = [...o.removedFiles, ...o.restoredFiles].join(", ") || "config restored";
+    ctx.io.line(`✓  ${o.displayName}: removed (${touched})`);
+  }
+  return EXIT.OK;
+}
+
 export interface AgentCommandDeps {
   /** Adapter set (tests inject deterministic detection). Defaults to the three real adapters. */
   adapters?: AgentAdapter[];
-  /** Uninstall run handler (wired by OC/diq — `birdybeep agent uninstall`). */
-  uninstallRun?: (ctx: CommandContext) => Promise<number> | number;
 }
 
-/** Build the `agent` command group (install implemented; uninstall lands in birdybeep-agent-diq). */
+/** Build the `agent` command group (install + uninstall, both via the adapter contract). */
 export function createAgentCommand(deps: AgentCommandDeps = {}): Command {
   const adapters = deps.adapters ?? DEFAULT_ADAPTERS;
   return {
@@ -123,12 +167,7 @@ export function createAgentCommand(deps: AgentCommandDeps = {}): Command {
         name: "uninstall",
         summary: "Restore harness config to its pre-install state",
         usage: "birdybeep agent uninstall [all|claude|codex|opencode]",
-        run:
-          deps.uninstallRun ??
-          ((ctx) => {
-            ctx.io.errline("birdybeep: this command is not implemented yet (birdybeep-agent-diq).");
-            return EXIT.ERROR;
-          }),
+        run: (ctx) => uninstallSelected(adapters, ctx),
       },
     ],
   };
