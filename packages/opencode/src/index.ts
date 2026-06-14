@@ -12,3 +12,20 @@ export {
   type OpenCodePathOptions,
   opencodePluginDir,
 } from "./paths";
+export {
+  type BirdyBeepHooks,
+  type BirdyBeepPluginDeps,
+  createBirdyBeepPlugin,
+  FORWARDED_BUS_EVENTS,
+  type OpenCodeEventEnvelope,
+  type OpenCodePluginInput,
+} from "./plugin";
+export {
+  clearOpenCodeRestart,
+  hasOpenCodeEventBeenSeen,
+  opencodeRestartMarkerIsStrict,
+  opencodeRestartMarkerPath,
+  type OpenCodeRestartOptions,
+  recordOpenCodeEventSeen,
+  runOpenCodeHook,
+} from "./restart";
