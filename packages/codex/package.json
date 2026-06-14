@@ -30,7 +30,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@birdybeep/agent-core": "workspace:*"
+    "@birdybeep/agent-core": "workspace:*",
+    "smol-toml": "^1.6.1"
   },
   "devDependencies": {
     "@birdybeep/test-harness": "workspace:*"

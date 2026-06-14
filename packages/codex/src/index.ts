@@ -4,4 +4,14 @@
  */
 export { CODEX_HARNESS_ID, codexAdapter } from "./adapter";
 export { type CodexDetectOptions, detectCodex } from "./detect";
+export {
+  backupPathFor,
+  BIRDYBEEP_HOOK_COMMAND,
+  BIRDYBEEP_HOOK_EVENTS,
+  BIRDYBEEP_NOTIFY,
+  installCodex,
+  isBirdyBeepHookEntry,
+  mergeCodexConfig,
+  TRUST_INSTRUCTIONS,
+} from "./install";
 export { codexConfigDir, codexConfigFile, type CodexPathOptions } from "./paths";
