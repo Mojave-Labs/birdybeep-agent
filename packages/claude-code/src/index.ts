@@ -5,4 +5,12 @@
  */
 export { CLAUDE_CODE_HARNESS_ID, claudeCodeAdapter } from "./adapter";
 export { detectClaudeCode, type DetectOptions } from "./detect";
+export {
+  backupPathFor,
+  BIRDYBEEP_HOOK_COMMAND,
+  BIRDYBEEP_HOOK_EVENTS,
+  installClaudeCode,
+  isBirdyBeepEntry,
+  mergeBirdyBeepHooks,
+} from "./install";
 export { claudeConfigDir, claudeSettingsPath } from "./paths";
