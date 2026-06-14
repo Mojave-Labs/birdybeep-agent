@@ -10,20 +10,17 @@ import { detectCodex } from "./detect";
 import { installCodex } from "./install";
 import { normalizeCodexEvent } from "./normalize";
 import { codexDoctor, codexStatus } from "./status";
+import { uninstallCodex } from "./uninstall";
 
 /** Stable BirdyBeep harness id for Codex (§9.6). */
 export const CODEX_HARNESS_ID = "codex";
-
-function notImplemented(ticket: string): Promise<never> {
-  return Promise.reject(new Error(`Codex adapter: not implemented yet (${ticket})`));
-}
 
 export const codexAdapter: AgentAdapter = {
   id: "codex",
   displayName: "Codex",
   detect: () => detectCodex(),
   install: (options) => installCodex(options ?? {}),
-  uninstall: () => notImplemented("CX-UNINSTALL"),
+  uninstall: (options) => uninstallCodex(options ?? {}),
   status: () => codexStatus(),
   doctor: () => codexDoctor(),
   normalizeEvent: (input) => normalizeCodexEvent(input),

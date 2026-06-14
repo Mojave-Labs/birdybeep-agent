@@ -33,3 +33,4 @@ export {
   recordCodexEventSeen,
   runCodexHook,
 } from "./trust";
+export { removeBirdyBeepConfig, uninstallCodex } from "./uninstall";
