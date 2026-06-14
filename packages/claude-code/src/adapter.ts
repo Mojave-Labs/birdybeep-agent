@@ -4,16 +4,12 @@
  * status/doctor/normalizeEvent land in their own tickets and replace the stubs
  * below. The real hook-fire E2E (CC-E2E) is a supervised gate.
  */
-import type {
-  AgentAdapter,
-  DoctorResult,
-  IntegrationStatus,
-  UninstallResult,
-} from "@birdybeep/agent-core";
+import type { AgentAdapter, DoctorResult, IntegrationStatus } from "@birdybeep/agent-core";
 
 import { detectClaudeCode } from "./detect";
 import { installClaudeCode } from "./install";
 import { normalizeClaudeCodeEvent } from "./normalize";
+import { uninstallClaudeCode } from "./uninstall";
 
 /** Stable BirdyBeep harness id for Claude Code (§9.5). */
 export const CLAUDE_CODE_HARNESS_ID = "claude_code";
@@ -27,7 +23,7 @@ export const claudeCodeAdapter: AgentAdapter = {
   displayName: "Claude Code",
   detect: () => detectClaudeCode(),
   install: (options) => installClaudeCode(options ?? {}),
-  uninstall: (): Promise<UninstallResult> => notImplemented("CC-UNINSTALL"),
+  uninstall: (options) => uninstallClaudeCode(options ?? {}),
   status: (): Promise<IntegrationStatus> => notImplemented("CC-STATUS-DOCTOR"),
   doctor: (): Promise<DoctorResult> => notImplemented("CC-STATUS-DOCTOR"),
   normalizeEvent: (input) => normalizeClaudeCodeEvent(input),

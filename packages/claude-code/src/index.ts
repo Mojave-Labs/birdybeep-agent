@@ -15,3 +15,4 @@ export {
 } from "./install";
 export { ClaudeCodeMappingError, normalizeClaudeCodeEvent } from "./normalize";
 export { claudeConfigDir, claudeSettingsPath } from "./paths";
+export { removeBirdyBeepHooks, uninstallClaudeCode } from "./uninstall";
