@@ -1,0 +1,32 @@
+{
+  "name": "@birdybeep/test-harness",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Internal E2E test harness: hermetic temp-HOME sandbox, swappable event sink, real-shaped harness fixtures, and contract assertions. Never published; the spine every adapter E2E hangs off.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --sourcemap --clean",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run"
+  }
+}
