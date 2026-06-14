@@ -1,0 +1,23 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`generated OpenCode config snapshots (§21.1) > from-scratch install writes the canonical plugin block 1`] = `
+"{
+  "plugin": [
+    "@birdybeep/opencode"
+  ]
+}
+"
+`;
+
+exports[`generated OpenCode config snapshots (§21.1) > patches into a config with a user plugin + $schema + other keys 1`] = `
+"{
+  "$schema": "https://opencode.ai/config.json",
+  "theme": "tokyonight",
+  "plugin": [
+    "opencode-helicone-session",
+    "@birdybeep/opencode"
+  ],
+  "model": "anthropic/claude-sonnet-4-6"
+}
+"
+`;
