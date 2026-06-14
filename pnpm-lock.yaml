@@ -67,6 +67,15 @@ importers:
       '@birdybeep/agent-core':
         specifier: workspace:*
         version: link:../agent-core
+      '@birdybeep/claude-code':
+        specifier: workspace:*
+        version: link:../claude-code
+      '@birdybeep/codex':
+        specifier: workspace:*
+        version: link:../codex
+      '@birdybeep/opencode':
+        specifier: workspace:*
+        version: link:../opencode
     devDependencies:
       '@birdybeep/test-harness':
         specifier: workspace:*

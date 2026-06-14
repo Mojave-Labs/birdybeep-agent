@@ -5,6 +5,7 @@
  */
 export { CLAUDE_CODE_HARNESS_ID, claudeCodeAdapter } from "./adapter";
 export { detectClaudeCode, type DetectOptions } from "./detect";
+export { runClaudeHook } from "./hook";
 export {
   backupPathFor,
   BIRDYBEEP_HOOK_COMMAND,

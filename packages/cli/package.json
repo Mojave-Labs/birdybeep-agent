@@ -32,7 +32,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@birdybeep/agent-core": "workspace:*"
+    "@birdybeep/agent-core": "workspace:*",
+    "@birdybeep/claude-code": "workspace:*",
+    "@birdybeep/codex": "workspace:*",
+    "@birdybeep/opencode": "workspace:*"
   },
   "devDependencies": {
     "@birdybeep/test-harness": "workspace:*"

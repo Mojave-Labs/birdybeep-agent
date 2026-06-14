@@ -3,6 +3,7 @@
  * Each command's real logic lands in its own a-cli ticket and replaces the stub here;
  * the framework (help / flags / routing / config dir / exit codes) is ticket-independent.
  */
+import { createHookCommand } from "./commands/hook";
 import { type Command, type CommandContext, EXIT } from "./framework";
 
 /** Placeholder run for a command whose logic lands in a later ticket. */
@@ -65,12 +66,7 @@ export function buildCommands(): Command[] {
         },
       ],
     },
-    {
-      name: "hook",
-      summary: "Internal: normalize + send an event fired by a harness hook",
-      usage: "birdybeep hook <claude|codex|opencode>",
-      run: stub("birdybeep-agent-0mx"),
-    },
+    createHookCommand(),
     {
       name: "queue",
       summary: "Local event-queue maintenance",
