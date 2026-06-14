@@ -4,7 +4,9 @@
  * the framework (help / flags / routing / config dir / exit codes) is ticket-independent.
  */
 import { createAgentCommand } from "./commands/agent";
+import { createDoctorCommand } from "./commands/doctor";
 import { createHookCommand } from "./commands/hook";
+import { createStatusCommand } from "./commands/status";
 import { type Command, type CommandContext, EXIT } from "./framework";
 
 /** Placeholder run for a command whose logic lands in a later ticket. */
@@ -30,24 +32,14 @@ export function buildCommands(): Command[] {
       usage: "birdybeep logout",
       run: stub("birdybeep-agent-1ev"),
     },
-    {
-      name: "status",
-      summary: "Show pairing + per-harness integration status",
-      usage: "birdybeep status [--json]",
-      run: stub("birdybeep-agent-b64"),
-    },
+    createStatusCommand(),
     {
       name: "test",
       summary: "Send a test event end-to-end",
       usage: "birdybeep test",
       run: stub("birdybeep-agent-msn"),
     },
-    {
-      name: "doctor",
-      summary: "Diagnose token, trust, restart, and offline-queue issues",
-      usage: "birdybeep doctor [--json]",
-      run: stub("birdybeep-agent-dxl"),
-    },
+    createDoctorCommand(),
     createAgentCommand(),
     createHookCommand(),
     {
