@@ -156,13 +156,31 @@ Launch integration. Prefer an OpenCode **plugin package**; configure user-level/
 |---|---|---|---|
 | `session.created` | `session_started` | upsert session | No |
 | `session.updated` | `session_active` | update session | No |
-| `session.status` | status-specific | update status | Depends |
+| `session.status` `{busy\|retry}` | `session_active` | update status | No |
+| `session.status` `{idle}` | `agent_idle` | idle | Yes |
 | `session.idle` | `agent_idle` | idle | Yes |
 | `session.error` | `agent_failed` | failed | Yes |
-| `permission.asked` | `approval_required` | waiting for approval | Yes |
-| `permission.replied` | `permission_replied` | update approval state | No |
+| `permission.updated` | `approval_required` | waiting for approval | Yes |
 | `tool.execute.before` | `tool_started` | activity update | No |
 | `tool.execute.after` | `tool_finished` | activity update | No |
+| `permission.replied` | _(dropped — see note)_ | — | — |
+
+> **Reconciliation — verified against the OpenCode SDK types (`sst/opencode`
+> `packages/sdk/js/src/gen/types.gen.ts`), not the PRD §9.7 table** (which named two
+> events that don't exist):
+> - **`permission.asked` does NOT exist.** The real approval-request event is
+>   **`permission.updated`** (paired with `permission.replied` when the user answers).
+> - **`permission.replied` is DROPPED, not mapped.** The PRD mapped it to a
+>   `permission_replied` type that is **not in §10.1**. Inventing a wire type would break
+>   lockstep, and the reply is the user's action — not an agent-attention moment — so it
+>   is skipped (same precedent as the deferred Task\* events). No `permission_replied`.
+> - **`tool.execute.before/after` are OpenCode NAMED HOOKS, not `event`-bus types.** The
+>   plugin subscribes to the generic `event` hook for the `session.*`/`permission.*` bus
+>   events and to the named `tool.execute.*` hooks, wrapping both into one
+>   `{ type, properties, cwd }` envelope for `normalizeEvent` (cwd injected by the plugin,
+>   since most bus events don't carry it).
+> - OpenCode loads plugins only at startup (no hot-reload) → install surfaces
+>   `needs_restart` until the next launch.
 
 ## 8. Normalized event model (PRD §10.1)
 

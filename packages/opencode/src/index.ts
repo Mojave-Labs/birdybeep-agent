@@ -5,6 +5,7 @@
  */
 export { OPENCODE_HARNESS_ID, opencodeAdapter } from "./adapter";
 export { detectOpenCode, type OpenCodeDetectOptions } from "./detect";
+export { normalizeOpenCodeEvent, OpenCodeMappingError } from "./normalize";
 export {
   opencodeConfigDir,
   opencodeConfigFile,
