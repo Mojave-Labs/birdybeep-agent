@@ -9,12 +9,14 @@
  * agent-core epic (CORE-*) tickets — see `bd ready`.
  */
 export * from "./adapter";
+export * from "./api";
 export * from "./event";
 export * from "./fingerprint";
 export * from "./normalize";
 export * from "./paths";
 export * from "./primitives";
 export * from "./queue";
+export * from "./sender";
 export * from "./token-store";
 
 /** Package version marker — replaced by the real build/version pipeline (REL-*). */
