@@ -4,6 +4,9 @@ dist/
 coverage/
 pnpm-lock.yaml
 
+# Vitest snapshots — owned by vitest's own formatter, not Prettier.
+**/__snapshots__/
+
 # Tool-managed config — owned by its tool, not the formatter
 .claude/
 .beads/
