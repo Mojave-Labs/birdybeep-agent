@@ -1,0 +1,41 @@
+notify = [ "birdybeep", "hook", "codex" ]
+
+[[hooks.SessionStart]]
+matcher = ""
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "birdybeep hook codex"
+timeout = 10
+
+[[hooks.PermissionRequest]]
+matcher = ""
+
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = "birdybeep hook codex"
+timeout = 10
+
+[[hooks.PostToolUse]]
+matcher = ""
+
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "birdybeep hook codex"
+timeout = 10
+
+[[hooks.SubagentStart]]
+matcher = ""
+
+[[hooks.SubagentStart.hooks]]
+type = "command"
+command = "birdybeep hook codex"
+timeout = 10
+
+[[hooks.SubagentStop]]
+matcher = ""
+
+[[hooks.SubagentStop.hooks]]
+type = "command"
+command = "birdybeep hook codex"
+timeout = 10
