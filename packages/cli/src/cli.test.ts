@@ -136,16 +136,26 @@ describe("errors + exit codes", () => {
     expect(out.text()).toContain('unknown option "--bogus"');
   });
 
-  it("a not-yet-implemented command exits non-zero with a ticket reference", async () => {
+  it("a command that returns ERROR exits non-zero and surfaces its message", async () => {
+    const failing: Command[] = [
+      {
+        name: "boom",
+        summary: "always fails",
+        run: (ctx) => {
+          ctx.io.errline("kaboom");
+          return EXIT.ERROR;
+        },
+      },
+    ];
     const out = capture();
-    // `report-status` is the last remaining stub in the default registry.
-    const code = await runCli(["report-status"], {
+    const code = await runCli(["boom"], {
+      commands: failing,
       stdout: out.writer,
       stderr: out.writer,
       ensureConfig: false,
     });
     expect(code).toBe(EXIT.ERROR);
-    expect(out.text()).toMatch(/not implemented yet/);
+    expect(out.text()).toContain("kaboom");
   });
 });
 
