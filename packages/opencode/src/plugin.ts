@@ -119,3 +119,9 @@ export function createBirdyBeepPlugin(
     });
   };
 }
+
+/**
+ * The ready-to-load BirdyBeep plugin OpenCode invokes (default `birdybeep hook opencode`
+ * delivery). This is the named export an OpenCode `plugin` config entry resolves to.
+ */
+export const BirdyBeepPlugin = createBirdyBeepPlugin();

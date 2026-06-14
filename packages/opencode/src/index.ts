@@ -5,6 +5,14 @@
  */
 export { OPENCODE_HARNESS_ID, opencodeAdapter } from "./adapter";
 export { detectOpenCode, type OpenCodeDetectOptions } from "./detect";
+export {
+  backupPathFor,
+  BIRDYBEEP_PLUGIN_REF,
+  installOpenCode,
+  isBirdyBeepPluginConfigured,
+  mergeOpenCodeConfig,
+  RESTART_INSTRUCTIONS,
+} from "./install";
 export { normalizeOpenCodeEvent, OpenCodeMappingError } from "./normalize";
 export {
   opencodeConfigDir,
@@ -14,6 +22,7 @@ export {
 } from "./paths";
 export {
   type BirdyBeepHooks,
+  BirdyBeepPlugin,
   type BirdyBeepPluginDeps,
   createBirdyBeepPlugin,
   FORWARDED_BUS_EVENTS,
