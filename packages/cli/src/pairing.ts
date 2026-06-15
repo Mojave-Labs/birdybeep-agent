@@ -1,78 +1,80 @@
 /**
- * CLI pairing client (device-authorization style). `login` starts a pairing session, shows
- * the user a short URL + code, and polls until the backend confirms — at which point a
- * durable machine token is issued and stored in the secure token store (never in config /
- * the QR). Per SPEC §11: the QR/pair URL carries only short-lived pairing info, never a token.
- *
- * ⚠ PROVISIONAL CROSS-REPO CONTRACT — the exact endpoint paths + field names below
- * (`/v1/cli/pair`, `/v1/cli/pair/poll`) are not yet pinned in the product repo; confirm
- * them with the backend before the live `birdybeep login` lands. The reader is tolerant
- * (best-effort field reads) so a shape tweak won't crash. No §10.1 event schema is involved.
+ * CLI pairing client — the device-code flow (§7.2/§13.4). `pairStart` opens a session via
+ * `POST /v1/pair/start`; the CLI shows `qr_payload` + `user_code`, then polls
+ * `POST /v1/pair/token` (`pairTokenPoll`) until it returns 201 `{ machine_token, machine_id }`
+ * or the `expires_at` deadline. A `validation_failed`/4xx during polling means "not approved
+ * yet — keep polling". Per SPEC §11 the QR / user code carries only short-lived pairing info,
+ * NEVER a durable token. Request/response shapes are mirrored from the product (agent-core).
  */
+import {
+  type PairStartResponse,
+  pairStartResponseSchema,
+  pairTokenResponseSchema,
+} from "@birdybeep/agent-core";
+
 function base(apiUrl: string): string {
   return apiUrl.replace(/\/$/, "");
 }
 
-function str(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-function num(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-export interface PairingStart {
-  /** Short URL the user opens (may be encoded into a QR); short-lived, no token. */
-  pairUrl: string;
-  /** Human-typeable code shown on the device (manual entry path). */
-  userCode: string;
-  /** Opaque token the CLI polls with (not the machine token). */
-  pollToken: string;
-  intervalMs: number;
-  expiresInMs: number;
+export interface PairStartInput {
+  /** Required — the human machine label (derived from hostname/OS). */
+  machineLabel: string;
+  os?: string;
+  cliVersion?: string;
 }
 
-export interface PairingPoll {
-  status: "pending" | "paired";
-  /** Issued only once, on `paired`. Stored in the secure store — never logged/persisted in config. */
-  machineToken?: string;
-  machineLabel?: string;
-}
-
-/** Begin a pairing session. Returns the short-lived pair URL + code + poll token. */
-export async function startPairing(apiUrl: string, fetchImpl: typeof fetch): Promise<PairingStart> {
-  const res = await fetchImpl(`${base(apiUrl)}/v1/cli/pair`, {
+/** Begin a pairing session (`POST /v1/pair/start`, unauthenticated). */
+export async function pairStart(
+  apiUrl: string,
+  input: PairStartInput,
+  fetchImpl: typeof fetch,
+): Promise<PairStartResponse> {
+  const body = {
+    machine_label: input.machineLabel,
+    ...(input.os !== undefined ? { os: input.os } : {}),
+    ...(input.cliVersion !== undefined ? { cli_version: input.cliVersion } : {}),
+  };
+  const res = await fetchImpl(`${base(apiUrl)}/v1/pair/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: "{}",
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`pairing could not be started (HTTP ${res.status})`);
-  const body = (await res.json()) as Record<string, unknown>;
-  return {
-    pairUrl: str(body["pair_url"]) ?? "",
-    userCode: str(body["user_code"]) ?? "",
-    pollToken: str(body["poll_token"]) ?? "",
-    intervalMs: num(body["interval_ms"], 2000),
-    expiresInMs: num(body["expires_in_ms"], 300_000),
-  };
+  const parsed = pairStartResponseSchema.safeParse(await res.json());
+  if (!parsed.success) throw new Error("pairing start returned an unexpected response shape");
+  return parsed.data;
 }
 
-/** Poll once for pairing completion. `paired` carries the durable machine token. */
-export async function pollPairing(
+export type PairTokenResult =
+  | { status: "pending" }
+  | { status: "paired"; machineToken: string; machineId: string };
+
+/**
+ * Poll once for the device token (`POST /v1/pair/token`, unauthenticated). A 201 with a valid
+ * token body → paired; ANY other outcome (incl. a `validation_failed`/4xx before the user has
+ * approved) → pending, so the caller keeps polling until the `expires_at` deadline.
+ */
+export async function pairTokenPoll(
   apiUrl: string,
-  pollToken: string,
+  deviceCode: string,
   fetchImpl: typeof fetch,
-): Promise<PairingPoll> {
-  const res = await fetchImpl(`${base(apiUrl)}/v1/cli/pair/poll`, {
+  machineFingerprint?: string,
+): Promise<PairTokenResult> {
+  const body = {
+    device_code: deviceCode,
+    ...(machineFingerprint !== undefined ? { machine_fingerprint: machineFingerprint } : {}),
+  };
+  const res = await fetchImpl(`${base(apiUrl)}/v1/pair/token`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ poll_token: pollToken }),
+    body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`pairing poll failed (HTTP ${res.status})`);
-  const body = (await res.json()) as Record<string, unknown>;
-  const result: PairingPoll = { status: body["status"] === "paired" ? "paired" : "pending" };
-  const token = str(body["machine_token"]);
-  if (token !== undefined) result.machineToken = token;
-  const label = str(body["machine_label"]);
-  if (label !== undefined) result.machineLabel = label;
-  return result;
+  if (!res.ok) return { status: "pending" }; // validation_failed / 4xx → not approved yet
+  const parsed = pairTokenResponseSchema.safeParse(await res.json());
+  if (!parsed.success) return { status: "pending" };
+  return {
+    status: "paired",
+    machineToken: parsed.data.machine_token,
+    machineId: parsed.data.machine_id,
+  };
 }

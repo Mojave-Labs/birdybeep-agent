@@ -10,11 +10,11 @@ pairing code — never a durable token.** The machine token is minted server-sid
 CLI once, and stored locally in your OS keychain (or a strict-permission file). See
 [Security](./security.md) for the full token-handling details.
 
-> **Provisional endpoints.** The pairing protocol (`POST /v1/cli/pair`,
-> `POST /v1/cli/pair/poll`) is a cross-repo contract owned by the BirdyBeep product backend and is
-> **not yet pinned** — paths and field names may change before the live `birdybeep login` ships.
-> The CLI reads responses tolerantly, so a shape tweak won't crash it, but treat this page's wire
-> details as subject to change.
+> **Wire contract.** The pairing endpoints (`POST /v1/pair/start`, `POST /v1/pair/token`) are a
+> cross-repo contract owned by the BirdyBeep product backend; the request/response schemas are
+> mirrored field-for-field in `agent-core` (kept in lockstep with the product's `packages/schemas`).
+> The CLI reads responses tolerantly. The live `birdybeep login` pass against the product backend
+> is a deferred follow-up.
 
 ---
 
@@ -28,30 +28,32 @@ You'll see a link and a code. Open the link (or scan the QR), confirm the code i
 app, and wait for the CLI to report success:
 
 ```text
-To pair this machine, open the link and confirm the code:
-   Scan or open:  https://app.birdybeep.dev/pair/XXXX
+To pair this machine, scan the code or open the link, then confirm in the app:
+   Scan or open:  birdybeep://pair?code=WXYZ-1234
    Code:  WXYZ-1234
 Waiting for confirmation…
-✓ Paired as my-laptop. Run `birdybeep test` to send a test Beep.
+✓ Paired. Run `birdybeep test` to send a test Beep.
 ```
 
-The machine label (`my-laptop` above) comes from your account and is only shown if the backend
-returns one. Once paired, run [`birdybeep test`](./install.md) to send a test Beep, or
-`birdybeep status` to check integration state.
+`birdybeep login` derives this machine's label from your hostname/OS and sends it when it opens
+the session (editable later in the app). Once paired, run [`birdybeep test`](./install.md) to send
+a test Beep, or `birdybeep status` to check integration state.
 
 ---
 
 ## How the device flow works
 
-1. **Start.** `birdybeep login` calls `POST /v1/cli/pair`. The backend returns a short **pair URL**,
-   a human-typeable **user code**, an opaque **poll token**, a poll **interval**, and an
-   **expiry** for the pairing session.
-2. **Confirm.** You open the pair URL (QR or manual) and confirm the code in the BirdyBeep mobile
+1. **Start.** `birdybeep login` calls `POST /v1/pair/start` with this machine's label (derived from
+   your hostname/OS), its OS, and the CLI version. The backend returns a **device code**, a
+   human-typeable **user code**, a **QR payload** (which encodes only the short user code), and an
+   **`expires_at`** for the pairing session.
+2. **Confirm.** You scan the QR or open the link and confirm the user code in the BirdyBeep mobile
    app. The app shows an approval screen for this machine.
-3. **Poll.** Meanwhile the CLI polls `POST /v1/cli/pair/poll` with the poll token at the interval
-   the backend specified. Each poll returns `pending` until you approve.
+3. **Poll.** Meanwhile the CLI polls `POST /v1/pair/token` with the device code (and a stable,
+   non-reversible machine fingerprint). Until you approve, the backend replies with a
+   `validation_failed`/4xx, which the CLI treats as "not yet — keep polling".
 4. **Mint.** When you approve, the backend mints a **machine token** server-side and the next poll
-   returns `{ status: "paired", machine_token }` (plus an optional machine label).
+   returns `201 { machine_token, machine_id }`.
 5. **Store.** The CLI writes the machine token to the secure token store (keychain, else a
    strict-permission file) and saves the non-secret API URL to its config. The token is **never**
    written into a repo file or any harness config.
@@ -63,9 +65,9 @@ retry:
 Pairing timed out before it was confirmed. Run `birdybeep login` to retry.
 ```
 
-The pairing session is short-lived (the backend supplies the expiry; the CLI falls back to a
-5-minute window), the user code is single-use, and the poll token only lets the CLI ask "am I
-paired yet?" — it is **not** the machine token.
+The pairing session is short-lived (the backend sets `expires_at` — a ~10-minute window), the user
+code is single-use, and the device code only lets the CLI ask "am I approved yet?" — it is **not**
+the machine token.
 
 ---
 
@@ -118,9 +120,8 @@ This is the core of the trust story:
   info. A leaked QR can't notify your devices or impersonate your machine — at worst someone could
   try to claim a pairing session that you'd then have to approve in the app.
 - **Single-use code.** The user code is consumed when you approve it; it can't be replayed.
-- **Short expiry.** The pairing session is time-boxed (the backend sets the expiry; the CLI's
-  fallback is 5 minutes). After it expires, the code is dead and you simply run `birdybeep login`
-  again.
+- **Short expiry.** The pairing session is time-boxed (the backend sets `expires_at` — a
+  ~10-minute window). After it expires, the code is dead and you simply run `birdybeep login` again.
 - **Token minted server-side, shown once.** The machine token is created by the backend and handed
   to the CLI exactly once during pairing. The server stores only a **hash** of it, never the token
   itself.

@@ -1,19 +1,24 @@
 /**
- * `birdybeep login` (§7.1, §9.4) — pair this machine. Starts a pairing session, shows the
- * user a link + code (QR-friendly; the renderer is injectable), polls until the backend
- * confirms, then stores the issued machine token in the SECURE store (keychain / strict-perm
- * file — never config or the QR) and persists the non-secret apiUrl. Per SPEC §11 the QR/URL
- * carries only short-lived pairing info; the durable token never touches a repo/config file.
+ * `birdybeep login` (§7.1/§7.2/§9.4) — pair this machine via the device-code flow.
+ * `POST /v1/pair/start` (machine_label derived from hostname/OS) → show `qr_payload` +
+ * `user_code` → poll `POST /v1/pair/token` with the device code (+ stable machine
+ * fingerprint) until it returns the durable token or the `expires_at` (10-min) deadline.
+ * The issued token is stored in the SECURE store only (keychain / strict-perm file — never
+ * config or the QR); the non-secret apiUrl is persisted. Per SPEC §11 the QR/code carries
+ * only short-lived pairing info.
  *
- * ⚠ The pairing protocol (pairing.ts) is a PROVISIONAL cross-repo contract — the live
- * `birdybeep login` against the real backend is a deferred follow-up; this is fully
- * stub-tested now. fetch/sleep/clock/QR are injectable for hermetic tests.
+ * fetch/sleep/clock/QR are injectable for hermetic tests; the live pairing pass is the
+ * deferred cross-repo follow-up (the shapes here are mirrored from the product).
  */
-import { setToken, type TokenStoreOptions } from "@birdybeep/agent-core";
+import { getMachineIdentity, setToken, type TokenStoreOptions } from "@birdybeep/agent-core";
 
 import { resolveApiUrl, writeCliConfig } from "../config";
 import { type Command, EXIT } from "../framework";
-import { type PairingPoll, pollPairing, startPairing } from "../pairing";
+import { pairStart, pairTokenPoll, type PairTokenResult } from "../pairing";
+import { CLI_VERSION } from "../version";
+
+/** Default delay between `/pair/token` polls (the start response has no interval). */
+export const DEFAULT_POLL_INTERVAL_MS = 2000;
 
 export interface LoginCommandDeps {
   fetchImpl?: typeof fetch;
@@ -22,15 +27,17 @@ export interface LoginCommandDeps {
   sleep?: (ms: number) => Promise<void>;
   /** Injectable clock for the expiry deadline (default Date.now). */
   now?: () => number;
-  /** Render the pair URL (default: a plain link; a QR-matrix renderer is a follow-up). */
-  renderQr?: (url: string) => string;
+  /** Render the QR payload (default: a plain line; a QR-matrix renderer is a follow-up). */
+  renderQr?: (qrPayload: string) => string;
+  pollIntervalMs?: number;
 }
 
 export function createLoginCommand(deps: LoginCommandDeps = {}): Command {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const clock = deps.now ?? (() => Date.now());
-  const renderQr = deps.renderQr ?? ((url: string) => `   Scan or open:  ${url}`);
+  const renderQr = deps.renderQr ?? ((qr: string) => `   Scan or open:  ${qr}`);
+  const intervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
   return {
     name: "login",
@@ -38,28 +45,40 @@ export function createLoginCommand(deps: LoginCommandDeps = {}): Command {
     usage: "birdybeep login",
     run: async (ctx) => {
       const apiUrl = resolveApiUrl();
-      const start = await startPairing(apiUrl, fetchImpl);
+      const identity = getMachineIdentity(); // { label, os, fingerprintHash }
+      const start = await pairStart(
+        apiUrl,
+        { machineLabel: identity.label, os: identity.os, cliVersion: CLI_VERSION },
+        fetchImpl,
+      );
 
       if (!ctx.flags.json) {
-        ctx.io.line("To pair this machine, open the link and confirm the code:");
-        ctx.io.line(renderQr(start.pairUrl));
-        ctx.io.line(`   Code:  ${start.userCode}`);
+        ctx.io.line(
+          "To pair this machine, scan the code or open the link, then confirm in the app:",
+        );
+        ctx.io.line(renderQr(start.qr_payload));
+        ctx.io.line(`   Code:  ${start.user_code}`);
         ctx.io.line("Waiting for confirmation…");
       }
 
-      // Poll until paired or the pairing window expires.
-      const deadline = clock() + start.expiresInMs;
-      let paired: PairingPoll | undefined;
+      // Poll /pair/token until approved (201) or the pairing window expires.
+      const deadline = Date.parse(start.expires_at);
+      let paired: PairTokenResult | undefined;
       while (clock() < deadline) {
-        await sleep(start.intervalMs);
-        const poll = await pollPairing(apiUrl, start.pollToken, fetchImpl);
-        if (poll.status === "paired" && poll.machineToken !== undefined) {
+        await sleep(intervalMs);
+        const poll = await pairTokenPoll(
+          apiUrl,
+          start.device_code,
+          fetchImpl,
+          identity.fingerprintHash,
+        );
+        if (poll.status === "paired") {
           paired = poll;
           break;
         }
       }
 
-      if (paired?.machineToken === undefined) {
+      if (paired === undefined || paired.status !== "paired") {
         ctx.io.errline(
           "Pairing timed out before it was confirmed. Run `birdybeep login` to retry.",
         );
@@ -70,10 +89,10 @@ export function createLoginCommand(deps: LoginCommandDeps = {}): Command {
       await setToken(paired.machineToken, deps.tokenOptions ?? {});
       writeCliConfig({ apiUrl });
 
-      ctx.io.emit(
-        `✓ Paired${paired.machineLabel ? ` as ${paired.machineLabel}` : ""}. Run \`birdybeep test\` to send a test Beep.`,
-        { paired: true, ...(paired.machineLabel ? { machineLabel: paired.machineLabel } : {}) },
-      );
+      ctx.io.emit(`✓ Paired. Run \`birdybeep test\` to send a test Beep.`, {
+        paired: true,
+        machineId: paired.machineId,
+      });
       return EXIT.OK;
     },
   };

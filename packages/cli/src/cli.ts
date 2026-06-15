@@ -5,12 +5,11 @@
  */
 import { buildCommands } from "./commands";
 import { type Command, dispatch, type Writer } from "./framework";
+import { CLI_VERSION } from "./version";
 
 export { buildCommands } from "./commands";
 export * from "./framework";
-
-/** CLI version marker — replaced by the real build/version pipeline (a-release). */
-export const CLI_VERSION = "0.0.0";
+export { CLI_VERSION } from "./version";
 
 export interface RunCliDeps {
   stdout?: Writer;

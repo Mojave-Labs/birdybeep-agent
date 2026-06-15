@@ -1,9 +1,9 @@
 /**
- * `birdybeep report-status` proof (hermetic temp HOME, recording stub): each adapter's
- * pre-event status is POSTed to /v1/integrations/status with machine-token (Bearer) auth and
- * the correct harness + status value (incl. Codex `needs_trust`); an unreachable backend is
- * surfaced as "deferred" without hard-failing; and a not-logged-in run exits non-zero.
- * (Live post is a deferred follow-up.)
+ * `birdybeep report-status` proof (hermetic temp HOME): sends ONE batched
+ * { integrations: [...] } POST to /v1/integrations/status with Bearer auth, surfaces the
+ * server's EFFECTIVE per-harness status from the { integrations: [...] } response, treats a
+ * 401/403 (mirrored error envelope) as TERMINAL (exit non-zero), and an unreachable backend
+ * as deferred (exit 0, never blocks install). not-logged-in exits non-zero.
  */
 import { randomUUID } from "node:crypto";
 
@@ -38,16 +38,30 @@ function capture(): { writer: { write: (s: string) => void }; text: () => string
 interface Recorded {
   url: string;
   auth: string | undefined;
-  body: unknown;
+  body:
+    | {
+        integrations?: {
+          harness: string;
+          status: string;
+          harness_version?: string;
+          adapter_version?: string;
+        }[];
+      }
+    | undefined;
 }
-function recordingFetch(records: Recorded[]): typeof fetch {
+function recordingFetch(
+  records: Recorded[],
+  response: { status: number; body: unknown },
+): typeof fetch {
   return ((url: string | URL, opts?: { headers?: Record<string, string>; body?: string }) => {
     records.push({
       url: String(url),
       auth: opts?.headers?.["authorization"],
-      body: opts?.body ? (JSON.parse(opts.body) as unknown) : undefined,
+      body: opts?.body ? (JSON.parse(opts.body) as Recorded["body"]) : undefined,
     });
-    return Promise.resolve(new Response("{}", { status: 200 }));
+    return Promise.resolve(
+      new Response(JSON.stringify(response.body), { status: response.status }),
+    );
   }) as unknown as typeof fetch;
 }
 
@@ -61,17 +75,22 @@ function adapter(id: string, status: IntegrationStatus): AgentAdapter {
 }
 
 describe("birdybeep report-status", () => {
-  it("POSTs each integration status with Bearer auth + the right harness/status", async () => {
+  it("sends ONE batched request with Bearer auth and surfaces the server's effective status", async () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
     const records: Recorded[] = [];
+    // Server overrides codex → needs_trust regardless of what the CLI reported.
     const cmd = createReportStatusCommand({
-      adapters: [
-        adapter("claude_code", "installed"),
-        adapter("codex", "needs_trust"),
-        adapter("opencode", "needs_restart"),
-      ],
-      fetchImpl: recordingFetch(records),
+      adapters: [adapter("claude_code", "installed"), adapter("codex", "installed")],
+      fetchImpl: recordingFetch(records, {
+        status: 200,
+        body: {
+          integrations: [
+            { harness: "claude_code", status: "installed" },
+            { harness: "codex", status: "needs_trust" },
+          ],
+        },
+      }),
       tokenOptions: FILE_ONLY,
     });
     const out = capture();
@@ -83,23 +102,48 @@ describe("birdybeep report-status", () => {
     });
 
     expect(code).toBe(EXIT.OK);
-    expect(records).toHaveLength(3);
-    for (const r of records) {
-      expect(r.url).toMatch(/\/v1\/integrations\/status$/);
-      expect(r.auth).toBe(`Bearer ${TOKEN}`); // machine-token auth path
-    }
-    const byHarness = Object.fromEntries(
-      records.map((r) => [(r.body as { harness: string }).harness, r.body as { status: string }]),
-    );
-    expect(byHarness["codex"]?.status).toBe("needs_trust"); // pre-event state reported
-    expect(byHarness["opencode"]?.status).toBe("needs_restart");
-    expect(byHarness["claude_code"]?.status).toBe("installed");
+    // Exactly ONE batched POST (not one per harness).
+    expect(records).toHaveLength(1);
+    expect(records[0]?.url).toMatch(/\/v1\/integrations\/status$/);
+    expect(records[0]?.auth).toBe(`Bearer ${TOKEN}`);
+    expect(records[0]?.body?.integrations?.map((i) => i.harness)).toEqual(["claude_code", "codex"]);
+    // Each item carries harness_version (from detect) + adapter_version (the BirdyBeep adapter).
+    expect(records[0]?.body?.integrations?.[0]?.harness_version).toBe("1.0.0");
+    expect(records[0]?.body?.integrations?.[0]?.adapter_version).toBeDefined();
 
-    const json = JSON.parse(out.text()) as { results: { reported: boolean }[] };
-    expect(json.results.every((r) => r.reported)).toBe(true);
+    const json = JSON.parse(out.text()) as {
+      outcome: string;
+      integrations: { harness: string; status: string }[];
+    };
+    expect(json.outcome).toBe("reported");
+    // The EFFECTIVE (server) status is surfaced, not what we sent.
+    const byHarness = Object.fromEntries(json.integrations.map((i) => [i.harness, i.status]));
+    expect(byHarness["codex"]).toBe("needs_trust");
   });
 
-  it("surfaces an unreachable backend as deferred without hard-failing", async () => {
+  it("treats a 401/403 as terminal and exits non-zero", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const cmd = createReportStatusCommand({
+      adapters: [adapter("codex", "needs_trust")],
+      fetchImpl: recordingFetch([], {
+        status: 403,
+        body: { error: { code: "token_revoked", message: "revoked" } },
+      }),
+      tokenOptions: FILE_ONLY,
+    });
+    const out = capture();
+    const code = await runCli(["report-status", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.ERROR);
+    expect(JSON.parse(out.text())).toMatchObject({ outcome: "terminal", error: "token_revoked" });
+  });
+
+  it("treats an unreachable backend as deferred without hard-failing (exit 0)", async () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
     const cmd = createReportStatusCommand({
@@ -114,9 +158,8 @@ describe("birdybeep report-status", () => {
       stderr: out.writer,
       ensureConfig: false,
     });
-    expect(code).toBe(EXIT.OK); // never blocks/fails install
-    const json = JSON.parse(out.text()) as { results: { reported: boolean }[] };
-    expect(json.results[0]?.reported).toBe(false); // deferred
+    expect(code).toBe(EXIT.OK);
+    expect(JSON.parse(out.text())).toMatchObject({ outcome: "deferred" });
   });
 
   it("exits non-zero when not logged in", async () => {
@@ -124,7 +167,7 @@ describe("birdybeep report-status", () => {
     await clearToken(FILE_ONLY);
     const cmd = createReportStatusCommand({
       adapters: [adapter("codex", "needs_trust")],
-      fetchImpl: recordingFetch([]),
+      fetchImpl: recordingFetch([], { status: 200, body: { integrations: [] } }),
       tokenOptions: FILE_ONLY,
     });
     const out = capture();

@@ -32,9 +32,16 @@ export function readCliConfig(): CliConfig {
   }
 }
 
-/** Merge + persist non-secret CLI config (strict-perm dir). Refuses anything token-shaped. */
+/**
+ * Merge + persist non-secret CLI config (strict-perm dir). Only the KNOWN non-secret keys
+ * are ever written — anything else (e.g. a token someone passed by mistake) is dropped, so
+ * the token can only ever live in the secure store, never here.
+ */
 export function writeCliConfig(patch: CliConfig): void {
-  const merged = { ...readCliConfig(), ...patch };
+  const current = readCliConfig();
+  const merged: CliConfig = {};
+  const apiUrl = patch.apiUrl ?? current.apiUrl;
+  if (apiUrl !== undefined) merged.apiUrl = apiUrl;
   mkdirSync(birdyBeepConfigDir(), { recursive: true, mode: 0o700 });
   writeFileSync(cliConfigPath(), `${JSON.stringify(merged, null, 2)}\n`, { mode: 0o600 });
 }

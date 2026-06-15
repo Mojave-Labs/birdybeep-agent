@@ -185,11 +185,12 @@ This is the point of a public, auditable package — don't take our word for it:
   what is delivered or queued, and `birdybeep doctor` to inspect token storage, adapter status, queue
   depth, and backend reachability.
 
-## Provisional / changing surfaces
+## Changing surfaces
 
-- The `login` device-flow pairing endpoints (`POST /v1/cli/pair`, `POST /v1/cli/pair/poll`) and the
-  integration-status endpoint are **provisional** and not yet pinned in the product repo — the field
-  names may change.
+- The `login` device-flow pairing endpoints (`POST /v1/pair/start`, `POST /v1/pair/token`) and the
+  batched integration-status endpoint (`POST /v1/integrations/status`) are cross-repo contracts; the
+  request/response schemas are mirrored field-for-field in `agent-core` (kept in lockstep with the
+  product's `packages/schemas`). The live pass against the product backend is a deferred follow-up.
 - The redaction patterns are best-effort. Truncation and the structural metadata bounds are the
   backstop, but if you handle especially sensitive material, treat the redaction list as a helpful
   default rather than a guarantee and review what your adapter emits.

@@ -74,33 +74,28 @@ function detected(adapter: AgentAdapter): AgentAdapter {
   return { ...adapter, detect: () => Promise.resolve({ detected: true, version: "test" }) };
 }
 
-/** Stub pairing backend: start → paired (issues MACHINE_TOKEN). */
+/** Stub device-code pairing backend: /pair/start opens a session; /pair/token issues the token. */
 function stubPairing(): typeof fetch {
   return ((url: string | URL) => {
     const u = String(url);
-    if (u.endsWith("/v1/cli/pair")) {
+    if (u.endsWith("/v1/pair/start")) {
       return Promise.resolve(
         new Response(
           JSON.stringify({
-            pair_url: "https://birdybeep.dev/p/Z9",
+            device_code: "dc_e2e",
             user_code: "Z9-42",
-            poll_token: "pt",
-            interval_ms: 1,
-            expires_in_ms: 10_000,
+            qr_payload: "birdybeep://pair?code=Z9-42",
+            expires_at: new Date(Date.now() + 600_000).toISOString(),
           }),
           { status: 200 },
         ),
       );
     }
+    // /v1/pair/token → 201 with the durable token.
     return Promise.resolve(
-      new Response(
-        JSON.stringify({
-          status: "paired",
-          machine_token: MACHINE_TOKEN,
-          machine_label: "Dev Mac",
-        }),
-        { status: 200 },
-      ),
+      new Response(JSON.stringify({ machine_token: MACHINE_TOKEN, machine_id: "mac_e2e" }), {
+        status: 201,
+      }),
     );
   }) as unknown as typeof fetch;
 }

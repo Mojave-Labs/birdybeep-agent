@@ -233,13 +233,18 @@ type AgentSessionStatus =
 
 ## 11. Security, privacy & what's sent (PRD §15.1–15.3)
 
-**Pairing protocol (PROVISIONAL — confirm with the product repo before live `login`):**
-The CLI `login` uses a device-authorization-style flow: `POST /v1/cli/pair` returns a short
-URL + user code + poll token (short-lived, no token); the CLI polls `POST /v1/cli/pair/poll`
-until it returns `{ status: "paired", machine_token }`. The token is stored in the secure
-store only. These endpoint paths/field names are NOT a §10.1 event-schema concern and are
-**not yet pinned in the product repo** — the live `birdybeep login` E2E is a deferred
-follow-up; the client is stub-tested against this provisional shape.
+**Pairing protocol (device-code flow; schemas mirrored from the product `packages/schemas`):**
+`birdybeep login` POSTs `/v1/pair/start` (`{ machine_label, os?, cli_version?, requested_scopes? }`)
+→ bare `{ device_code, user_code, qr_payload, expires_at }`; it shows `qr_payload` + `user_code`
+(the QR carries only the short code, never a token) and polls `POST /v1/pair/token`
+(`{ device_code, machine_fingerprint? }`) — a `validation_failed`/4xx means "not approved yet,
+keep polling" — until `201 { machine_token, machine_id }` or the `expires_at` deadline. The token
+is stored in the secure store only. `report-status` sends ONE batched
+`POST /v1/integrations/status` (`{ integrations: [{ harness, status, harness_version?,
+adapter_version? }] }`) and reads the server's effective status from the `{ integrations: [...] }`
+response; a 401/403 (mirrored error envelope) is terminal, offline is deferred. These shapes are
+mirrored field-for-field in `agent-core` (§16.4 lockstep); the LIVE pass against the product
+backend is the deferred cross-repo follow-up.
 
 **Tokens:**
 - The pairing QR contains only short-lived pairing info — **never a durable token**.

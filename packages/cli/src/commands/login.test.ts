@@ -1,8 +1,9 @@
 /**
- * `birdybeep login` proof (hermetic temp HOME, stub pairing server): the device flow shows
- * a pair URL + code, polls until paired, and stores the issued machine token in the SECURE
- * store — while the non-secret apiUrl goes to config and the token NEVER appears in config /
- * output. A pairing window that expires exits non-zero. (Live pairing is a deferred follow-up.)
+ * `birdybeep login` proof (hermetic temp HOME, stub device-code backend): POST /v1/pair/start
+ * → show qr_payload + user_code → poll POST /v1/pair/token (validation_failed/4xx = pending)
+ * until 201 {machine_token, machine_id}; store the token in the SECURE store, persist the
+ * non-secret apiUrl, and NEVER write the token to config/output. An expired window exits
+ * non-zero. Shapes are the product's canonical pairing contract.
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -30,54 +31,49 @@ function capture(): { writer: { write: (s: string) => void }; text: () => string
   return { writer: { write: (s) => chunks.push(s) }, text: () => chunks.join("") };
 }
 
-/** Stub pairing backend: `/v1/cli/pair` starts; `/v1/cli/pair/poll` is pending then paired. */
-function stubPairing(opts: { alwaysPending?: boolean } = {}): typeof fetch {
+/** Stub device-code backend. `/pair/start` opens a session; `/pair/token` is 400 then 201. */
+function stubPairing(opts: { expiresAt?: string; alwaysPending?: boolean } = {}): typeof fetch {
   let polls = 0;
   return ((url: string | URL) => {
     const u = String(url);
-    if (u.endsWith("/v1/cli/pair")) {
+    if (u.endsWith("/v1/pair/start")) {
       return Promise.resolve(
         new Response(
           JSON.stringify({
-            pair_url: "https://birdybeep.dev/p/ABCD",
-            user_code: "ABCD-1234",
-            poll_token: "pt_test",
-            interval_ms: 1,
-            expires_in_ms: 10_000,
+            device_code: "dc_test",
+            user_code: "AB-1234",
+            qr_payload: "birdybeep://pair?code=AB-1234",
+            expires_at: opts.expiresAt ?? new Date(Date.now() + 600_000).toISOString(),
           }),
           { status: 200 },
         ),
       );
     }
-    if (u.endsWith("/v1/cli/pair/poll")) {
-      polls += 1;
-      if (opts.alwaysPending || polls < 2) {
-        return Promise.resolve(
-          new Response(JSON.stringify({ status: "pending" }), { status: 200 }),
-        );
-      }
+    // /v1/pair/token — validation_failed (400) while pending, then 201 with the token.
+    polls += 1;
+    if (opts.alwaysPending || polls < 2) {
       return Promise.resolve(
         new Response(
-          JSON.stringify({
-            status: "paired",
-            machine_token: MACHINE_TOKEN,
-            machine_label: "MacBook",
-          }),
-          { status: 200 },
+          JSON.stringify({ error: { code: "validation_failed", message: "not yet approved" } }),
+          { status: 400 },
         ),
       );
     }
-    return Promise.resolve(new Response("not found", { status: 404 }));
+    return Promise.resolve(
+      new Response(JSON.stringify({ machine_token: MACHINE_TOKEN, machine_id: "mac_1" }), {
+        status: 201,
+      }),
+    );
   }) as unknown as typeof fetch;
 }
 
 describe("birdybeep login", () => {
-  it("pairs, stores the token securely, and never writes it to config", async () => {
+  it("pairs via the device-code flow and stores the token securely (not in config)", async () => {
     sandbox = createSandbox();
     const cmd = createLoginCommand({
       fetchImpl: stubPairing(),
       tokenOptions: FILE_ONLY,
-      sleep: () => Promise.resolve(), // instant polls
+      sleep: () => Promise.resolve(),
     });
     const out = capture();
     const code = await runCli(["login"], {
@@ -88,21 +84,18 @@ describe("birdybeep login", () => {
     });
 
     expect(code).toBe(EXIT.OK);
-    expect(out.text()).toContain("ABCD-1234"); // the manual code (and pair URL) are shown
-    expect(out.text()).toContain("birdybeep.dev/p/ABCD");
+    expect(out.text()).toContain("AB-1234"); // user code shown (manual path)
+    expect(out.text()).toContain("birdybeep://pair?code=AB-1234"); // qr_payload shown
     expect(out.text()).toMatch(/Paired/);
 
-    // Durable token is in the secure store...
-    expect(await getToken(FILE_ONLY)).toBe(MACHINE_TOKEN);
-    // ...and NOT in the config file (which holds only the non-secret apiUrl).
+    expect(await getToken(FILE_ONLY)).toBe(MACHINE_TOKEN); // token in the secure store
     const config = readFileSync(cliConfigPath(), "utf8");
     expect(config).toContain("apiUrl");
-    expect(config).not.toContain(MACHINE_TOKEN);
-    // ...and never printed.
-    expect(out.text()).not.toContain(MACHINE_TOKEN);
+    expect(config).not.toContain(MACHINE_TOKEN); // never in config
+    expect(out.text()).not.toContain(MACHINE_TOKEN); // never printed
   });
 
-  it("--json emits the paired result without the token", async () => {
+  it("--json emits the paired result + machine id, without the token", async () => {
     sandbox = createSandbox();
     const cmd = createLoginCommand({
       fetchImpl: stubPairing(),
@@ -116,20 +109,21 @@ describe("birdybeep login", () => {
       stderr: out.writer,
       ensureConfig: false,
     });
-    const json = JSON.parse(out.text()) as { paired: boolean; machineLabel?: string };
-    expect(json).toMatchObject({ paired: true, machineLabel: "MacBook" });
+    const json = JSON.parse(out.text()) as { paired: boolean; machineId?: string };
+    expect(json).toMatchObject({ paired: true, machineId: "mac_1" });
     expect(out.text()).not.toContain(MACHINE_TOKEN);
   });
 
-  it("exits non-zero when the pairing window expires without confirmation", async () => {
+  it("exits non-zero when the pairing window expires without approval", async () => {
     sandbox = createSandbox();
     let t = 0;
     const cmd = createLoginCommand({
-      fetchImpl: stubPairing({ alwaysPending: true }),
+      // expires_at fixed at epoch 1,000,000 ms; the injected clock crosses it after one poll.
+      fetchImpl: stubPairing({ expiresAt: new Date(1_000_000).toISOString(), alwaysPending: true }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
       now: () => {
-        t += 6000; // each call advances 6s → crosses the 10s window after a couple polls
+        t += 600_000;
         return t;
       },
     });
@@ -142,6 +136,6 @@ describe("birdybeep login", () => {
     });
     expect(code).toBe(EXIT.ERROR);
     expect(out.text()).toMatch(/timed out/);
-    expect(await getToken(FILE_ONLY)).toBeNull(); // no token stored on failure
+    expect(await getToken(FILE_ONLY)).toBeNull(); // no token on failure
   });
 });
