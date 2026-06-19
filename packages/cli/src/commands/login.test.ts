@@ -8,13 +8,14 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { getToken, unavailableKeychainBackend } from "@birdybeep/agent-core";
+import { getOS, getToken, unavailableKeychainBackend } from "@birdybeep/agent-core";
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { runCli } from "../cli";
 import { cliConfigPath } from "../config";
 import { EXIT } from "../framework";
+import { CLI_VERSION } from "../version";
 import { createLoginCommand } from "./login";
 
 const MACHINE_TOKEN = `bbm_TESTONLY_${randomUUID()}`;
@@ -32,11 +33,17 @@ function capture(): { writer: { write: (s: string) => void }; text: () => string
 }
 
 /** Stub device-code backend. `/pair/start` opens a session; `/pair/token` is 400 then 201. */
-function stubPairing(opts: { expiresAt?: string; alwaysPending?: boolean } = {}): typeof fetch {
+function stubPairing(
+  opts: { expiresAt?: string; alwaysPending?: boolean; onStartBody?: (body: unknown) => void } = {},
+): typeof fetch {
   let polls = 0;
-  return ((url: string | URL) => {
+  return ((url: string | URL, init?: RequestInit) => {
     const u = String(url);
     if (u.endsWith("/v1/pair/start")) {
+      // Capture the request body so tests can assert what the CLI actually sends (s0o7).
+      if (opts.onStartBody) {
+        opts.onStartBody(typeof init?.body === "string" ? JSON.parse(init.body) : init?.body);
+      }
       return Promise.resolve(
         new Response(
           JSON.stringify({
@@ -93,6 +100,38 @@ describe("birdybeep login", () => {
     expect(config).toContain("apiUrl");
     expect(config).not.toContain(MACHINE_TOKEN); // never in config
     expect(out.text()).not.toContain(MACHINE_TOKEN); // never printed
+  });
+
+  it("sends machine_label + os + cli_version on POST /v1/pair/start (s0o7)", async () => {
+    // The mobile approval sheet (06-pair-approve) shows the pending machine's name/OS/CLI
+    // version BEFORE consent; the backend can only surface them if the CLI puts them in the
+    // /pair/start body. Guards against a regression that drops these to null. The live
+    // cross-repo proof lives in the product repo's xrepo-e2e (/v1/pair/inspect round-trip).
+    sandbox = createSandbox();
+    let startBody: Record<string, unknown> | undefined;
+    const cmd = createLoginCommand({
+      fetchImpl: stubPairing({ onStartBody: (b) => (startBody = b as Record<string, unknown>) }),
+      tokenOptions: FILE_ONLY,
+      sleep: () => Promise.resolve(),
+    });
+    const out = capture();
+    const code = await runCli(["login"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+
+    expect(code).toBe(EXIT.OK);
+    expect(startBody).toBeDefined();
+    // Required label is always present; os + cli_version are the s0o7 additions.
+    expect(typeof startBody?.machine_label).toBe("string");
+    expect((startBody?.machine_label as string).length).toBeGreaterThan(0);
+    expect(startBody?.os).toBe(getOS()); // normalized for THIS host (macos|windows|linux)
+    expect(startBody?.cli_version).toBe(CLI_VERSION); // the @birdybeep/cli version marker
+    // Neither field is null/undefined — the sheet would render "unknown" if so.
+    expect(startBody?.os).not.toBeNull();
+    expect(startBody?.cli_version).not.toBeNull();
   });
 
   it("--json emits the paired result + machine id, without the token", async () => {
