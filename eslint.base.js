@@ -29,7 +29,10 @@ export default function birdybeepConfig(tsconfigRootDir) {
       languageOptions: {
         parser: tseslint.parser,
         parserOptions: {
-          projectService: true,
+          // `allowDefaultProject` lets typed linting cover root-level TS config files
+          // (e.g. `tsup.config.ts`) that intentionally sit outside `src` / the package
+          // tsconfig `include`. No `**` allowed; the file must not also be in a tsconfig.
+          projectService: { allowDefaultProject: ["*.config.ts"] },
           tsconfigRootDir,
         },
       },
