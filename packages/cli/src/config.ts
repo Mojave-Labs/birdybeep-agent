@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { birdyBeepConfigDir } from "@birdybeep/agent-core";
 
 /** Default backend base URL (overridable via env or `birdybeep login`; finalized in a-release). */
-export const DEFAULT_API_URL = "https://api.birdybeep.dev";
+export const DEFAULT_API_URL = "https://api.birdybeep.com";
 export const CONFIG_FILE = "config.json";
 
 export interface CliConfig {

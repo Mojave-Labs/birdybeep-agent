@@ -27,7 +27,7 @@ export interface SendResult {
 }
 
 export interface SenderConfig {
-  /** API base URL, e.g. `https://api.birdybeep.dev` (or a `wrangler dev` URL). */
+  /** API base URL, e.g. `https://api.birdybeep.com` (or a `wrangler dev` URL). */
   baseUrl: string;
   /** Hard per-request timeout (default 3s) — the harness must not wait longer. */
   timeoutMs?: number;
