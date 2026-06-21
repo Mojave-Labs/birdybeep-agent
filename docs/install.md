@@ -54,7 +54,7 @@ This uses a device-flow pairing handshake. The CLI prints a short link and a cod
 
 ```text
 To pair this machine, open the link and confirm the code:
-   Scan or open:  https://birdybeep.app/pair/…
+   Scan or open:  https://birdybeep.com/pair?code=WXYZ-1234
    Code:  WXYZ-1234
 Waiting for confirmation…
 ```
