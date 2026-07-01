@@ -103,13 +103,25 @@ if ! curl -sf "$REGISTRY/-/ping" >/dev/null 2>&1; then
 fi
 echo "✓ verdaccio up (log: $LOG)"
 
-# ---- 4. Publish ALL packages with pnpm (resolves workspace:* → real versions) ----
+# ---- 4. Build + packaging guard BEFORE publishing ----
+# `files: ["dist"]` means an unbuilt tree packs near-EMPTY tarballs (just package.json +
+# LICENSE) and the CLI's `bin` target doesn't exist. check-pack fails hard if dist/ is
+# missing or anything forbidden would ship, so a bad rehearsal can't look like a good one.
+echo "▶ building all packages…"
+pnpm turbo build
+node scripts/check-pack.mjs
+
+# ---- 5. Publish ALL packages with pnpm (resolves workspace:* → real versions) ----
 # NPM_CONFIG_USERCONFIG is applied per-command here (not exported) so it can't affect the
 # verdaccio downloads above. pnpm honors this env var for its registry + auth token.
+# --force: pnpm keeps a CLIENT-side metadata cache per registry host; a version published
+# to localhost:${PORT} in an earlier run (even against long-gone storage) makes pnpm
+# SILENTLY skip that package ("already published", exit 0). The registry is throwaway and
+# freshly wiped, so an unconditional publish is exactly what we want.
 echo "▶ publishing @birdybeep/* with pnpm…"
-NPM_CONFIG_USERCONFIG="$NPMRC" pnpm -r publish --registry "$REGISTRY" --no-git-checks --access public
+NPM_CONFIG_USERCONFIG="$NPMRC" pnpm -r publish --force --registry "$REGISTRY" --no-git-checks --access public
 
-# ---- 5. Real global install from the local registry, into an isolated prefix ----
+# ---- 6. Real global install from the local registry, into an isolated prefix ----
 echo "▶ installing @birdybeep/cli globally into $GLOBAL_PREFIX …"
 NPM_CONFIG_USERCONFIG="$NPMRC" npm install -g @birdybeep/cli --registry "$REGISTRY" --prefix "$GLOBAL_PREFIX"
 
