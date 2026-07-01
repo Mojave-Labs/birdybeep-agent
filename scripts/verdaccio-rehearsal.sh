@@ -173,14 +173,27 @@ else
   # reorders PATH. Leaving the subshell (exit / Ctrl-D) tears everything down via the trap.
   export PATH="$GLOBAL_PREFIX/bin:$PATH"
   export NPM_CONFIG_USERCONFIG="$NPMRC"
-  cat <<EOF
 
-▶ dropping you into a subshell to test the installed CLI (type 'exit' or Ctrl-D to tear down).
-    • 'birdybeep' is on your PATH — try:            birdybeep doctor
-    • npm here points at the local registry — try:  npm view @birdybeep/cli
-    • fallbacks: \$BIRDYBEEP_BIN (absolute binary), \$BIRDYBEEP_REGISTRY (registry URL)
-  Note: npm in this subshell only talks to the throwaway registry; your real shell is untouched.
-EOF
+  # A loud, boxed banner so it's unmistakable you've entered the throwaway test subshell.
+  # Bold/green only when stdout is a real terminal; the box still renders plainly otherwise.
+  if [ -t 1 ]; then _b=$'\033[1m'; _g=$'\033[1;32m'; _dim=$'\033[2m'; _rst=$'\033[0m'
+  else _b=''; _g=''; _dim=''; _rst=''; fi
+  _W=62
+  _rule="$(printf '─%.0s' $(seq 1 $((_W + 2))))"
+  printf '\n'
+  printf '%s┌%s┐%s\n' "$_g" "$_rule" "$_rst"
+  printf '%s│%s %s%-*s%s %s│%s\n' "$_g" "$_rst" "$_b" "$_W" "YOU ARE NOW IN THE BIRDYBEEP TEST SUBSHELL" "$_rst" "$_g" "$_rst"
+  printf '%s│%s %-*s %s│%s\n' "$_g" "$_rst" "$_W" "" "$_g" "$_rst"
+  printf '%s│%s %-*s %s│%s\n' "$_g" "$_rst" "$_W" "The @birdybeep/cli you just built is installed and ready." "$_g" "$_rst"
+  printf '%s│%s %s%-*s%s %s│%s\n' "$_g" "$_rst" "$_b" "$_W" "Type 'exit' or press Ctrl-D to leave and tear it all down." "$_rst" "$_g" "$_rst"
+  printf '%s└%s┘%s\n' "$_g" "$_rule" "$_rst"
+  printf '\n'
+  printf '  Try it out:\n'
+  printf "    %sbirdybeep doctor%s         # 'birdybeep' is already on your PATH\n" "$_b" "$_rst"
+  printf "    %snpm view @birdybeep/cli%s  # npm here talks ONLY to the throwaway registry\n" "$_b" "$_rst"
+  printf '  %sFallbacks:%s $BIRDYBEEP_BIN (absolute binary), $BIRDYBEEP_REGISTRY (registry URL)\n' "$_dim" "$_rst"
+  printf '  %sYour real shell and npm config are untouched.%s\n\n' "$_dim" "$_rst"
+
   "${SHELL:-/bin/bash}" -i || true
   echo "▶ subshell closed — tearing down."
 fi
