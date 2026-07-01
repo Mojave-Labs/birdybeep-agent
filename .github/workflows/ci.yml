@@ -40,3 +40,20 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: pnpm format:check
+
+  # A PR that changes a publishable package must carry a changeset, so versions
+  # never drift out of someone's head. Runs on PRs only (on main the changesets
+  # have already been consumed by the merged Version PR). `changeset status`
+  # exits non-zero when changed packages have no associated changeset.
+  changeset:
+    name: changeset status
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - name: Ensure the base branch is available for the diff
+        run: git fetch origin "$GITHUB_BASE_REF"
+      - run: pnpm changeset status --since="origin/$GITHUB_BASE_REF"

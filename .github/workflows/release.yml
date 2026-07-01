@@ -1,0 +1,58 @@
+name: Release
+
+# The industry-standard Changesets "Version PR" flow.
+#
+# On every push to main this runs `changesets/action`:
+#   • If unreleased changesets exist, it opens/updates a "Version Packages" PR
+#     that bumps the fixed group (see .changeset/config.json) and writes changelogs.
+#     Merging THAT PR is the deliberate release switch — ordinary commits publish nothing.
+#   • When the Version PR is merged (no changesets left on main), it runs
+#     `pnpm release:ci` → build + packaging guard (check-pack) + `changeset publish`,
+#     which uploads the fixed group to npm in dependency order and pushes git tags.
+#
+# HUMAN-REQUIRED before the first publish (A-HUMAN-NPM):
+#   • Create the @birdybeep npm org and an npm *automation* token (2FA-on-publish OFF).
+#   • Add it as the `NPM_TOKEN` repo secret (Settings → Secrets → Actions).
+#   • Make the repo public (provenance below requires a public repo at publish time).
+
+on:
+  push:
+    branches: [main]
+
+# Only one release run at a time so the Version PR / publish never race.
+concurrency: release-${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: write # push the Version PR branch + release tags
+  pull-requests: write # open/update the "Version Packages" PR
+  id-token: write # npm provenance (supply-chain attestation)
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Changesets needs full history to diff versions / write changelogs.
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup
+
+      - name: Create Version PR or publish to npm
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          # Default `version` command (`changeset version`) applies the fixed-group
+          # bump + changelogs for the Version PR. `publish` runs only once that PR
+          # is merged and no changesets remain.
+          publish: pnpm release:ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Generate npm provenance for a public, auditable supply chain.
+          NPM_CONFIG_PROVENANCE: "true"

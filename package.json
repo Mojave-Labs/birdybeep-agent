@@ -22,6 +22,7 @@
     "changeset:version": "changeset version",
     "changeset:status": "changeset status",
     "release": "node scripts/release.mjs",
+    "release:ci": "turbo run build && node scripts/check-pack.mjs && changeset publish",
     "smoke": "node scripts/smoke-test.mjs",
     "prepare": "node scripts/install-hooks.mjs"
   },
