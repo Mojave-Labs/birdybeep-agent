@@ -79,7 +79,15 @@ pnpm smoke     # packs all 5, installs @birdybeep/cli from tarballs into a clean
 ```
 
 For a true `npm install -g` dress rehearsal, publish to a local registry (Verdaccio) — no
-credentials, nothing touches real npm:
+credentials, nothing touches real npm. **`scripts/verdaccio-rehearsal.sh` does the whole thing**
+(starts Verdaccio, publishes all five with pnpm, global-installs the CLI into an isolated prefix,
+runs it, and tears down on exit):
+
+```bash
+./scripts/verdaccio-rehearsal.sh          # PORT=4874 ./scripts/... if 4873 is busy
+```
+
+Or by hand, if you want to see the moving parts:
 
 ```bash
 npx verdaccio &                                   # local registry on http://localhost:4873
