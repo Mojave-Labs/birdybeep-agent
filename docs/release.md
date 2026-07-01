@@ -45,6 +45,16 @@ publish`), which publishes the fixed group to npm in dependency order and pushes
 For the very first release, the pending changeset bumps `0.0.0 → 0.0.1`; merging the Version PR
 ships `0.0.1` publicly.
 
+### One-time repo setting (so the Version PR can open)
+
+`changesets/action` opens the "Version Packages" PR using the built-in `GITHUB_TOKEN`. GitHub
+blocks that by default, so enable it once: **Settings → Actions → General → Workflow permissions
+→ check "Allow GitHub Actions to create and approve pull requests."** If the org enforces this
+at the org level, it must be enabled there too — the org setting wins. Without it, the release
+workflow runs `changeset version` and pushes the `changeset-release/main` branch but fails at the
+final "create pull request" step with `GitHub Actions is not permitted to create ... pull
+requests` (you can still open that PR by hand from the pushed branch as a fallback).
+
 ## HUMAN-REQUIRED before the first publish (`A-HUMAN-NPM`)
 
 The workflow is inert until a human does these once:
@@ -57,10 +67,41 @@ The workflow is inert until a human does these once:
    enabled in the workflow) requires a public source repo at publish time.
 
 Until you're ready to ship publicly, just don't merge the Version PR — test the built CLI
-locally first:
+locally first (see below).
+
+## Testing the package locally (before any real publish)
+
+Fastest → most realistic:
 
 ```bash
-pnpm release        # dry-run: build + packaging guard + `npm pack --dry-run` plan, ZERO registry calls
+pnpm release   # dry-run: build + packaging guard + `npm pack --dry-run` plan, ZERO registry calls
+pnpm smoke     # packs all 5, installs @birdybeep/cli from tarballs into a clean temp project, runs the bin
+```
+
+For a true `npm install -g` dress rehearsal, publish to a local registry (Verdaccio) — no
+credentials, nothing touches real npm:
+
+```bash
+npx verdaccio &                                   # local registry on http://localhost:4873
+pnpm -r publish --registry http://localhost:4873 --no-git-checks --access public
+npm install -g @birdybeep/cli --registry http://localhost:4873
+birdybeep --help
+```
+
+**Always publish with `pnpm`, never `npm`.** `pnpm publish` (and `changeset publish`, which
+shells out to it) rewrites the `workspace:*` dependency ranges to real versions; a raw
+`npm publish` ships them verbatim, so `npm install` then fails with
+`Unsupported URL Type "workspace:"`. `npm install` itself is fine — the rule is publish-only.
+
+Because every package sits at the same version until a release bumps it, the registry rejects
+re-publishing an existing version. **To reset a Verdaccio run, wipe its storage and republish all
+five** rather than `npm unpublish` (unpublish leaves stale state that makes `pnpm` skip the
+re-publish):
+
+```bash
+# stop verdaccio, then remove its storage (exact path is in verdaccio's startup log; commonly):
+rm -rf ~/.local/share/verdaccio/storage ~/.config/verdaccio/storage
+# restart verdaccio, then re-run the `pnpm -r publish` above.
 ```
 
 ## Manual escape hatch
