@@ -14,6 +14,12 @@
 #
 # Override the port if 4873 is busy:  PORT=4874 ./scripts/verdaccio-rehearsal.sh
 #
+# After installing, the script HOLDS OPEN so you can actually exercise the CLI before it
+# tears everything down: it drops you into a subshell with `birdybeep` on your PATH and
+# npm pointed at the throwaway registry. Leave the subshell (exit / Ctrl-D) to tear down.
+#   NO_HOLD=1 ./scripts/verdaccio-rehearsal.sh    # old behavior: run the binary, then exit
+#   HOLD=wait ./scripts/verdaccio-rehearsal.sh    # just pause; drive it from another terminal
+#
 set -euo pipefail
 
 PORT="${PORT:-4873}"
@@ -130,14 +136,51 @@ echo "▶ running the installed binary:"
 "$BIN" --version
 "$BIN" --help
 
-cat <<EOF
+echo
+echo "✓ rehearsal passed — @birdybeep/cli installed from a local registry and ran."
+echo "    binary:   $BIN"
+echo "    registry: $REGISTRY"
 
-✓ rehearsal passed — @birdybeep/cli installed from a local registry and ran.
-  binary:   $BIN
-  registry: $REGISTRY (stops when this script exits)
+# ---- 7. Hold open so you can actually exercise the CLI before teardown ----
+# Without this the script would exit here, the EXIT trap would kill verdaccio, and the
+# installed CLI would be gone before you could type a single command. So, when we're on a
+# terminal, drop into an interactive subshell that already has the CLI on PATH and npm
+# pointed at the throwaway registry; teardown (the trap) waits until you leave it.
+# Exposed regardless of hold mode so `$BIN`/`npm --registry …` work from other terminals:
+export BIRDYBEEP_REGISTRY="$REGISTRY"
+export BIRDYBEEP_BIN="$BIN"
 
-To poke at it more before it tears down, open another terminal and run:
-  npm --registry $REGISTRY view @birdybeep/cli
-  $BIN doctor
-Re-running this script wipes $WORK and starts clean.
+if [ -n "${NO_HOLD:-}" ] || { [ ! -t 0 ] && [ "${HOLD:-}" != "wait" ]; }; then
+  # Non-interactive (CI, piped) or NO_HOLD=1: keep the old behavior — we already ran the
+  # binary above, so just fall through to the EXIT trap and tear down.
+  echo "▶ not holding (NO_HOLD/non-interactive) — tearing down. Re-running wipes $WORK and starts clean."
+elif [ "${HOLD:-}" = "wait" ]; then
+  # Simple pause: keep verdaccio + the installed CLI alive and drive it from ANOTHER
+  # terminal (you point npm at the registry yourself there).
+  cat <<EOF
+
+▶ holding open (HOLD=wait). In another terminal, e.g.:
+    npm --registry $REGISTRY view @birdybeep/cli
+    $BIN doctor
+  Press Enter here to tear everything down…
 EOF
+  read -r _ || true
+  echo "▶ tearing down."
+else
+  # Default: a subshell already wired for testing. `birdybeep` is on PATH, npm/pnpm point
+  # at the throwaway registry (scoped to THIS subshell only — your real shell is untouched),
+  # and the absolute binary path is in $BIRDYBEEP_BIN as a fallback in case an rc file
+  # reorders PATH. Leaving the subshell (exit / Ctrl-D) tears everything down via the trap.
+  export PATH="$GLOBAL_PREFIX/bin:$PATH"
+  export NPM_CONFIG_USERCONFIG="$NPMRC"
+  cat <<EOF
+
+▶ dropping you into a subshell to test the installed CLI (type 'exit' or Ctrl-D to tear down).
+    • 'birdybeep' is on your PATH — try:            birdybeep doctor
+    • npm here points at the local registry — try:  npm view @birdybeep/cli
+    • fallbacks: \$BIRDYBEEP_BIN (absolute binary), \$BIRDYBEEP_REGISTRY (registry URL)
+  Note: npm in this subshell only talks to the throwaway registry; your real shell is untouched.
+EOF
+  "${SHELL:-/bin/bash}" -i || true
+  echo "▶ subshell closed — tearing down."
+fi
