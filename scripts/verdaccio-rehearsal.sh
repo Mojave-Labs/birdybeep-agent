@@ -73,16 +73,31 @@ EOF
 export NPM_CONFIG_USERCONFIG="$NPMRC"
 
 # ---- 3. Start Verdaccio (kill it on any exit) ----
+# Pre-fetch it in the FOREGROUND first: the first `npx verdaccio` downloads hundreds of
+# packages, and npm hides its progress bar when stdout isn't a TTY — so backgrounding it
+# straight to a log looks like a silent hang. Fetch synchronously (visible), then start.
+echo "▶ ensuring verdaccio is installed (first run downloads it — may take a minute)…"
+if ! npx --yes verdaccio@6 --version; then
+  echo "✗ couldn't run 'npx verdaccio@6'. Install it once with 'npm i -g verdaccio' (check network/registry), then re-run."
+  exit 1
+fi
+
 echo "▶ starting verdaccio…"
 npx --yes verdaccio@6 --config "$CONFIG" --listen "$PORT" >"$LOG" 2>&1 &
 VERDACCIO_PID=$!
 trap 'echo "▶ stopping verdaccio (pid $VERDACCIO_PID)"; kill "$VERDACCIO_PID" 2>/dev/null || true' EXIT
 
-for _ in $(seq 1 60); do
+for _ in $(seq 1 90); do
   curl -sf "$REGISTRY/-/ping" >/dev/null 2>&1 && break
+  # Bail early with the log if verdaccio died instead of just being slow to bind.
+  kill -0 "$VERDACCIO_PID" 2>/dev/null || break
   sleep 1
 done
-curl -sf "$REGISTRY/-/ping" >/dev/null 2>&1 || { echo "✗ verdaccio didn't come up. Log:"; tail -30 "$LOG"; exit 1; }
+if ! curl -sf "$REGISTRY/-/ping" >/dev/null 2>&1; then
+  echo "✗ verdaccio didn't come up on $REGISTRY. Its log ($LOG):"
+  [ -s "$LOG" ] && tail -30 "$LOG" || echo "  (log is empty — is port $PORT taken, or did the process fail to bind? try PORT=4874)"
+  exit 1
+fi
 echo "✓ verdaccio up (log: $LOG)"
 
 # ---- 4. Publish ALL packages with pnpm (resolves workspace:* → real versions) ----
