@@ -63,14 +63,17 @@ packages:
 log: { type: stdout, level: warn }
 EOF
 
-# Isolated npm/pnpm config: a dummy token (Verdaccio allows anonymous publish, but the
-# npm client refuses to publish to a registry with no token set). Kept OUT of your ~/.npmrc.
+# Isolated npm/pnpm config: points the registry at Verdaccio + a dummy token (Verdaccio
+# allows anonymous publish, but the npm client refuses to publish with no token set).
+# Kept OUT of your ~/.npmrc, and — crucially — applied ONLY to the publish/install steps
+# below via `NPM_CONFIG_USERCONFIG=… <cmd>`, never exported globally. If it were exported,
+# the `npx verdaccio` calls would try to fetch verdaccio itself from the (not-yet-running)
+# local registry and fail with ECONNREFUSED.
 cat > "$NPMRC" <<EOF
 registry=$REGISTRY/
 @birdybeep:registry=$REGISTRY/
 //localhost:$PORT/:_authToken=local-anonymous-token
 EOF
-export NPM_CONFIG_USERCONFIG="$NPMRC"
 
 # ---- 3. Start Verdaccio (kill it on any exit) ----
 # Pre-fetch it in the FOREGROUND first: the first `npx verdaccio` downloads hundreds of
@@ -101,12 +104,14 @@ fi
 echo "✓ verdaccio up (log: $LOG)"
 
 # ---- 4. Publish ALL packages with pnpm (resolves workspace:* → real versions) ----
+# NPM_CONFIG_USERCONFIG is applied per-command here (not exported) so it can't affect the
+# verdaccio downloads above. pnpm honors this env var for its registry + auth token.
 echo "▶ publishing @birdybeep/* with pnpm…"
-pnpm -r publish --registry "$REGISTRY" --no-git-checks --access public
+NPM_CONFIG_USERCONFIG="$NPMRC" pnpm -r publish --registry "$REGISTRY" --no-git-checks --access public
 
 # ---- 5. Real global install from the local registry, into an isolated prefix ----
 echo "▶ installing @birdybeep/cli globally into $GLOBAL_PREFIX …"
-npm install -g @birdybeep/cli --registry "$REGISTRY" --prefix "$GLOBAL_PREFIX"
+NPM_CONFIG_USERCONFIG="$NPMRC" npm install -g @birdybeep/cli --registry "$REGISTRY" --prefix "$GLOBAL_PREFIX"
 
 BIN="$GLOBAL_PREFIX/bin/birdybeep"
 echo "▶ running the installed binary:"
