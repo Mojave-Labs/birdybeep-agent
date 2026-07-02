@@ -29,6 +29,13 @@ import { birdyBeepDataDir } from "./paths";
 export const QUEUE_RETENTION_MS = 24 * 60 * 60 * 1000;
 /** Default max entries drained per call so a drain never blocks the harness (§9.3). */
 export const DEFAULT_DRAIN_MAX = 50;
+/**
+ * Age after which a `.claim` file is considered ORPHANED and returned to the queue
+ * (erm): a drain claims an entry via rename before sending; if that process is killed
+ * mid-send the claim would otherwise strand the event forever (claims are invisible
+ * to normal reads). Far above any legitimate in-flight send (bounded to seconds).
+ */
+export const CLAIM_RECLAIM_MS = 60_000;
 
 /** What the sender decided for one queued event. delivered/drop → remove; retry → keep. */
 export type DrainOutcome = "delivered" | "drop" | "retry";
@@ -98,6 +105,29 @@ export class LocalEventQueue {
     }
   }
 
+  /**
+   * Return orphaned `.claim` files (claims older than {@link CLAIM_RECLAIM_MS}) to the
+   * queue by renaming them back to their original `.json` name. The claim timestamp is
+   * embedded in the claim FILENAME (rename preserves mtime, so fs times would report
+   * the enqueue age, not the claim age — an active drain of an old entry must not be
+   * "reclaimed" out from under it). Racing reclaims are safe: rename losers ENOENT.
+   * Known window: a drainer SUSPENDED (not dead) >60s can resume after its claim was
+   * reclaimed and double-send — accepted, since 60s ≫ the 5s send budget (a claim that
+   * old almost always is a dead process) and the backend dedupe absorbs the repeat.
+   */
+  #reclaimOrphanedClaims(names: string[]): void {
+    const cutoff = this.#now() - CLAIM_RECLAIM_MS;
+    for (const name of names) {
+      const m = /^(.+\.json)\.(\d+)-[0-9a-f-]+\.claim$/.exec(name);
+      if (!m || Number(m[2]) > cutoff) continue; // not a claim, or still legitimately in flight
+      try {
+        renameSync(join(this.dir, name), join(this.dir, m[1]!)); // back into the queue
+      } catch {
+        /* another process won the reclaim (or the fs refused) — never throw */
+      }
+    }
+  }
+
   /** Read all non-expired entries (FIFO by enqueue time); prune expired/corrupt ones. */
   #readFresh(): { fresh: QueueEntry[]; pruned: number } {
     if (!existsSync(this.dir)) return { fresh: [], pruned: 0 };
@@ -114,6 +144,8 @@ export class LocalEventQueue {
     let names: string[];
     try {
       names = readdirSync(this.dir);
+      this.#reclaimOrphanedClaims(names); // orphaned claims rejoin the queue first (erm)
+      names = readdirSync(this.dir); // re-list so reclaimed entries are visible this pass
     } catch {
       return { fresh: [], pruned: 0 };
     }
@@ -161,7 +193,7 @@ export class LocalEventQueue {
    */
   async drain(
     send: (event: BirdyBeepAgentEvent) => Promise<DrainOutcome> | DrainOutcome,
-    options: { max?: number } = {},
+    options: { max?: number; stopWhen?: () => boolean } = {},
   ): Promise<DrainResult> {
     const max = options.max ?? DEFAULT_DRAIN_MAX;
     const result: DrainResult = { delivered: 0, dropped: 0, kept: 0, pruned: 0 };
@@ -175,7 +207,13 @@ export class LocalEventQueue {
       return result;
     }
     for (const entry of fresh.slice(0, max)) {
-      const claim = `${entry.path}.${randomUUID()}.claim`;
+      // Budget bound (erm): the sender stops the drain when the hook's total time
+      // budget is spent — unclaimed entries simply stay queued for the next drain.
+      if (options.stopWhen?.() === true) {
+        result.kept += 1;
+        continue;
+      }
+      const claim = `${entry.path}.${this.#now()}-${randomUUID()}.claim`;
       try {
         renameSync(entry.path, claim); // atomic claim; loser gets ENOENT → skip
       } catch {

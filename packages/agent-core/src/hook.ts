@@ -7,7 +7,12 @@
  * The CLI `hook` command (CLI-HOOK) wires stdin + adapter selection around this.
  */
 import type { AgentAdapter } from "./adapter";
-import { eventIdentity, RecentEventLedger } from "./dedup";
+import {
+  APPROVAL_COLLAPSE_WINDOW_MS,
+  approvalCollapseIdentity,
+  eventIdentity,
+  RecentEventLedger,
+} from "./dedup";
 import type { Sender, SendResult } from "./sender";
 
 export type HookOutcome = "delivered" | "queued" | "dropped" | "deduped" | "skipped";
@@ -42,7 +47,15 @@ export async function runAgentHook(
   }
 
   const ledger = options.ledger ?? new RecentEventLedger();
-  if (ledger.markAndCheck(eventIdentity(event))) {
+  // Content-aware identity (erm): identical repeats collapse; DIFFERENT notifications
+  // of the same type both beep. approval_required ALSO collapses across content within
+  // a short window, because one physical approval double-fires two payload shapes with
+  // different bodies (Notification{permission_prompt} + PermissionRequest).
+  const contentDup = ledger.markAndCheck(eventIdentity(event));
+  const approvalDup =
+    event.event_type === "approval_required" &&
+    ledger.markAndCheck(approvalCollapseIdentity(event), APPROVAL_COLLAPSE_WINDOW_MS);
+  if (contentDup || approvalDup) {
     return { outcome: "deduped", eventType: event.event_type }; // same beep already sent → no double-beep
   }
 

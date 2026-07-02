@@ -34,6 +34,7 @@ const PRODUCT_EVENT_TYPES = [
   "subagent_started",
   "subagent_completed",
   "custom",
+  "test", // 9fh: the `birdybeep test` diagnostic — notify-by-default, quota-exempt server-side
 ];
 const PRODUCT_SESSION_STATUSES = [
   "starting",

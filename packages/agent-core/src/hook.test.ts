@@ -18,7 +18,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function evt(eventType: BirdyBeepEventType = "approval_required"): BirdyBeepAgentEvent {
+function evt(
+  eventType: BirdyBeepEventType = "approval_required",
+  body = "b",
+): BirdyBeepAgentEvent {
   return {
     event_id: "evt_1",
     event_type: eventType,
@@ -29,12 +32,12 @@ function evt(eventType: BirdyBeepEventType = "approval_required"): BirdyBeepAgen
     workspace: { cwd: "h_abc" },
     status: "waiting_for_approval",
     title: "t",
-    body: "b",
+    body,
   };
 }
 
 /** Minimal adapter stub: only normalizeEvent matters to the hook pipeline. */
-function adapterReturning(eventType: BirdyBeepEventType): AgentAdapter {
+function adapterReturning(eventType: BirdyBeepEventType, body?: string): AgentAdapter {
   return {
     id: "claude_code",
     displayName: "stub",
@@ -50,7 +53,7 @@ function adapterReturning(eventType: BirdyBeepEventType): AgentAdapter {
     uninstall: () => Promise.resolve({ changed: false, removedFiles: [], restoredFiles: [] }),
     status: () => Promise.resolve("installed"),
     doctor: () => Promise.resolve({ ok: true, checks: [] }),
-    normalizeEvent: () => Promise.resolve(evt(eventType)),
+    normalizeEvent: () => Promise.resolve(evt(eventType, body)),
   };
 }
 const unmappableAdapter: AgentAdapter = {
@@ -104,5 +107,69 @@ describe("runAgentHook", () => {
     expect(first.outcome).toBe("delivered");
     expect(second.outcome).toBe("deduped");
     expect(sender.sent).toHaveLength(1); // no double-beep
+  });
+
+  it("sends BOTH when the same type carries different content (distinct beeps — erm)", async () => {
+    sandbox = createSandbox();
+    const sender = fakeSender();
+    const ledger = new RecentEventLedger({ path: sandbox.path("data", "r.json") });
+    const first = await runAgentHook(
+      adapterReturning("needs_input", "Which file should I edit?"),
+      {},
+      { sender, ledger },
+    );
+    const second = await runAgentHook(
+      adapterReturning("needs_input", "Which BRANCH should I use?"),
+      {},
+      { sender, ledger },
+    );
+    // The old type-only identity silently dropped the second, genuinely different beep.
+    expect(first.outcome).toBe("delivered");
+    expect(second.outcome).toBe("delivered");
+    expect(sender.sent).toHaveLength(2);
+  });
+
+  it("collapses the permission double-fire (same approval, different payload shapes)", async () => {
+    sandbox = createSandbox();
+    const sender = fakeSender();
+    const ledger = new RecentEventLedger({ path: sandbox.path("data", "r.json") });
+    // One physical approval: Notification{permission_prompt} then PermissionRequest —
+    // same session + type, DIFFERENT bodies, ~simultaneous. Exactly one beep.
+    const first = await runAgentHook(
+      adapterReturning("approval_required", "Claude Code needs your permission to use Bash"),
+      {},
+      { sender, ledger },
+    );
+    const second = await runAgentHook(
+      adapterReturning("approval_required", "Approve Bash?"),
+      {},
+      { sender, ledger },
+    );
+    expect(first.outcome).toBe("delivered");
+    expect(second.outcome).toBe("deduped");
+    expect(sender.sent).toHaveLength(1);
+  });
+
+  it("beeps for a SECOND distinct approval once the short collapse window has passed", async () => {
+    sandbox = createSandbox();
+    const sender = fakeSender();
+    let t = 1_000;
+    const ledger = new RecentEventLedger({ path: sandbox.path("data", "r.json"), now: () => t });
+    const first = await runAgentHook(
+      adapterReturning("approval_required", "Approve Bash?"),
+      {},
+      { sender, ledger },
+    );
+    t += 1_500; // a NEW distinct approval arrives 1.5s later (inside the 10s content
+    // window, past the 1s approval-collapse window) — it must beep. The window was
+    // shrunk from 3s exactly so rapid-but-real second approvals like this aren't lost.
+    const second = await runAgentHook(
+      adapterReturning("approval_required", "Approve Edit?"),
+      {},
+      { sender, ledger },
+    );
+    expect(first.outcome).toBe("delivered");
+    expect(second.outcome).toBe("delivered");
+    expect(sender.sent).toHaveLength(2);
   });
 });

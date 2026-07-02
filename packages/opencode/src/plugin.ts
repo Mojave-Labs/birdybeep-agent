@@ -62,17 +62,39 @@ export const FORWARDED_BUS_EVENTS: ReadonlySet<string> = new Set([
   "permission.updated",
 ]);
 
+/** Log a spawn failure ONCE per process — silent drops made every OpenCode event vanish
+ * with no trace when the CLI couldn't spawn (erm). Metadata only: never the payload. */
+let spawnFailureLogged = false;
+function logSpawnFailureOnce(reason: string): void {
+  if (spawnFailureLogged) return;
+  spawnFailureLogged = true;
+  // eslint-disable-next-line no-console -- deliberate, once-per-process diagnosability breadcrumb
+  console.error(
+    `birdybeep: could not spawn the CLI to deliver an event (${reason}). ` +
+      `Events from this OpenCode session are being dropped — check that \`birdybeep\` is on PATH and run \`birdybeep doctor\`.`,
+  );
+}
+
 /** Default delivery: hand the envelope to `birdybeep hook opencode` and return immediately. */
 function defaultInvokeHook(envelope: OpenCodeEventEnvelope): void {
   try {
-    const child = spawn("birdybeep", ["hook", "opencode"], {
-      stdio: ["pipe", "ignore", "ignore"],
-      detached: true,
-    });
-    child.on("error", () => {}); // birdybeep not on PATH → swallow (best-effort, never block)
+    // Windows npm installs expose the CLI as a `birdybeep.cmd` shim; Node ≥20 refuses to
+    // spawn .cmd/.bat without a shell (CVE-2024-27980 hardening), and spawning the bare
+    // name without `shell` fails with ENOENT/EINVAL — which the old swallow-everything
+    // handler turned into 100% silent event loss on Windows (erm). The command string is
+    // a constant (the payload rides stdin), so `shell: true` adds no injection surface.
+    const win = process.platform === "win32";
+    const child = win
+      ? spawn("birdybeep hook opencode", { stdio: ["pipe", "ignore", "ignore"], shell: true })
+      : spawn("birdybeep", ["hook", "opencode"], {
+          stdio: ["pipe", "ignore", "ignore"],
+          detached: true,
+        });
+    child.on("error", (err) => logSpawnFailureOnce(err.message)); // best-effort, never block
     child.stdin?.end(JSON.stringify(envelope));
     child.unref();
-  } catch {
+  } catch (err) {
+    logSpawnFailureOnce(err instanceof Error ? err.message : String(err));
     /* never throw into OpenCode */
   }
 }

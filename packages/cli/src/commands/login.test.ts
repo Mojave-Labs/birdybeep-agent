@@ -1,9 +1,11 @@
 /**
  * `birdybeep login` proof (hermetic temp HOME, stub device-code backend): POST /v1/pair/start
- * → show qr_payload + user_code → poll POST /v1/pair/token (validation_failed/4xx = pending)
- * until 201 {machine_token, machine_id}; store the token in the SECURE store, persist the
- * non-secret apiUrl, and NEVER write the token to config/output. An expired window exits
- * non-zero. Shapes are the product's canonical pairing contract.
+ * → show QR matrix (TTY only) + qr_payload link + user_code → poll POST /v1/pair/token
+ * (validation_failed/4xx = pending) until 201 {machine_token, machine_id}; store the token in
+ * the SECURE store, persist the non-secret apiUrl, and NEVER write the token to config/output.
+ * An expired window exits non-zero. `--json` is NDJSON: a "pairing_started" line (so scripts
+ * can read the code — pe1) then the final success object. Shapes are the product's canonical
+ * pairing contract.
  */
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -16,10 +18,12 @@ import { runCli } from "../cli";
 import { cliConfigPath } from "../config";
 import { EXIT } from "../framework";
 import { CLI_VERSION } from "../version";
-import { createLoginCommand } from "./login";
+import { createLoginCommand, renderQrMatrix } from "./login";
 
 const MACHINE_TOKEN = `bbm_TESTONLY_${randomUUID()}`;
 const FILE_ONLY = { backend: unavailableKeychainBackend };
+// The canonical qr_payload shape the backend mints (https link carrying ONLY the short code).
+const QR_PAYLOAD = "https://birdybeep.com/pair?code=AB-1234";
 
 let sandbox: Sandbox | undefined;
 afterEach(() => {
@@ -49,7 +53,7 @@ function stubPairing(
           JSON.stringify({
             device_code: "dc_test",
             user_code: "AB-1234",
-            qr_payload: "birdybeep://pair?code=AB-1234",
+            qr_payload: QR_PAYLOAD,
             expires_at: opts.expiresAt ?? new Date(Date.now() + 600_000).toISOString(),
           }),
           { status: 200 },
@@ -92,7 +96,7 @@ describe("birdybeep login", () => {
 
     expect(code).toBe(EXIT.OK);
     expect(out.text()).toContain("AB-1234"); // user code shown (manual path)
-    expect(out.text()).toContain("birdybeep://pair?code=AB-1234"); // qr_payload shown
+    expect(out.text()).toContain(QR_PAYLOAD); // qr_payload link shown
     expect(out.text()).toMatch(/Paired/);
 
     expect(await getToken(FILE_ONLY)).toBe(MACHINE_TOKEN); // token in the secure store
@@ -100,6 +104,54 @@ describe("birdybeep login", () => {
     expect(config).toContain("apiUrl");
     expect(config).not.toContain(MACHINE_TOKEN); // never in config
     expect(out.text()).not.toContain(MACHINE_TOKEN); // never printed
+  });
+
+  it("renders a scannable QR matrix on a TTY, above the plain link fallback (pe1)", async () => {
+    sandbox = createSandbox();
+    const cmd = createLoginCommand({
+      fetchImpl: stubPairing(),
+      tokenOptions: FILE_ONLY,
+      sleep: () => Promise.resolve(),
+      isTTY: true, // interactive terminal → the matrix must print
+    });
+    const out = capture();
+    const code = await runCli(["login"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+
+    expect(code).toBe(EXIT.OK);
+    // Structural proof: the output embeds EXACTLY the uqr rendering of the payload the
+    // stub backend returned. (No pure-JS QR decoder is available without adding a dep,
+    // so we assert encode-equivalence; live scan verification is the xrepo E2E's job.)
+    expect(out.text()).toContain(renderQrMatrix(QR_PAYLOAD));
+    expect(out.text()).toMatch(/[█▀▄]/); // half-block matrix actually present
+    expect(out.text()).toContain(QR_PAYLOAD); // link fallback still printed
+    expect(out.text()).toContain("AB-1234"); // manual code still printed
+  });
+
+  it("prints NO matrix when stdout is not a TTY (piped/CI output stays greppable)", async () => {
+    sandbox = createSandbox();
+    const cmd = createLoginCommand({
+      fetchImpl: stubPairing(),
+      tokenOptions: FILE_ONLY,
+      sleep: () => Promise.resolve(),
+      isTTY: false,
+    });
+    const out = capture();
+    const code = await runCli(["login"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+
+    expect(code).toBe(EXIT.OK);
+    expect(out.text()).not.toMatch(/[█▀▄]/); // no half-block art in pipes
+    expect(out.text()).toContain(QR_PAYLOAD); // plain link + code remain
+    expect(out.text()).toContain("AB-1234");
   });
 
   it("sends machine_label + os + cli_version on POST /v1/pair/start (s0o7)", async () => {
@@ -134,7 +186,7 @@ describe("birdybeep login", () => {
     expect(startBody?.cli_version).not.toBeNull();
   });
 
-  it("--json emits the paired result + machine id, without the token", async () => {
+  it("--json emits NDJSON: pairing_started (code up front) then the paired result (pe1)", async () => {
     sandbox = createSandbox();
     const cmd = createLoginCommand({
       fetchImpl: stubPairing(),
@@ -148,9 +200,56 @@ describe("birdybeep login", () => {
       stderr: out.writer,
       ensureConfig: false,
     });
-    const json = JSON.parse(out.text()) as { paired: boolean; machineId?: string };
-    expect(json).toMatchObject({ paired: true, machineId: "mac_1" });
+
+    // Every stdout line is machine-readable JSON — no human prose leaks into --json mode.
+    const lines = out
+      .text()
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.length).toBe(2);
+    // Line 1: the pairing info a script needs to approve (previously never emitted → the
+    // operator could not learn the code and json-mode login always timed out).
+    expect(lines[0]).toMatchObject({
+      status: "pairing_started",
+      user_code: "AB-1234",
+      qr_payload: QR_PAYLOAD,
+    });
+    expect(typeof lines[0]?.expires_at).toBe("string");
+    // Final line: unchanged success shape (consumers read the LAST parseable line).
+    expect(lines[1]).toMatchObject({ paired: true, machineId: "mac_1" });
     expect(out.text()).not.toContain(MACHINE_TOKEN);
+    expect(out.text()).not.toMatch(/[█▀▄]/); // no QR art in json mode
+  });
+
+  it("--json emits a terminal {paired:false} object on timeout (scripts read the last line)", async () => {
+    sandbox = createSandbox();
+    let t = 0;
+    const cmd = createLoginCommand({
+      fetchImpl: stubPairing({ expiresAt: new Date(1_000_000).toISOString(), alwaysPending: true }),
+      tokenOptions: FILE_ONLY,
+      sleep: () => Promise.resolve(),
+      now: () => {
+        t += 600_000;
+        return t;
+      },
+    });
+    const out = capture();
+    const err = capture();
+    const code = await runCli(["login", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: err.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.ERROR);
+    const lines = out
+      .text()
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines[0]).toMatchObject({ status: "pairing_started" });
+    expect(lines[lines.length - 1]).toMatchObject({ paired: false, reason: "timeout" });
   });
 
   it("exits non-zero when the pairing window expires without approval", async () => {

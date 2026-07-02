@@ -35,8 +35,16 @@ const RUNNERS: Record<HarnessName, HarnessRunner> = {
 
 export const HOOK_HARNESSES: readonly HarnessName[] = ["claude", "codex", "opencode"];
 
-/** Hard cap on reading the payload — a misbehaving harness must never hang the hook. */
-export const STDIN_READ_TIMEOUT_MS = 2000;
+/**
+ * Hard cap on reading the payload — a misbehaving harness must never hang the hook.
+ * 3s (was 2s, erm): a loaded machine can be slow to flush a pipe, and a timeout here
+ * silently DROPS the event ("skipped"). BUDGET MATH: this cap and the sender's
+ * DEFAULT_TOTAL_BUDGET_MS (5s) run SEQUENTIALLY and must sum comfortably under the 10s
+ * hook timeout the adapters register, leaving headroom for Node startup — 3s + 5s + ~1s
+ * startup < 10s. (5s + 5s summed to exactly the timeout: a slow start got the hook
+ * SIGKILLed mid-send, which skips the queue-on-failure catch and loses the event.)
+ */
+export const STDIN_READ_TIMEOUT_MS = 3000;
 
 /** Resolve to `fallback` if `promise` does not settle within `ms` (the timer is unref'd). */
 function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {

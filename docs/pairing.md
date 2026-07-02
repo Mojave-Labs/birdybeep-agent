@@ -24,12 +24,13 @@ CLI once, and stored locally in your OS keychain (or a strict-permission file). 
 birdybeep login
 ```
 
-You'll see a link and a code. Open the link (or scan the QR), confirm the code in the BirdyBeep
-app, and wait for the CLI to report success:
+You'll see a QR code, a link, and a short code. Scan the QR (or open the link / type the code),
+confirm in the BirdyBeep app, and wait for the CLI to report success:
 
 ```text
 To pair this machine, scan the code or open the link, then confirm in the app:
-   Scan or open:  birdybeep://pair?code=WXYZ-1234
+   ▄▄▄▄▄▄▄ ▄  ▄▄ ▄▄▄▄▄▄▄        (a scannable QR matrix renders here on a TTY)
+   Scan or open:  https://birdybeep.com/pair?code=WXYZ-1234
    Code:  WXYZ-1234
 Waiting for confirmation…
 ✓ Paired. Run `birdybeep test` to send a test Beep.
@@ -77,13 +78,16 @@ The pair URL is QR-friendly: it's short and encodes only the pairing session, so
 and you can open it on your phone with one tap. **Both paths are equivalent** — scanning the QR and
 typing the code at the link land you on the same approval screen in the app.
 
-Today the CLI renders the pair URL as a plain link (a QR-matrix renderer is a planned follow-up),
-so in practice you'll either:
+On an interactive terminal the CLI renders the pair URL as a scannable QR matrix (point the
+BirdyBeep app's pairing camera at it), with the plain link and code printed underneath. When
+output is piped (CI logs, scripts) the matrix is skipped and only the plain lines print. So in
+practice you'll either:
 
+- **scan the QR** with the pairing screen's camera in the BirdyBeep app,
 - **open the link** on a device where you're signed in to the BirdyBeep app, or
 - **type the short user code** into the pairing screen in the app.
 
-Either way you confirm the same single-use code shown in the terminal.
+Every path confirms the same single-use code shown in the terminal.
 
 ### Headless and SSH machines
 
@@ -103,12 +107,17 @@ you can pair a headless box without ever exposing a browser or token on it.
 ### Non-interactive mode
 
 `birdybeep login` works with the global `--non-interactive` flag (never prompts, fails fast) and
-`--json` (machine-readable output). In `--json` mode the success line is emitted as a JSON object,
-for example:
+`--json` (machine-readable output). In `--json` mode the output is NDJSON — one JSON object per
+line. The first line is emitted as soon as the pairing session opens, carrying the code your
+script/agent needs to surface for approval; the last line is the success result:
 
 ```json
-{ "paired": true, "machineLabel": "my-laptop" }
+{ "status": "pairing_started", "user_code": "WXYZ-1234", "qr_payload": "https://birdybeep.com/pair?code=WXYZ-1234", "expires_at": "2026-07-01T12:34:56.000Z" }
+{ "paired": true, "machineId": "mac_123" }
 ```
+
+On timeout the terminal line is `{ "paired": false, "reason": "timeout" }` (exit code 1). Scripts
+should read the **last** parseable line for the outcome and the **first** for the pairing code.
 
 ---
 

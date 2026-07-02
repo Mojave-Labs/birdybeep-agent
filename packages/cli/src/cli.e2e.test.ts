@@ -84,7 +84,7 @@ function stubPairing(): typeof fetch {
           JSON.stringify({
             device_code: "dc_e2e",
             user_code: "Z9-42",
-            qr_payload: "birdybeep://pair?code=Z9-42",
+            qr_payload: "https://birdybeep.com/pair?code=Z9-42",
             expires_at: new Date(Date.now() + 600_000).toISOString(),
           }),
           { status: 200 },

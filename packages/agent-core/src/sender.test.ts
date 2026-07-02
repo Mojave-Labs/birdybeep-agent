@@ -162,6 +162,53 @@ describe("opportunistic drain on send", () => {
   });
 });
 
+describe("delivery decision surfaced from the 202 body (9fh)", () => {
+  it("exposes decision so callers can tell notified from suppressed", async () => {
+    const { sender } = setup(() =>
+      Promise.resolve(jsonResponse(202, { accepted: true, decision: "suppressed" })),
+    );
+    const r = await sender.send(event());
+    expect(r.outcome).toBe("delivered"); // accepted by the backend…
+    expect(r.decision).toBe("suppressed"); // …but no push — callers must not claim a beep
+  });
+
+  it("tolerates a 2xx with no parseable decision (older backend)", async () => {
+    const { sender } = setup(() => Promise.resolve(new Response("", { status: 202 })));
+    const r = await sender.send(event());
+    expect(r.outcome).toBe("delivered");
+    expect(r.decision).toBeUndefined();
+  });
+});
+
+describe("total budget bounds the drain (erm: never outlive the harness hook timeout)", () => {
+  it("stops draining when the budget is spent, keeping the remainder queued", async () => {
+    sandbox = createSandbox();
+    let t = 0;
+    const queue = new LocalEventQueue({ dir: sandbox.path("data", "q") });
+    const sender = createSender({
+      baseUrl: "http://api.test",
+      timeoutMs: 3000,
+      totalBudgetMs: 1000,
+      queue,
+      // Each request "takes" 400ms of injected clock — deterministic budget math.
+      fetchImpl: () => {
+        t += 400;
+        return Promise.resolve(new Response("{}", { status: 202 }));
+      },
+      tokenOptions: { backend: tokenBackend(TOKEN), filePath: sandbox.path("data", "token") },
+      now: () => t,
+    });
+    for (let i = 1; i <= 3; i++) queue.enqueue(event(i));
+    const r = await sender.send(event(0));
+    expect(r.outcome).toBe("delivered"); // t=400 after the primary send
+    // Drain: item1 at t=400 (600ms left) → sends, t=800; item2 has 200ms left (<250ms
+    // floor) → the drain stops and the rest stays queued for the next hook.
+    expect(r.drained?.delivered).toBe(1);
+    expect(r.drained?.kept).toBe(2);
+    expect(queue.size()).toBe(2);
+  });
+});
+
 describe("never logs the token or request body", () => {
   it("no console output contains the token", async () => {
     const sink: string[] = [];

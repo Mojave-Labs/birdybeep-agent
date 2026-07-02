@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { type BirdyBeepAgentEvent } from "./event";
 import { normalizeEvent } from "./normalize";
 import { birdyBeepDataDir } from "./paths";
-import { type DrainOutcome, LocalEventQueue, QUEUE_RETENTION_MS } from "./queue";
+import { CLAIM_RECLAIM_MS, type DrainOutcome, LocalEventQueue, QUEUE_RETENTION_MS } from "./queue";
 
 let sandbox: Sandbox | undefined;
 afterEach(() => {
@@ -147,6 +147,65 @@ describe("durability + drain semantics", () => {
     for (let i = 0; i < 5; i++) q.enqueue(makeEvent(i));
     expect(q.clear()).toBeGreaterThanOrEqual(5);
     expect(q.size()).toBe(0);
+  });
+});
+
+describe("orphaned-claim reclaim (erm)", () => {
+  it("returns a stale .claim (killed mid-drain) to the queue and delivers it", async () => {
+    sandbox = createSandbox();
+    const dir = sandbox.path("data", "q");
+    let t = 1_000_000;
+    const q = new LocalEventQueue({ dir, now: () => t });
+    q.enqueue(makeEvent(0));
+    // Simulate a drain that claimed the entry and was then KILLED before settling it
+    // (a thrown sender releases its claim, so build the orphan the way a dead process
+    // leaves it: the entry renamed to a timestamped .claim, never renamed back).
+    const name = readdirSync(dir).find((n) => n.endsWith(".json"))!;
+    const { renameSync } = await import("node:fs");
+    renameSync(join(dir, name), join(dir, `${name}.${t}-dead-beef.claim`));
+    expect(q.size()).toBe(0); // invisible while claimed — this is the stranding bug
+    t += CLAIM_RECLAIM_MS + 1; // past the reclaim window → the claim is orphaned
+    const delivered: string[] = [];
+    const r = await q.drain((e) => {
+      delivered.push(e.event_id);
+      return "delivered";
+    });
+    expect(r.delivered).toBe(1);
+    expect(delivered).toEqual(["evt_0"]); // the stranded event finally went out
+  });
+
+  it("leaves a FRESH claim alone (an active drain still owns it)", async () => {
+    sandbox = createSandbox();
+    const dir = sandbox.path("data", "q");
+    let t = 1_000_000;
+    const q = new LocalEventQueue({ dir, now: () => t });
+    q.enqueue(makeEvent(0));
+    const name = readdirSync(dir).find((n) => n.endsWith(".json"))!;
+    const { renameSync } = await import("node:fs");
+    renameSync(join(dir, name), join(dir, `${name}.${t}-dead-beef.claim`));
+    t += CLAIM_RECLAIM_MS - 1_000; // inside the window → presumed in flight
+    const r = await q.drain(() => "delivered");
+    expect(r.delivered).toBe(0); // not stolen from the (presumed) live drain
+  });
+});
+
+describe("drain stopWhen (sender budget bound — erm)", () => {
+  it("stops claiming once stopWhen trips, keeping the remainder queued", async () => {
+    sandbox = createSandbox();
+    const dir = sandbox.path("data", "q");
+    const q = new LocalEventQueue({ dir });
+    for (let i = 0; i < 5; i++) q.enqueue(makeEvent(i));
+    let sends = 0;
+    const r = await q.drain(
+      () => {
+        sends += 1;
+        return "delivered";
+      },
+      { stopWhen: () => sends >= 2 }, // budget exhausted after two sends
+    );
+    expect(r.delivered).toBe(2);
+    expect(r.kept).toBe(3); // untouched, still queued for the next drain
+    expect(q.size()).toBe(3);
   });
 });
 

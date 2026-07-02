@@ -35,7 +35,8 @@
     "@birdybeep/agent-core": "workspace:*",
     "@birdybeep/claude-code": "workspace:*",
     "@birdybeep/codex": "workspace:*",
-    "@birdybeep/opencode": "workspace:*"
+    "@birdybeep/opencode": "workspace:*",
+    "uqr": "0.1.2"
   },
   "devDependencies": {
     "@birdybeep/test-harness": "workspace:*"

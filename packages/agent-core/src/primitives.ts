@@ -25,6 +25,10 @@ export const BIRDYBEEP_EVENT_TYPES = [
   "subagent_started",
   "subagent_completed",
   "custom",
+  // "test" (9fh): the `birdybeep test` diagnostic. Notifies by default server-side
+  // (unlike "custom", which the §10.5 matrix suppresses unconditionally) and is
+  // quota-exempt — the product's DEFAULT_NOTIFY/gauntlet carry the other half.
+  "test",
 ] as const;
 export type BirdyBeepEventType = (typeof BIRDYBEEP_EVENT_TYPES)[number];
 

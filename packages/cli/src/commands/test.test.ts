@@ -42,16 +42,25 @@ function capture(): { writer: { write: (s: string) => void }; text: () => string
 }
 
 describe("buildTestEvent", () => {
-  it("is a valid custom event with the cwd hashed and a test marker", () => {
+  it("is a valid `test` event with the cwd hashed and a test marker (9fh)", () => {
     const event = buildTestEvent({
       now: () => "2026-06-14T00:00:00.000Z",
       generateId: () => "evt_t",
     });
-    expect(event.event_type).toBe("custom");
+    // "test" (not "custom"): the §10.5 matrix suppresses custom unconditionally, so a
+    // custom-typed test could never produce the push it promises (9fh).
+    expect(event.event_type).toBe("test");
     expect(event.title).toBe("BirdyBeep test event");
     expect(event.metadata?.["test"]).toBe(true);
     expect(event.workspace.cwd).toMatch(/^h_[0-9a-f]{16}$/); // absolute cwd hashed
     expect(JSON.stringify(event)).not.toContain(process.cwd()); // no raw path
+  });
+
+  it("mints a UNIQUE session id per run so repeat tests don't collapse in dedupe (9fh)", () => {
+    const a = buildTestEvent();
+    const b = buildTestEvent();
+    expect(a.source_session_id).toMatch(/^birdybeep-cli-test-/);
+    expect(a.source_session_id).not.toBe(b.source_session_id);
   });
 });
 
@@ -76,7 +85,7 @@ describe("birdybeep test", () => {
     expect(JSON.parse(out.text())).toMatchObject({ outcome: "delivered" });
     expect(sink.received()).toHaveLength(1);
     const body = sink.received()[0]!.body as { event_type: string; title: string };
-    expect(body.event_type).toBe("custom");
+    expect(body.event_type).toBe("test");
     expect(body.title).toBe("BirdyBeep test event");
   });
 

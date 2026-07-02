@@ -226,8 +226,10 @@ The event types are vendored in `primitives.ts` as `BIRDYBEEP_EVENT_TYPES`:
 ```
 session_started · session_resumed · session_active · needs_input · approval_required ·
 agent_idle · agent_completed · agent_failed · test_failed · tool_started · tool_finished ·
-subagent_started · subagent_completed · custom
+subagent_started · subagent_completed · custom · test
 ```
+
+(`test` is reserved for the `birdybeep test` diagnostic — adapters never emit it.)
 
 Session statuses (`AGENT_SESSION_STATUSES`, §10.4):
 
