@@ -18,10 +18,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function evt(
-  eventType: BirdyBeepEventType = "approval_required",
-  body = "b",
-): BirdyBeepAgentEvent {
+function evt(eventType: BirdyBeepEventType = "approval_required", body = "b"): BirdyBeepAgentEvent {
   return {
     event_id: "evt_1",
     event_type: eventType,

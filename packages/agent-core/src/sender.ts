@@ -140,9 +140,7 @@ export function createSender(config: SenderConfig): Sender {
     return queue.drain(
       (e) => {
         const remaining = deadline - clock();
-        return attempt(e, token, Math.max(1, Math.min(timeoutMs, remaining))).then(
-          (a) => a.result,
-        );
+        return attempt(e, token, Math.max(1, Math.min(timeoutMs, remaining))).then((a) => a.result);
       },
       { max: drainMax, stopWhen: () => deadline - clock() < MIN_DRAIN_ATTEMPT_MS },
     );
