@@ -14,6 +14,12 @@
 #
 # Override the port if 4873 is busy:  PORT=4874 ./scripts/verdaccio-rehearsal.sh
 #
+# After installing, the script HOLDS OPEN so you can actually exercise the CLI before it
+# tears everything down: it drops you into a subshell with `birdybeep` on your PATH and
+# npm pointed at the throwaway registry. Leave the subshell (exit / Ctrl-D) to tear down.
+#   NO_HOLD=1 ./scripts/verdaccio-rehearsal.sh    # old behavior: run the binary, then exit
+#   HOLD=wait ./scripts/verdaccio-rehearsal.sh    # just pause; drive it from another terminal
+#
 set -euo pipefail
 
 PORT="${PORT:-4873}"
@@ -103,13 +109,25 @@ if ! curl -sf "$REGISTRY/-/ping" >/dev/null 2>&1; then
 fi
 echo "✓ verdaccio up (log: $LOG)"
 
-# ---- 4. Publish ALL packages with pnpm (resolves workspace:* → real versions) ----
+# ---- 4. Build + packaging guard BEFORE publishing ----
+# `files: ["dist"]` means an unbuilt tree packs near-EMPTY tarballs (just package.json +
+# LICENSE) and the CLI's `bin` target doesn't exist. check-pack fails hard if dist/ is
+# missing or anything forbidden would ship, so a bad rehearsal can't look like a good one.
+echo "▶ building all packages…"
+pnpm turbo build
+node scripts/check-pack.mjs
+
+# ---- 5. Publish ALL packages with pnpm (resolves workspace:* → real versions) ----
 # NPM_CONFIG_USERCONFIG is applied per-command here (not exported) so it can't affect the
 # verdaccio downloads above. pnpm honors this env var for its registry + auth token.
+# --force: pnpm keeps a CLIENT-side metadata cache per registry host; a version published
+# to localhost:${PORT} in an earlier run (even against long-gone storage) makes pnpm
+# SILENTLY skip that package ("already published", exit 0). The registry is throwaway and
+# freshly wiped, so an unconditional publish is exactly what we want.
 echo "▶ publishing @birdybeep/* with pnpm…"
-NPM_CONFIG_USERCONFIG="$NPMRC" pnpm -r publish --registry "$REGISTRY" --no-git-checks --access public
+NPM_CONFIG_USERCONFIG="$NPMRC" pnpm -r publish --force --registry "$REGISTRY" --no-git-checks --access public
 
-# ---- 5. Real global install from the local registry, into an isolated prefix ----
+# ---- 6. Real global install from the local registry, into an isolated prefix ----
 echo "▶ installing @birdybeep/cli globally into $GLOBAL_PREFIX …"
 NPM_CONFIG_USERCONFIG="$NPMRC" npm install -g @birdybeep/cli --registry "$REGISTRY" --prefix "$GLOBAL_PREFIX"
 
@@ -118,14 +136,64 @@ echo "▶ running the installed binary:"
 "$BIN" --version
 "$BIN" --help
 
-cat <<EOF
+echo
+echo "✓ rehearsal passed — @birdybeep/cli installed from a local registry and ran."
+echo "    binary:   $BIN"
+echo "    registry: $REGISTRY"
 
-✓ rehearsal passed — @birdybeep/cli installed from a local registry and ran.
-  binary:   $BIN
-  registry: $REGISTRY (stops when this script exits)
+# ---- 7. Hold open so you can actually exercise the CLI before teardown ----
+# Without this the script would exit here, the EXIT trap would kill verdaccio, and the
+# installed CLI would be gone before you could type a single command. So, when we're on a
+# terminal, drop into an interactive subshell that already has the CLI on PATH and npm
+# pointed at the throwaway registry; teardown (the trap) waits until you leave it.
+# Exposed regardless of hold mode so `$BIN`/`npm --registry …` work from other terminals:
+export BIRDYBEEP_REGISTRY="$REGISTRY"
+export BIRDYBEEP_BIN="$BIN"
 
-To poke at it more before it tears down, open another terminal and run:
-  npm --registry $REGISTRY view @birdybeep/cli
-  $BIN doctor
-Re-running this script wipes $WORK and starts clean.
+if [ -n "${NO_HOLD:-}" ] || { [ ! -t 0 ] && [ "${HOLD:-}" != "wait" ]; }; then
+  # Non-interactive (CI, piped) or NO_HOLD=1: keep the old behavior — we already ran the
+  # binary above, so just fall through to the EXIT trap and tear down.
+  echo "▶ not holding (NO_HOLD/non-interactive) — tearing down. Re-running wipes $WORK and starts clean."
+elif [ "${HOLD:-}" = "wait" ]; then
+  # Simple pause: keep verdaccio + the installed CLI alive and drive it from ANOTHER
+  # terminal (you point npm at the registry yourself there).
+  cat <<EOF
+
+▶ holding open (HOLD=wait). In another terminal, e.g.:
+    npm --registry $REGISTRY view @birdybeep/cli
+    $BIN doctor
+  Press Enter here to tear everything down…
 EOF
+  read -r _ || true
+  echo "▶ tearing down."
+else
+  # Default: a subshell already wired for testing. `birdybeep` is on PATH, npm/pnpm point
+  # at the throwaway registry (scoped to THIS subshell only — your real shell is untouched),
+  # and the absolute binary path is in $BIRDYBEEP_BIN as a fallback in case an rc file
+  # reorders PATH. Leaving the subshell (exit / Ctrl-D) tears everything down via the trap.
+  export PATH="$GLOBAL_PREFIX/bin:$PATH"
+  export NPM_CONFIG_USERCONFIG="$NPMRC"
+
+  # A loud, boxed banner so it's unmistakable you've entered the throwaway test subshell.
+  # Bold/green only when stdout is a real terminal; the box still renders plainly otherwise.
+  if [ -t 1 ]; then _b=$'\033[1m'; _g=$'\033[1;32m'; _dim=$'\033[2m'; _rst=$'\033[0m'
+  else _b=''; _g=''; _dim=''; _rst=''; fi
+  _W=62
+  _rule="$(printf '─%.0s' $(seq 1 $((_W + 2))))"
+  printf '\n'
+  printf '%s┌%s┐%s\n' "$_g" "$_rule" "$_rst"
+  printf '%s│%s %s%-*s%s %s│%s\n' "$_g" "$_rst" "$_b" "$_W" "YOU ARE NOW IN THE BIRDYBEEP TEST SUBSHELL" "$_rst" "$_g" "$_rst"
+  printf '%s│%s %-*s %s│%s\n' "$_g" "$_rst" "$_W" "" "$_g" "$_rst"
+  printf '%s│%s %-*s %s│%s\n' "$_g" "$_rst" "$_W" "The @birdybeep/cli you just built is installed and ready." "$_g" "$_rst"
+  printf '%s│%s %s%-*s%s %s│%s\n' "$_g" "$_rst" "$_b" "$_W" "Type 'exit' or press Ctrl-D to leave and tear it all down." "$_rst" "$_g" "$_rst"
+  printf '%s└%s┘%s\n' "$_g" "$_rule" "$_rst"
+  printf '\n'
+  printf '  Try it out:\n'
+  printf "    %sbirdybeep doctor%s         # 'birdybeep' is already on your PATH\n" "$_b" "$_rst"
+  printf "    %snpm view @birdybeep/cli%s  # npm here talks ONLY to the throwaway registry\n" "$_b" "$_rst"
+  printf '  %sFallbacks:%s $BIRDYBEEP_BIN (absolute binary), $BIRDYBEEP_REGISTRY (registry URL)\n' "$_dim" "$_rst"
+  printf '  %sYour real shell and npm config are untouched.%s\n\n' "$_dim" "$_rst"
+
+  "${SHELL:-/bin/bash}" -i || true
+  echo "▶ subshell closed — tearing down."
+fi
