@@ -55,16 +55,39 @@ workflow runs `changeset version` and pushes the `changeset-release/main` branch
 final "create pull request" step with `GitHub Actions is not permitted to create ... pull
 requests` (you can still open that PR by hand from the pushed branch as a fallback).
 
-## HUMAN-REQUIRED before the first publish (`A-HUMAN-NPM`)
+## npm auth: bootstrap token once, then tokenless Trusted Publishing (OIDC)
 
-The workflow is inert until a human does these once:
+npm caps token lifetimes at 90 days, so a long-lived `NPM_TOKEN` secret is not an option — and
+doesn't need to be. The steady state is **npm Trusted Publishing**: npmjs.com is told that this
+repo's `release.yml` workflow may publish each package, and every publish authenticates via
+GitHub's OIDC identity (the workflow's `id-token: write` permission). **No token exists** to
+expire, rotate, or leak, and provenance attestations come with it. `release.yml` supports both
+modes automatically: it uses `NPM_TOKEN` if the secret exists, otherwise OIDC.
+
+The only catch: a package must already exist on npm before a trusted publisher can be
+configured for it — so the very first publish uses a throwaway token.
+
+### HUMAN-REQUIRED before the first publish (`A-HUMAN-NPM`)
 
 1. Create the `@birdybeep` npm org (or claim the scope) with the intended maintainer.
-2. Create an npm **automation** token (Access Tokens → Generate → _Automation_; it bypasses
-   2FA-on-publish, which CI requires). Grant it publish rights to the `@birdybeep` scope.
-3. Add it as the repo secret **`NPM_TOKEN`** (Settings → Secrets and variables → Actions).
-4. **Make the repo public** before publishing — npm provenance (`NPM_CONFIG_PROVENANCE`,
+2. Create a **granular automation token** (90-day cap is irrelevant — it's used once). Grant it
+   publish rights to the `@birdybeep` scope, and add it as the repo secret **`NPM_TOKEN`**
+   (Settings → Secrets and variables → Actions).
+3. **Make the repo public** before publishing — npm provenance (`NPM_CONFIG_PROVENANCE`,
    enabled in the workflow) requires a public source repo at publish time.
+4. Merge the Version PR → `0.0.1` publishes with the token.
+
+### HUMAN-REQUIRED right after the first publish (switch to tokenless)
+
+1. For **each of the five packages**, open `npmjs.com/package/<name>/access` and add a
+   **Trusted Publisher**: GitHub Actions, org `Mojave-Labs`, repo `birdybeep-agent`, workflow
+   `release.yml` (they can all point at the same workflow file).
+2. **Delete the `NPM_TOKEN` repo secret and revoke the token on npmjs.com.** All future
+   releases publish tokenless via OIDC.
+
+Notes: the `repository` field in each package.json must match the publishing repo (it does);
+the OIDC exchange is handled by pnpm 10.x (pinned via `packageManager` — pnpm 11.0.x shipped an
+OIDC regression, so don't bump pnpm majors blindly).
 
 Until you're ready to ship publicly, just don't merge the Version PR — test the built CLI
 locally first (see below).
