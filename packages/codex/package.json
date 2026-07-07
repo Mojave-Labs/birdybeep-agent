@@ -1,6 +1,6 @@
 {
   "name": "@birdybeep/codex",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "BirdyBeep adapter for Codex: notify command + lifecycle hooks, one-time trust handling, and event normalization.",
   "license": "MIT",
   "repository": {
