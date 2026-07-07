@@ -10,10 +10,17 @@ name: Release
 #     `pnpm release:ci` → build + packaging guard (check-pack) + `changeset publish`,
 #     which uploads the fixed group to npm in dependency order and pushes git tags.
 #
+# Auth is dual-mode (see docs/release.md "npm auth"):
+#   • Bootstrap: a short-lived granular NPM_TOKEN secret for the FIRST publish only
+#     (npm caps token life at 90 days — irrelevant for one use; revoke right after).
+#   • Steady state: npm TRUSTED PUBLISHING (OIDC) — configure this repo + this workflow
+#     file as the trusted publisher on each package at npmjs.com, then DELETE the
+#     NPM_TOKEN secret. No token exists to expire or leak; publishes authenticate via
+#     the id-token permission below. pnpm 10.x handles the OIDC exchange (don't bump to
+#     pnpm 11 blindly — 11.0.x shipped an OIDC regression, fixed later).
 # HUMAN-REQUIRED before the first publish (A-HUMAN-NPM):
-#   • Create the @birdybeep npm org and an npm *automation* token (2FA-on-publish OFF).
-#   • Add it as the `NPM_TOKEN` repo secret (Settings → Secrets → Actions).
-#   • Make the repo public (provenance below requires a public repo at publish time).
+#   • Create the @birdybeep npm org; bootstrap token as above.
+#   • Make the repo public (provenance requires a public repo at publish time).
 
 on:
   push:
@@ -42,6 +49,23 @@ jobs:
           fetch-depth: 0
 
       - uses: ./.github/actions/setup
+
+      # Write ~/.npmrc ourselves so the changesets action doesn't generate one that
+      # references ${NPM_TOKEN}: with the secret deleted (tokenless OIDC mode) that
+      # reference makes npm die with "Failed to replace env in config". With a token
+      # present we reproduce the action's default; without one, registry-only — the
+      # OIDC exchange needs no auth line.
+      - name: Configure npm auth (token bootstrap, or tokenless via OIDC)
+        run: |
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            echo "using NPM_TOKEN (bootstrap mode)"
+            printf '//registry.npmjs.org/:_authToken=%s\n' "\${NPM_TOKEN}" > "$HOME/.npmrc"
+          else
+            echo "no NPM_TOKEN secret — relying on npm trusted publishing (OIDC)"
+            printf 'registry=https://registry.npmjs.org/\n' > "$HOME/.npmrc"
+          fi
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create Version PR or publish to npm
         id: changesets
