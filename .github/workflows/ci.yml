@@ -45,9 +45,12 @@ jobs:
   # never drift out of someone's head. Runs on PRs only (on main the changesets
   # have already been consumed by the merged Version PR). `changeset status`
   # exits non-zero when changed packages have no associated changeset.
+  # The bot's "Version Packages" PR (changeset-release/*) is exempt: it is the one
+  # PR whose job is to CONSUME the changesets while bumping packages, so this gate
+  # would fail on it by construction.
   changeset:
     name: changeset status
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'changeset-release/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
