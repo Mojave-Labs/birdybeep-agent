@@ -38,7 +38,14 @@ function capture(): { writer: { write: (s: string) => void }; text: () => string
 
 /** Stub device-code backend. `/pair/start` opens a session; `/pair/token` is 400 then 201. */
 function stubPairing(
-  opts: { expiresAt?: string; alwaysPending?: boolean; onStartBody?: (body: unknown) => void } = {},
+  opts: {
+    expiresAt?: string;
+    alwaysPending?: boolean;
+    onStartBody?: (body: unknown) => void;
+    /** When set, `/pair/token` ALWAYS returns this error code (the terminal-error path). */
+    terminalError?: string;
+    terminalMessage?: string;
+  } = {},
 ): typeof fetch {
   let polls = 0;
   return ((url: string | URL, init?: RequestInit) => {
@@ -60,8 +67,22 @@ function stubPairing(
         ),
       );
     }
-    // /v1/pair/token — validation_failed (400) while pending, then 201 with the token.
+    // /v1/pair/token — a terminal error (won't resolve by waiting), else validation_failed
+    // (400) while pending, then 201 with the token.
     polls += 1;
+    if (opts.terminalError) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: {
+              code: opts.terminalError,
+              message: opts.terminalMessage ?? "agent install limit reached; revoke a machine",
+            },
+          }),
+          { status: 429 },
+        ),
+      );
+    }
     if (opts.alwaysPending || polls < 2) {
       return Promise.resolve(
         new Response(
@@ -250,6 +271,85 @@ describe("birdybeep login", () => {
       .map((l) => JSON.parse(l) as Record<string, unknown>);
     expect(lines[0]).toMatchObject({ status: "pairing_started" });
     expect(lines[lines.length - 1]).toMatchObject({ paired: false, reason: "timeout" });
+  });
+
+  it("stops and surfaces a TERMINAL error (quota_exceeded) instead of hanging silently", async () => {
+    // Regression for the reported "stuck doing nothing": the backend was returning an
+    // actionable error on every poll and the CLI masked it as "not approved yet",
+    // polling into a 10-min silent timeout. It must now fail fast with the reason.
+    sandbox = createSandbox();
+    const cmd = createLoginCommand({
+      fetchImpl: stubPairing({
+        terminalError: "quota_exceeded",
+        terminalMessage: "agent install limit reached for the free plan; revoke a machine or upgrade",
+      }),
+      tokenOptions: FILE_ONLY,
+      sleep: () => Promise.resolve(),
+    });
+    const out = capture();
+    const err = capture();
+    const code = await runCli(["login"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: err.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.ERROR);
+    expect(err.text()).toMatch(/Pairing failed/);
+    expect(err.text()).toMatch(/install limit reached/); // the actionable server message is shown
+    expect(await getToken(FILE_ONLY)).toBeNull(); // no token minted on a hard failure
+  });
+
+  it("--json emits a terminal {paired:false, reason:<code>} on a hard error (scripts see the code)", async () => {
+    sandbox = createSandbox();
+    const cmd = createLoginCommand({
+      fetchImpl: stubPairing({ terminalError: "quota_exceeded" }),
+      tokenOptions: FILE_ONLY,
+      sleep: () => Promise.resolve(),
+    });
+    const out = capture();
+    const err = capture();
+    const code = await runCli(["login", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: err.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.ERROR);
+    const lines = out
+      .text()
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines[0]).toMatchObject({ status: "pairing_started" });
+    expect(lines[lines.length - 1]).toMatchObject({ paired: false, reason: "quota_exceeded" });
+  });
+
+  it("reprints a heartbeat while waiting so the prompt is visibly alive (not a silent hang)", async () => {
+    // The clock advances past HEARTBEAT_MS between polls; the stub approves on poll #2, so
+    // exactly one heartbeat prints before success. Proves `login` isn't "doing nothing".
+    sandbox = createSandbox();
+    let c = 0;
+    const cmd = createLoginCommand({
+      fetchImpl: stubPairing({ expiresAt: new Date(10_000_000_000_000).toISOString() }),
+      tokenOptions: FILE_ONLY,
+      sleep: () => Promise.resolve(),
+      now: () => {
+        const v = c;
+        c += 16_000; // > HEARTBEAT_MS (15s) so a beat fires each idle poll
+        return v;
+      },
+    });
+    const out = capture();
+    const code = await runCli(["login"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.OK);
+    expect(out.text()).toMatch(/still waiting/); // the heartbeat printed
+    expect(out.text()).toMatch(/Paired/); // and it still paired
   });
 
   it("exits non-zero when the pairing window expires without approval", async () => {
