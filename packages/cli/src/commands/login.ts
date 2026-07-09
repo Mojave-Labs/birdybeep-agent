@@ -31,6 +31,14 @@ import { CLI_VERSION } from "../version";
 export const DEFAULT_POLL_INTERVAL_MS = 2000;
 
 /**
+ * How often to reprint a "still waiting…" heartbeat while polling. Without it, `login`
+ * prints the code once and then appears frozen ("stuck doing nothing") for the whole
+ * 10-minute window — the reported bug. Time-gated on the injected clock so it never
+ * fires spuriously in the fast, instant-sleep tests.
+ */
+export const HEARTBEAT_MS = 15_000;
+
+/**
  * Render the QR payload as a terminal-scannable half-block matrix. `border: 2` keeps a
  * quiet zone around the symbol (phone cameras misread flush-against-text QRs).
  */
@@ -83,8 +91,11 @@ export function createLoginCommand(deps: LoginCommandDeps = {}): Command {
           expires_at: start.expires_at,
         });
       } else {
+        // Point at the RELIABLE path: the in-app scanner. Opening the https link only
+        // reaches the approval screen where universal/app links are configured; scanning
+        // (or typing the code) in the app always works, so lead with that.
         ctx.io.line(
-          "To pair this machine, scan the code or open the link, then confirm in the app:",
+          "To pair this machine, open the BirdyBeep app, tap “pair a machine”, and scan this QR (or enter the code):",
         );
         // The matrix is TTY-only (a piped/CI consumer wants greppable lines, and
         // half-block art garbles logs); the link + code lines below ALWAYS print.
@@ -92,13 +103,18 @@ export function createLoginCommand(deps: LoginCommandDeps = {}): Command {
         if (isTTY) ctx.io.line(renderQr(start.qr_payload));
         ctx.io.line(`   Scan or open:  ${start.qr_payload}`);
         ctx.io.line(`   Code:  ${start.user_code}`);
-        ctx.io.line("Waiting for confirmation…");
+        ctx.io.line("Waiting for you to approve this machine in the app…");
       }
 
-      // Poll /pair/token until approved (201) or the pairing window expires.
+      // Poll /pair/token until approved (201), a TERMINAL error, or the window expires.
       const deadline = Date.parse(start.expires_at);
+      const startedAt = clock();
+      let lastBeat = startedAt;
       let paired: PairTokenResult | undefined;
-      while (clock() < deadline) {
+      let terminal: Extract<PairTokenResult, { status: "error" }> | undefined;
+      for (;;) {
+        const nowMs = clock();
+        if (nowMs >= deadline) break;
         await sleep(intervalMs);
         const poll = await pairTokenPoll(
           apiUrl,
@@ -110,6 +126,30 @@ export function createLoginCommand(deps: LoginCommandDeps = {}): Command {
           paired = poll;
           break;
         }
+        // A failure that waiting can't fix (e.g. the agent-install cap) must STOP the loop
+        // and be shown — never masked as "not approved yet" so the prompt hangs silently.
+        if (poll.status === "error" && !poll.retryable) {
+          terminal = poll;
+          break;
+        }
+        // Otherwise pending (not approved yet) or a transient server error → keep waiting,
+        // reprinting a heartbeat so the prompt is visibly alive. Human-mode only (NDJSON
+        // stays a clean two-line stream); time-gated on the clock so tests never see it.
+        if (!ctx.flags.json && nowMs - lastBeat >= HEARTBEAT_MS) {
+          ctx.io.line(
+            poll.status === "error"
+              ? `   still trying — the server is busy (${poll.message}). approve in the app when you can…`
+              : "   still waiting — approve this machine in the BirdyBeep app…",
+          );
+          lastBeat = nowMs;
+        }
+      }
+
+      if (terminal !== undefined) {
+        // NDJSON: a terminal result object on stderr+stdout so scripts see the reason code.
+        ctx.io.result({ paired: false, reason: terminal.code });
+        ctx.io.errline(`Pairing failed: ${terminal.message}`);
+        return EXIT.ERROR;
       }
 
       if (paired === undefined || paired.status !== "paired") {
@@ -117,7 +157,7 @@ export function createLoginCommand(deps: LoginCommandDeps = {}): Command {
         // so scripts can key off the last parseable line instead of only the exit code.
         ctx.io.result({ paired: false, reason: "timeout" });
         ctx.io.errline(
-          "Pairing timed out before it was confirmed. Run `birdybeep login` to retry.",
+          "Pairing timed out before you approved it. In the BirdyBeep app, tap “pair a machine”, scan the QR (or enter the code), then run `birdybeep login` again.",
         );
         return EXIT.ERROR;
       }
