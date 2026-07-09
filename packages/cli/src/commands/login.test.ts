@@ -281,7 +281,8 @@ describe("birdybeep login", () => {
     const cmd = createLoginCommand({
       fetchImpl: stubPairing({
         terminalError: "quota_exceeded",
-        terminalMessage: "agent install limit reached for the free plan; revoke a machine or upgrade",
+        terminalMessage:
+          "agent install limit reached for the free plan; revoke a machine or upgrade",
       }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
