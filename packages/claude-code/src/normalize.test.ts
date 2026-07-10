@@ -254,10 +254,7 @@ describe("descriptive completion push (0r6)", () => {
 
   it("omits the branch on a detached HEAD", async () => {
     const repo = gitCheckout("det", "0000000000000000000000000000000000000000\n");
-    const ev = await normalizeClaudeCodeEvent(
-      { ...base, cwd: repo, hook_event_name: "Stop" },
-      DET,
-    );
+    const ev = await normalizeClaudeCodeEvent({ ...base, cwd: repo, hook_event_name: "Stop" }, DET);
     expect(ev.title).toBe(`${basename(repo)} — Claude Code finished`);
     expect(ev.workspace.repo_name).toBe(basename(repo));
     expect(ev.workspace.branch).toBeUndefined();

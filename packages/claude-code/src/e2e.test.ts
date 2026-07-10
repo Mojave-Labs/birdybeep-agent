@@ -222,7 +222,8 @@ describe("CC-E2E: install → fire real hooks → assert delivered", () => {
       transcript_path: RAW_TRANSCRIPT,
       cwd: repo,
       hook_event_name: "Stop",
-      last_assistant_message: "Done — shipped the retry logic and every test is green.\n\n(details…)",
+      last_assistant_message:
+        "Done — shipped the retry logic and every test is green.\n\n(details…)",
     });
     expect(outcome).toBe("delivered");
 
