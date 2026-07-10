@@ -19,9 +19,11 @@ import { createHash } from "node:crypto";
 
 import {
   type BirdyBeepAgentEvent,
+  detectRepoContext,
   getMachineIdentity,
   normalizeEvent,
   type NormalizeOptions,
+  type RepoContext,
 } from "@birdybeep/agent-core";
 
 /** Thrown for an unknown/garbled Claude Code hook payload (never a malformed event). */
@@ -45,6 +47,34 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 function str(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+/** Longest one-line completion body we compose before the normalizer's own caps take over. */
+const SUMMARY_MAX_CHARS = 200;
+
+/**
+ * Condense Claude Code's `last_assistant_message` into a one-line push body.
+ * Heuristic: the first non-empty line (agents usually lead with the headline),
+ * whitespace-collapsed and truncated. Returns undefined for an absent/blank
+ * message so the caller can fall back. Path/secret scrubbing is the normalizer's job.
+ */
+function summarizeLastMessage(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const firstLine = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  if (!firstLine) return undefined;
+  const collapsed = firstLine.replace(/\s+/g, " ");
+  return collapsed.length > SUMMARY_MAX_CHARS
+    ? `${collapsed.slice(0, SUMMARY_MAX_CHARS - 1)}…`
+    : collapsed;
+}
+
+/** "<repo> · <branch>" (or just "<repo>") to lead the push title; undefined when cwd isn't a checkout. */
+function repoLabel(ctx: RepoContext): string | undefined {
+  if (!ctx.repoName) return undefined;
+  return ctx.branch ? `${ctx.repoName} · ${ctx.branch}` : ctx.repoName;
 }
 
 /** Deterministic best-effort session id when Claude Code provides none (§10.3). */
@@ -105,14 +135,18 @@ function mapHookEvent(payload: Record<string, unknown>): MappedEvent {
         metadata: { tool },
       };
     }
-    case "Stop":
+    case "Stop": {
+      // Claude Code hands the Stop hook the full final assistant text — use it as the
+      // body so the push says WHAT finished, not just that something did (§10.2).
+      const summary = summarizeLastMessage(str(payload["last_assistant_message"]));
       return {
         eventType: "agent_completed",
         status: "completed",
         title: "Claude Code finished",
-        body: "Turn complete",
+        body: summary ?? "Turn complete",
         metadata: {},
       };
+    }
     case "StopFailure": {
       const errorType = str(payload["error_type"]) ?? "unknown";
       return {
@@ -146,14 +180,23 @@ function buildAndNormalize(input: unknown, opts: NormalizeOptions): BirdyBeepAge
   const mapped = mapHookEvent(payload); // throws ClaudeCodeMappingError on unknown event
   const sessionId = str(payload["session_id"]);
   const machine = getMachineIdentity();
+  const cwd = str(payload["cwd"]) ?? "unknown";
+  // Best-effort, fail-soft: which checkout produced this event (§10.2). Populates the
+  // repo/branch workspace labels AND leads the title so parallel sessions are told apart.
+  const repo = detectRepoContext(cwd);
+  const label = repoLabel(repo);
   const draft = {
     event_type: mapped.eventType,
     status: mapped.status,
     harness: "claude_code",
     source_session_id: sessionId && sessionId.length > 0 ? sessionId : bestEffortSessionId(payload),
     machine: { label: machine.label, os: machine.os },
-    workspace: { cwd: str(payload["cwd"]) ?? "unknown" },
-    title: mapped.title,
+    workspace: {
+      cwd,
+      ...(repo.repoName ? { repo_name: repo.repoName } : {}),
+      ...(repo.branch ? { branch: repo.branch } : {}),
+    },
+    title: label ? `${label} — ${mapped.title}` : mapped.title,
     body: mapped.body,
     metadata: mapped.metadata,
   };

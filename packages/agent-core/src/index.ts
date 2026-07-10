@@ -22,6 +22,7 @@ export * from "./primitives";
 export * from "./queue";
 export * from "./sender";
 export * from "./token-store";
+export * from "./workspace";
 
 /** Package version marker — replaced by the real build/version pipeline (REL-*). */
 export const AGENT_CORE_VERSION = "0.0.0";

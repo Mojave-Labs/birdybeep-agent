@@ -15,7 +15,9 @@
  * Stub sink only — live wrangler-dev / EVT-INGEST delivery is the deferred cross-repo E2E.
  */
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   createSender,
@@ -63,12 +65,24 @@ const base = { session_id: SESSION, transcript_path: RAW_TRANSCRIPT, cwd: RAW_CW
 
 let sandbox: Sandbox | undefined;
 let sink: EventSink | undefined;
+const tmpCheckouts: string[] = [];
 afterEach(async () => {
   sandbox?.cleanup();
   await sink?.close();
   sandbox = undefined;
   sink = undefined;
+  for (const dir of tmpCheckouts.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
+
+/** A throwaway git checkout on disk (real `.git/HEAD`) so repo/branch detection has something to find. */
+function tmpCheckout(name: string, branch: string): string {
+  const root = mkdtempSync(join(tmpdir(), "bb-cc-e2e-"));
+  tmpCheckouts.push(root);
+  const repo = join(root, name);
+  mkdirSync(join(repo, ".git"), { recursive: true });
+  writeFileSync(join(repo, ".git", "HEAD"), `ref: refs/heads/${branch}\n`);
+  return repo;
+}
 
 async function setUp(): Promise<{
   sb: Sandbox;
@@ -198,5 +212,33 @@ describe("CC-E2E: install → fire real hooks → assert delivered", () => {
     const outcome = await fire({ ...base, hook_event_name: "PreCompact", trigger: "auto" });
     expect(outcome).toBe("skipped");
     expect(sink!.received()).toHaveLength(0);
+  });
+
+  it("delivers an enriched title + last-message body for a Stop from a real checkout (0r6)", async () => {
+    const { fire } = await setUp();
+    const repo = tmpCheckout("myapp", "main");
+    const outcome = await fire({
+      session_id: SESSION,
+      transcript_path: RAW_TRANSCRIPT,
+      cwd: repo,
+      hook_event_name: "Stop",
+      last_assistant_message: "Done — shipped the retry logic and every test is green.\n\n(details…)",
+    });
+    expect(outcome).toBe("delivered");
+
+    const done = sink!
+      .received()
+      .find((e) => (e.body as { event_type?: string }).event_type === "agent_completed");
+    expect(done, "agent_completed not delivered").toBeDefined();
+    const body = done!.body as Record<string, unknown>;
+    // What the user actually sees: WHICH checkout + WHAT it did — no more "Claude Code finished / Turn complete".
+    expect(body["title"]).toBe("myapp · main — Claude Code finished");
+    expect(body["body"]).toBe("Done — shipped the retry logic and every test is green.");
+    const ws = body["workspace"] as Record<string, unknown>;
+    expect(ws["repo_name"]).toBe("myapp");
+    expect(ws["branch"]).toBe("main");
+    // Privacy still holds: the real checkout path never leaves the machine.
+    assertNoAbsolutePaths(done!);
+    expect(JSON.stringify(done!.body)).not.toContain(repo);
   });
 });
