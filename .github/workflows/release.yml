@@ -16,8 +16,9 @@ name: Release
 #   • Steady state: npm TRUSTED PUBLISHING (OIDC) — configure this repo + this workflow
 #     file as the trusted publisher on each package at npmjs.com, then DELETE the
 #     NPM_TOKEN secret. No token exists to expire or leak; publishes authenticate via
-#     the id-token permission below. pnpm 10.x handles the OIDC exchange (don't bump to
-#     pnpm 11 blindly — 11.0.x shipped an OIDC regression, fixed later).
+#     the id-token permission below. REQUIRES npm >= 11.5.1 — the runner's Node 22 ships
+#     npm 10.x, which silently skips the OIDC exchange and dies with a misleading
+#     `ENEEDAUTH`, so we upgrade npm before publishing (see the step below).
 # HUMAN-REQUIRED before the first publish (A-HUMAN-NPM):
 #   • Create the @birdybeep npm org; bootstrap token as above.
 #   • Make the repo public (provenance requires a public repo at publish time).
@@ -49,6 +50,16 @@ jobs:
           fetch-depth: 0
 
       - uses: ./.github/actions/setup
+
+      # npm's OIDC trusted publishing needs npm >= 11.5.1; the runner's Node 22 bundles
+      # npm 10.x, which never attempts the OIDC handshake and fails publish with a
+      # misleading ENEEDAUTH. Pin the current 11.x line (avoid betting a release on a
+      # brand-new npm major). pnpm publish shells out to this npm, so the version here
+      # is what matters.
+      - name: Upgrade npm to an OIDC-capable version (>= 11.5.1)
+        run: |
+          npm install -g npm@^11.5.1
+          echo "npm now: $(npm --version)"
 
       # Write ~/.npmrc ourselves so the changesets action doesn't generate one that
       # references ${NPM_TOKEN}: with the secret deleted (tokenless OIDC mode) that

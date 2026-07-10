@@ -85,9 +85,16 @@ configured for it — so the very first publish uses a throwaway token.
 2. **Delete the `NPM_TOKEN` repo secret and revoke the token on npmjs.com.** All future
    releases publish tokenless via OIDC.
 
-Notes: the `repository` field in each package.json must match the publishing repo (it does);
-the OIDC exchange is handled by pnpm 10.x (pinned via `packageManager` — pnpm 11.0.x shipped an
-OIDC regression, so don't bump pnpm majors blindly).
+Notes:
+
+- **npm must be >= 11.5.1** for OIDC. GitHub's Node 22 bundles npm 10.x, which silently skips
+  the OIDC handshake and fails publish with a misleading `ENEEDAUTH` ("run npm adduser") — not a
+  token/config error. `release.yml` upgrades npm before publishing to avoid this. `pnpm publish`
+  shells out to that npm, so the npm version is what matters (this is the trap that broke the
+  first tokenless `0.0.2` release).
+- The `repository` field in each package.json must match the publishing repo (it does).
+- The Trusted Publisher's workflow field is just `release.yml` (the filename, not the full path),
+  and every field is case-sensitive — a mismatch also surfaces as `ENEEDAUTH`/`E404`.
 
 Until you're ready to ship publicly, just don't merge the Version PR — test the built CLI
 locally first (see below).
