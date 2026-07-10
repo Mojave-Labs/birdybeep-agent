@@ -1,6 +1,6 @@
 {
   "name": "@birdybeep/claude-code",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "BirdyBeep adapter for Claude Code: hook templates, non-destructive config install/uninstall, and event normalization.",
   "license": "MIT",
   "repository": {
