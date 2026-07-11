@@ -83,7 +83,7 @@ The CLI surface (run `birdybeep <command> --help` for per-command help):
 
 | Command                                                    | What it does                                                                                                                                                                          |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `birdybeep pair`                                          | Device-flow pairing — prints a short URL + code, polls until paired, stores the machine token in the secure store.                                                                    |
+| `birdybeep pair`                                           | Device-flow pairing — prints a short URL + code, polls until paired, stores the machine token in the secure store.                                                                    |
 | `birdybeep logout`                                         | Removes the machine token (keychain + file fallback). Idempotent. Same as `unpair`.                                                                                                   |
 | `birdybeep unpair`                                         | Unpairs this machine — removes the machine token (keychain + file fallback). Idempotent. Same as `logout`.                                                                            |
 | `birdybeep status`                                         | Machine + pairing state, per-harness integration status, and queue depth. Drains the queue opportunistically; exits non-zero if not paired.                                           |
@@ -176,7 +176,7 @@ earns trust by being **open and auditable**:
 | Doc                                                            | Contents                                                            |
 | -------------------------------------------------------------- | ------------------------------------------------------------------- |
 | [`docs/install.md`](./docs/install.md)                         | Detailed install + uninstall, per harness.                          |
-| [`docs/pairing.md`](./docs/pairing.md)                         | How `pair` pairing works.                                          |
+| [`docs/pairing.md`](./docs/pairing.md)                         | How `pair` pairing works.                                           |
 | [`docs/security.md`](./docs/security.md)                       | Tokens, redaction, and exactly what data is sent.                   |
 | [`docs/troubleshooting.md`](./docs/troubleshooting.md)         | `doctor`, `needs_trust`, `needs_restart`, offline queue.            |
 | [`docs/adapter-development.md`](./docs/adapter-development.md) | Building and patching adapters.                                     |
@@ -184,13 +184,13 @@ earns trust by being **open and auditable**:
 
 ## Packages
 
-| Package                  | Description                                                                              |
-| ------------------------ | ---------------------------------------------------------------------------------------- |
+| Package                  | Description                                                                                     |
+| ------------------------ | ----------------------------------------------------------------------------------------------- |
 | `@birdybeep/cli`         | The `birdybeep` CLI: pair, logout, unpair, status, test, doctor, agent install/uninstall, hook. |
-| `@birdybeep/agent-core`  | Event schema, normalizer/redaction, local queue, sender, token store, adapter interface. |
-| `@birdybeep/claude-code` | Claude Code adapter + hook templates.                                                    |
-| `@birdybeep/codex`       | Codex adapter + config templates.                                                        |
-| `@birdybeep/opencode`    | OpenCode plugin/adapter.                                                                 |
+| `@birdybeep/agent-core`  | Event schema, normalizer/redaction, local queue, sender, token store, adapter interface.        |
+| `@birdybeep/claude-code` | Claude Code adapter + hook templates.                                                           |
+| `@birdybeep/codex`       | Codex adapter + config templates.                                                               |
+| `@birdybeep/opencode`    | OpenCode plugin/adapter.                                                                        |
 
 ## Develop
 
