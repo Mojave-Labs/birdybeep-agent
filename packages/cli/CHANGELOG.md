@@ -1,5 +1,26 @@
 # @birdybeep/cli
 
+## 0.1.0
+
+### Minor Changes
+
+- 415796b: Rename the `birdybeep login` command to `birdybeep pair`, matching the pairing
+  vocabulary used everywhere else (the `/v1/pair/*` endpoints, the mobile app's
+  "pair a machine" flow, and the docs). There is no `login` alias — `pair` is the
+  only name.
+
+  Teardown now has two equivalent names: `birdybeep unpair` (the twin of `pair`)
+  and `birdybeep logout` both remove the local machine token. `birdybeep status`
+  reports `Paired: yes/no` (JSON field `paired`) instead of the old login wording.
+
+### Patch Changes
+
+- Updated dependencies [2aeeeeb]
+  - @birdybeep/claude-code@0.1.0
+  - @birdybeep/agent-core@0.1.0
+  - @birdybeep/codex@0.1.0
+  - @birdybeep/opencode@0.1.0
+
 ## 0.0.3
 
 ### Patch Changes
