@@ -54,7 +54,7 @@ try {
   }
 
   const help = run("node", [binJs, "--help"], { cwd: projDir });
-  for (const cmd of ["login", "logout", "status", "test", "doctor", "agent", "hook"]) {
+  for (const cmd of ["pair", "logout", "unpair", "status", "test", "doctor", "agent", "hook"]) {
     if (!help.includes(cmd)) {
       console.error(`✗ birdybeep --help is missing command: ${cmd}`);
       failed = true;

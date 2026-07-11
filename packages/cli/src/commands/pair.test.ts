@@ -1,5 +1,5 @@
 /**
- * `birdybeep login` proof (hermetic temp HOME, stub device-code backend): POST /v1/pair/start
+ * `birdybeep pair` proof (hermetic temp HOME, stub device-code backend): POST /v1/pair/start
  * → show QR matrix (TTY only) + qr_payload link + user_code → poll POST /v1/pair/token
  * (validation_failed/4xx = pending) until 201 {machine_token, machine_id}; store the token in
  * the SECURE store, persist the non-secret apiUrl, and NEVER write the token to config/output.
@@ -18,7 +18,7 @@ import { runCli } from "../cli";
 import { cliConfigPath } from "../config";
 import { EXIT } from "../framework";
 import { CLI_VERSION } from "../version";
-import { createLoginCommand, renderQrMatrix } from "./login";
+import { createPairCommand, renderQrMatrix } from "./pair";
 
 const MACHINE_TOKEN = `bbm_TESTONLY_${randomUUID()}`;
 const FILE_ONLY = { backend: unavailableKeychainBackend };
@@ -99,16 +99,16 @@ function stubPairing(
   }) as unknown as typeof fetch;
 }
 
-describe("birdybeep login", () => {
+describe("birdybeep pair", () => {
   it("pairs via the device-code flow and stores the token securely (not in config)", async () => {
     sandbox = createSandbox();
-    const cmd = createLoginCommand({
+    const cmd = createPairCommand({
       fetchImpl: stubPairing(),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
     });
     const out = capture();
-    const code = await runCli(["login"], {
+    const code = await runCli(["pair"], {
       commands: [cmd],
       stdout: out.writer,
       stderr: out.writer,
@@ -129,14 +129,14 @@ describe("birdybeep login", () => {
 
   it("renders a scannable QR matrix on a TTY, above the plain link fallback (pe1)", async () => {
     sandbox = createSandbox();
-    const cmd = createLoginCommand({
+    const cmd = createPairCommand({
       fetchImpl: stubPairing(),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
       isTTY: true, // interactive terminal → the matrix must print
     });
     const out = capture();
-    const code = await runCli(["login"], {
+    const code = await runCli(["pair"], {
       commands: [cmd],
       stdout: out.writer,
       stderr: out.writer,
@@ -155,14 +155,14 @@ describe("birdybeep login", () => {
 
   it("prints NO matrix when stdout is not a TTY (piped/CI output stays greppable)", async () => {
     sandbox = createSandbox();
-    const cmd = createLoginCommand({
+    const cmd = createPairCommand({
       fetchImpl: stubPairing(),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
       isTTY: false,
     });
     const out = capture();
-    const code = await runCli(["login"], {
+    const code = await runCli(["pair"], {
       commands: [cmd],
       stdout: out.writer,
       stderr: out.writer,
@@ -182,13 +182,13 @@ describe("birdybeep login", () => {
     // cross-repo proof lives in the product repo's xrepo-e2e (/v1/pair/inspect round-trip).
     sandbox = createSandbox();
     let startBody: Record<string, unknown> | undefined;
-    const cmd = createLoginCommand({
+    const cmd = createPairCommand({
       fetchImpl: stubPairing({ onStartBody: (b) => (startBody = b as Record<string, unknown>) }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
     });
     const out = capture();
-    const code = await runCli(["login"], {
+    const code = await runCli(["pair"], {
       commands: [cmd],
       stdout: out.writer,
       stderr: out.writer,
@@ -209,13 +209,13 @@ describe("birdybeep login", () => {
 
   it("--json emits NDJSON: pairing_started (code up front) then the paired result (pe1)", async () => {
     sandbox = createSandbox();
-    const cmd = createLoginCommand({
+    const cmd = createPairCommand({
       fetchImpl: stubPairing(),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
     });
     const out = capture();
-    await runCli(["login", "--json"], {
+    await runCli(["pair", "--json"], {
       commands: [cmd],
       stdout: out.writer,
       stderr: out.writer,
@@ -230,7 +230,7 @@ describe("birdybeep login", () => {
       .map((l) => JSON.parse(l) as Record<string, unknown>);
     expect(lines.length).toBe(2);
     // Line 1: the pairing info a script needs to approve (previously never emitted → the
-    // operator could not learn the code and json-mode login always timed out).
+    // operator could not learn the code and json-mode pair always timed out).
     expect(lines[0]).toMatchObject({
       status: "pairing_started",
       user_code: "AB-1234",
@@ -246,7 +246,7 @@ describe("birdybeep login", () => {
   it("--json emits a terminal {paired:false} object on timeout (scripts read the last line)", async () => {
     sandbox = createSandbox();
     let t = 0;
-    const cmd = createLoginCommand({
+    const cmd = createPairCommand({
       fetchImpl: stubPairing({ expiresAt: new Date(1_000_000).toISOString(), alwaysPending: true }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
@@ -257,7 +257,7 @@ describe("birdybeep login", () => {
     });
     const out = capture();
     const err = capture();
-    const code = await runCli(["login", "--json"], {
+    const code = await runCli(["pair", "--json"], {
       commands: [cmd],
       stdout: out.writer,
       stderr: err.writer,
@@ -278,7 +278,7 @@ describe("birdybeep login", () => {
     // actionable error on every poll and the CLI masked it as "not approved yet",
     // polling into a 10-min silent timeout. It must now fail fast with the reason.
     sandbox = createSandbox();
-    const cmd = createLoginCommand({
+    const cmd = createPairCommand({
       fetchImpl: stubPairing({
         terminalError: "quota_exceeded",
         terminalMessage:
@@ -289,7 +289,7 @@ describe("birdybeep login", () => {
     });
     const out = capture();
     const err = capture();
-    const code = await runCli(["login"], {
+    const code = await runCli(["pair"], {
       commands: [cmd],
       stdout: out.writer,
       stderr: err.writer,
@@ -303,14 +303,14 @@ describe("birdybeep login", () => {
 
   it("--json emits a terminal {paired:false, reason:<code>} on a hard error (scripts see the code)", async () => {
     sandbox = createSandbox();
-    const cmd = createLoginCommand({
+    const cmd = createPairCommand({
       fetchImpl: stubPairing({ terminalError: "quota_exceeded" }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
     });
     const out = capture();
     const err = capture();
-    const code = await runCli(["login", "--json"], {
+    const code = await runCli(["pair", "--json"], {
       commands: [cmd],
       stdout: out.writer,
       stderr: err.writer,
@@ -328,10 +328,10 @@ describe("birdybeep login", () => {
 
   it("reprints a heartbeat while waiting so the prompt is visibly alive (not a silent hang)", async () => {
     // The clock advances past HEARTBEAT_MS between polls; the stub approves on poll #2, so
-    // exactly one heartbeat prints before success. Proves `login` isn't "doing nothing".
+    // exactly one heartbeat prints before success. Proves `pair` isn't "doing nothing".
     sandbox = createSandbox();
     let c = 0;
-    const cmd = createLoginCommand({
+    const cmd = createPairCommand({
       fetchImpl: stubPairing({ expiresAt: new Date(10_000_000_000_000).toISOString() }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
@@ -342,7 +342,7 @@ describe("birdybeep login", () => {
       },
     });
     const out = capture();
-    const code = await runCli(["login"], {
+    const code = await runCli(["pair"], {
       commands: [cmd],
       stdout: out.writer,
       stderr: out.writer,
@@ -356,7 +356,7 @@ describe("birdybeep login", () => {
   it("exits non-zero when the pairing window expires without approval", async () => {
     sandbox = createSandbox();
     let t = 0;
-    const cmd = createLoginCommand({
+    const cmd = createPairCommand({
       // expires_at fixed at epoch 1,000,000 ms; the injected clock crosses it after one poll.
       fetchImpl: stubPairing({ expiresAt: new Date(1_000_000).toISOString(), alwaysPending: true }),
       tokenOptions: FILE_ONLY,
@@ -367,7 +367,7 @@ describe("birdybeep login", () => {
       },
     });
     const out = capture();
-    const code = await runCli(["login"], {
+    const code = await runCli(["pair"], {
       commands: [cmd],
       stdout: out.writer,
       stderr: out.writer,

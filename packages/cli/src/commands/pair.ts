@@ -1,5 +1,5 @@
 /**
- * `birdybeep login` (§7.1/§7.2/§9.4) — pair this machine via the device-code flow.
+ * `birdybeep pair` (§7.1/§7.2/§9.4) — pair this machine via the device-code flow.
  * `POST /v1/pair/start` (machine_label derived from hostname/OS) → show a scannable
  * QR matrix + the pair link + `user_code` → poll `POST /v1/pair/token` with the device
  * code (+ stable machine fingerprint) until it returns the durable token or the
@@ -31,7 +31,7 @@ import { CLI_VERSION } from "../version";
 export const DEFAULT_POLL_INTERVAL_MS = 2000;
 
 /**
- * How often to reprint a "still waiting…" heartbeat while polling. Without it, `login`
+ * How often to reprint a "still waiting…" heartbeat while polling. Without it, `pair`
  * prints the code once and then appears frozen ("stuck doing nothing") for the whole
  * 10-minute window — the reported bug. Time-gated on the injected clock so it never
  * fires spuriously in the fast, instant-sleep tests.
@@ -46,7 +46,7 @@ export function renderQrMatrix(qrPayload: string): string {
   return renderUnicodeCompact(qrPayload, { border: 2 });
 }
 
-export interface LoginCommandDeps {
+export interface PairCommandDeps {
   fetchImpl?: typeof fetch;
   tokenOptions?: TokenStoreOptions;
   /** Injectable delay between polls (default real setTimeout; tests make it instant). */
@@ -61,7 +61,7 @@ export interface LoginCommandDeps {
   pollIntervalMs?: number;
 }
 
-export function createLoginCommand(deps: LoginCommandDeps = {}): Command {
+export function createPairCommand(deps: PairCommandDeps = {}): Command {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const clock = deps.now ?? (() => Date.now());
@@ -69,9 +69,9 @@ export function createLoginCommand(deps: LoginCommandDeps = {}): Command {
   const intervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
   return {
-    name: "login",
+    name: "pair",
     summary: "Pair this machine with your BirdyBeep account (QR or manual)",
-    usage: "birdybeep login [--json]",
+    usage: "birdybeep pair [--json]",
     run: async (ctx) => {
       const apiUrl = resolveApiUrl();
       const identity = getMachineIdentity(); // { label, os, fingerprintHash }
@@ -157,7 +157,7 @@ export function createLoginCommand(deps: LoginCommandDeps = {}): Command {
         // so scripts can key off the last parseable line instead of only the exit code.
         ctx.io.result({ paired: false, reason: "timeout" });
         ctx.io.errline(
-          "Pairing timed out before you approved it. In the BirdyBeep app, tap “pair a machine”, scan the QR (or enter the code), then run `birdybeep login` again.",
+          "Pairing timed out before you approved it. In the BirdyBeep app, tap “pair a machine”, scan the QR (or enter the code), then run `birdybeep pair` again.",
         );
         return EXIT.ERROR;
       }

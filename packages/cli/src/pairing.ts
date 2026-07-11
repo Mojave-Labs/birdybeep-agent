@@ -53,7 +53,7 @@ export type PairTokenResult =
   /**
    * The backend returned an outcome that will NOT resolve by waiting (`retryable: false`,
    * e.g. `quota_exceeded` — the install cap is hit) or a transient server-side failure
-   * (`retryable: true`, e.g. `internal_error`/5xx). Surfacing these is what stops `login`
+   * (`retryable: true`, e.g. `internal_error`/5xx). Surfacing these is what stops `pair`
    * from masking a real error as "not approved yet" and hanging silently until timeout.
    */
   | { status: "error"; code: ErrorCode | "unknown"; message: string; retryable: boolean };

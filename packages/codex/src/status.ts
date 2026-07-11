@@ -224,7 +224,7 @@ export async function codexDoctor(opts: CodexStatusOptions = {}): Promise<Doctor
           ok: false,
           status: "error",
           detail: "No BirdyBeep machine token found.",
-          remedy: "Run `birdybeep login` to pair this machine.",
+          remedy: "Run `birdybeep pair` to pair this machine.",
         },
   );
 

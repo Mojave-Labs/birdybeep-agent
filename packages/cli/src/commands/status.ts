@@ -1,8 +1,8 @@
 /**
- * `birdybeep status` (§9.3, §9.4) — a quick health snapshot: machine identity + login
+ * `birdybeep status` (§9.3, §9.4) — a quick health snapshot: machine identity + pairing
  * state, per-harness integration status, and local queue depth, while opportunistically
  * draining the queue (best-effort, non-blocking) and reporting delivered-vs-remaining.
- * Exits non-zero when not logged in so scripts can branch. `--json` mirrors everything.
+ * Exits non-zero when not paired so scripts can branch. `--json` mirrors everything.
  * Factory with injectable adapters/sender/token so tests run hermetically against a stub.
  */
 import {
@@ -16,7 +16,7 @@ import { codexAdapter } from "@birdybeep/codex";
 import { opencodeAdapter } from "@birdybeep/opencode";
 
 import { resolveApiUrl } from "../config";
-import { gatherIntegrations, isLoggedIn, localQueueDepth, machineIdentity } from "../diagnostics";
+import { gatherIntegrations, isPaired, localQueueDepth, machineIdentity } from "../diagnostics";
 import { type Command, EXIT } from "../framework";
 
 const DEFAULT_ADAPTERS: AgentAdapter[] = [claudeCodeAdapter, codexAdapter, opencodeAdapter];
@@ -44,7 +44,7 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
     usage: "birdybeep status [--json]",
     run: async (ctx) => {
       const machine = machineIdentity();
-      const loggedIn = await isLoggedIn(deps.tokenOptions ?? {});
+      const paired = await isPaired(deps.tokenOptions ?? {});
       const integrations = await gatherIntegrations(adapters);
       const depthBefore = localQueueDepth();
       const drain = await makeSender(resolveApiUrl()).drainNow(); // opportunistic, best-effort
@@ -52,7 +52,7 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
 
       const report = {
         machine,
-        loggedIn,
+        paired,
         integrations,
         queue: { depthBefore, delivered: drain.delivered, depthAfter },
       };
@@ -61,16 +61,14 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
         ctx.io.result(report);
       } else {
         ctx.io.line(`Machine: ${machine.label} (${machine.os})`);
-        ctx.io.line(
-          loggedIn ? "Login:   paired" : "Login:   NOT logged in — run `birdybeep login`",
-        );
+        ctx.io.line(paired ? "Paired:  yes" : "Paired:  no — run `birdybeep pair`");
         ctx.io.line("Integrations:");
         for (const i of integrations) ctx.io.line(`  ${i.displayName}: ${i.status}`);
         ctx.io.line(
           `Queue:   ${depthBefore} queued → ${drain.delivered} delivered, ${depthAfter} remaining`,
         );
       }
-      return loggedIn ? EXIT.OK : EXIT.ERROR; // not-logged-in → defined non-zero
+      return paired ? EXIT.OK : EXIT.ERROR; // not-paired → defined non-zero
     },
   };
 }

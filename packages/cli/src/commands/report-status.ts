@@ -67,7 +67,7 @@ export function createReportStatusCommand(deps: ReportStatusCommandDeps = {}): C
     run: async (ctx) => {
       const token = await getToken(deps.tokenOptions ?? {});
       if (token === null) {
-        ctx.io.errline("Not logged in — run `birdybeep login` first.");
+        ctx.io.errline("No machine token — run `birdybeep pair` first.");
         return EXIT.ERROR;
       }
 
@@ -125,7 +125,7 @@ export function createReportStatusCommand(deps: ReportStatusCommandDeps = {}): C
         });
       } else if (outcome === "terminal") {
         ctx.io.errline(
-          `Report rejected (${errorCode ?? "auth"}) — your token may be revoked. Re-run \`birdybeep login\`.`,
+          `Report rejected (${errorCode ?? "auth"}) — your token may be revoked. Re-run \`birdybeep pair\`.`,
         );
       } else {
         for (const e of effective) {

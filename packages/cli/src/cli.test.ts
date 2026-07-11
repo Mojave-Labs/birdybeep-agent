@@ -26,8 +26,9 @@ function capture(): { writer: { write: (s: string) => void }; text: () => string
 }
 
 const ALL_COMMANDS = [
-  "login",
+  "pair",
   "logout",
+  "unpair",
   "status",
   "test",
   "doctor",

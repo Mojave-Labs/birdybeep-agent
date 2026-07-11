@@ -3,7 +3,7 @@
  * { integrations: [...] } POST to /v1/integrations/status with Bearer auth, surfaces the
  * server's EFFECTIVE per-harness status from the { integrations: [...] } response, treats a
  * 401/403 (mirrored error envelope) as TERMINAL (exit non-zero), and an unreachable backend
- * as deferred (exit 0, never blocks install). not-logged-in exits non-zero.
+ * as deferred (exit 0, never blocks install). a missing machine token exits non-zero.
  */
 import { randomUUID } from "node:crypto";
 
@@ -162,7 +162,7 @@ describe("birdybeep report-status", () => {
     expect(JSON.parse(out.text())).toMatchObject({ outcome: "deferred" });
   });
 
-  it("exits non-zero when not logged in", async () => {
+  it("exits non-zero when there is no machine token", async () => {
     sandbox = createSandbox();
     await clearToken(FILE_ONLY);
     const cmd = createReportStatusCommand({
@@ -178,6 +178,6 @@ describe("birdybeep report-status", () => {
       ensureConfig: false,
     });
     expect(code).toBe(EXIT.ERROR);
-    expect(out.text()).toMatch(/Not logged in/);
+    expect(out.text()).toMatch(/No machine token/);
   });
 });

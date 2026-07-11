@@ -114,7 +114,7 @@ describe("codexDoctor — actionable diagnoses", () => {
     expect(valid?.remedy).toMatch(/malformed/);
   });
 
-  it("flags a missing machine token with a login remedy", async () => {
+  it("flags a missing machine token with a pair remedy", async () => {
     sandbox = createSandbox();
     await installCodex({}, sandbox.home);
     recordCodexEventSeen();
@@ -122,7 +122,7 @@ describe("codexDoctor — actionable diagnoses", () => {
     const r = await codexDoctor({ home: sandbox.home, detect: DETECTED, tokenOptions: FILE_ONLY });
     const token = r.checks.find((c) => c.name === "Machine token present");
     expect(token?.ok).toBe(false);
-    expect(token?.remedy).toMatch(/birdybeep login/);
+    expect(token?.remedy).toMatch(/birdybeep pair/);
   });
 
   it("reports all-ok for an installed, trusted, token-paired, writable config", async () => {
