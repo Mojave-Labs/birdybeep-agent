@@ -29,6 +29,10 @@ export const BIRDYBEEP_EVENT_TYPES = [
   // (unlike "custom", which the §10.5 matrix suppresses unconditionally) and is
   // quota-exempt — the product's DEFAULT_NOTIFY/gauntlet carry the other half.
   "test",
+  // "session_ended": a harness signalled a session truly ended (e.g. Claude Code's
+  // SessionEnd hook). Non-notifying server-side; carries a terminal status. Appended
+  // last to preserve every existing ordinal — mirrors @birdybeep/shared.
+  "session_ended",
 ] as const;
 export type BirdyBeepEventType = (typeof BIRDYBEEP_EVENT_TYPES)[number];
 
