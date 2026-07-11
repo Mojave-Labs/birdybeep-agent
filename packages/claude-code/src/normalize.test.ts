@@ -26,6 +26,7 @@ const NOTIFY_DEFAULT: Record<string, boolean> = {
   agent_completed: true,
   agent_failed: true,
   subagent_completed: false,
+  session_ended: false, // lifecycle marker — never beeps
 };
 
 const RAW_CWD = "/Users/alex/code/myapp";
@@ -122,6 +123,12 @@ const cases: Case[] = [
     eventType: "subagent_completed",
     status: "running",
   },
+  {
+    name: "SessionEnd",
+    payload: { ...base, hook_event_name: "SessionEnd", reason: "clear" },
+    eventType: "session_ended",
+    status: "completed", // terminal → settles the session into the "ended" bucket
+  },
 ];
 
 describe("§9.5 → §10.1 mapping", () => {
@@ -142,6 +149,22 @@ describe("§9.5 → §10.1 mapping", () => {
       DET,
     );
     expect((ev.metadata as Record<string, unknown>)["error_type"]).toBe("overloaded");
+  });
+
+  it("SessionEnd carries the reason into metadata and is a non-notifying terminal event", async () => {
+    const ev = await normalizeClaudeCodeEvent(
+      { ...base, hook_event_name: "SessionEnd", reason: "logout" },
+      DET,
+    );
+    expect(ev.event_type).toBe("session_ended");
+    expect(ev.status).toBe("completed");
+    expect((ev.metadata as Record<string, unknown>)["reason"]).toBe("logout");
+    expect(NOTIFY_DEFAULT[ev.event_type]).toBe(false); // closing a session must never beep
+  });
+
+  it("SessionEnd defaults the reason to 'other' when the hook omits it", async () => {
+    const ev = await normalizeClaudeCodeEvent({ ...base, hook_event_name: "SessionEnd" }, DET);
+    expect((ev.metadata as Record<string, unknown>)["reason"]).toBe("other");
   });
 });
 

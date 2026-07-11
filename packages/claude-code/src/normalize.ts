@@ -13,6 +13,7 @@
  *   Stop                              → agent_completed
  *   StopFailure                       → agent_failed (error_type carried into metadata)
  *   SubagentStop                      → subagent_completed
+ *   SessionEnd                        → session_ended (terminal, non-notifying; reason in metadata)
  * SubagentStart and TaskCreated/TaskCompleted are out of scope here (see SPEC §9.5).
  */
 import { createHash } from "node:crypto";
@@ -165,6 +166,19 @@ function mapHookEvent(payload: Record<string, unknown>): MappedEvent {
         body: "Subtask complete",
         metadata: { agent_type: str(payload["agent_type"]) },
       };
+    case "SessionEnd": {
+      // The session actually closed — settle it terminal so it stops looking live. Distinct
+      // from Stop (per-turn): SessionEnd fires once, at the end, and no event follows it.
+      // `reason` (clear / logout / prompt_input_exit / other) is metadata, not an error.
+      const reason = str(payload["reason"]) ?? "other";
+      return {
+        eventType: "session_ended",
+        status: "completed",
+        title: "Claude Code session ended",
+        body: `Session ended (${reason})`,
+        metadata: { reason },
+      };
+    }
     default:
       throw new ClaudeCodeMappingError(
         `unsupported Claude Code hook event: ${JSON.stringify(name)}`,
