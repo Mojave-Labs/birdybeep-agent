@@ -104,7 +104,7 @@ bd close <id>         # Complete work
 ```
 packages/
   agent-core/    event schema (mirrors birdybeep packages/schemas) · normalizer/redaction · 24h local queue · sender · token store · AgentAdapter interface
-  cli/           @birdybeep/cli — login · logout · status · test · doctor · agent install|uninstall · hook <harness>
+  cli/           @birdybeep/cli — pair · logout · unpair · status · test · doctor · agent install|uninstall · hook <harness>
   claude-code/   Claude Code adapter + hook templates      (highest-priority integration)
   codex/         Codex adapter + config templates           (one-time hook trust → needs_trust)
   opencode/      OpenCode plugin/adapter                     (restart-once to load)

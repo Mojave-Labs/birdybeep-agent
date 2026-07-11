@@ -2,7 +2,7 @@
  * `birdybeep status` proof (hermetic temp HOME): seed the local queue with real failed-
  * earlier hook payloads, run `status` with the stub reachable, and assert the depth before
  * drain, that queued events are POSTed to the stub, the queue empties, the per-integration
- * statuses + machine + login state are reported (human + --json), and the not-logged-in
+ * statuses + machine + pairing state are reported (human + --json), and the not-paired
  * branch exits non-zero. Drain is opportunistic; status never mutates harness config.
  */
 import { randomUUID } from "node:crypto";
@@ -70,7 +70,7 @@ async function seedQueue(): Promise<void> {
 
 interface StatusJson {
   machine: { label: string; os: string };
-  loggedIn: boolean;
+  paired: boolean;
   integrations: { harness: string; status: string }[];
   queue: { depthBefore: number; delivered: number; depthAfter: number };
 }
@@ -98,7 +98,7 @@ describe("birdybeep status", () => {
 
     expect(code).toBe(EXIT.OK);
     const json = JSON.parse(out.text()) as StatusJson;
-    expect(json.loggedIn).toBe(true);
+    expect(json.paired).toBe(true);
     expect(json.queue.depthBefore).toBe(2);
     expect(json.queue.delivered).toBe(2);
     expect(json.queue.depthAfter).toBe(0);
@@ -106,7 +106,7 @@ describe("birdybeep status", () => {
     expect(sink.received()).toHaveLength(2); // the queued events were POSTed to the stub
   });
 
-  it("human mode prints machine, login, integrations, and queue lines", async () => {
+  it("human mode prints machine, pairing, integrations, and queue lines", async () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
     const cmd = createStatusCommand({
@@ -123,12 +123,12 @@ describe("birdybeep status", () => {
     });
     const text = out.text();
     expect(text).toContain("Machine:");
-    expect(text).toContain("Login:   paired");
+    expect(text).toContain("Paired:  yes");
     expect(text).toContain("Codex: installed");
     expect(text).toContain("Queue:");
   });
 
-  it("not logged in → says so clearly and exits non-zero", async () => {
+  it("not paired → says so clearly and exits non-zero", async () => {
     sandbox = createSandbox();
     await clearToken(FILE_ONLY); // ensure no token
     const cmd = createStatusCommand({
@@ -144,6 +144,6 @@ describe("birdybeep status", () => {
       ensureConfig: false,
     });
     expect(code).toBe(EXIT.ERROR);
-    expect(out.text()).toContain("NOT logged in");
+    expect(out.text()).toContain("Paired:  no");
   });
 });

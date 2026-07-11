@@ -9,12 +9,12 @@ import { join } from "node:path";
 
 import { birdyBeepConfigDir } from "@birdybeep/agent-core";
 
-/** Default backend base URL (overridable via env or `birdybeep login`; finalized in a-release). */
+/** Default backend base URL (overridable via env or `birdybeep pair`; finalized in a-release). */
 export const DEFAULT_API_URL = "https://api.birdybeep.com";
 export const CONFIG_FILE = "config.json";
 
 export interface CliConfig {
-  /** Backend base URL (set by `login`); never holds a token. */
+  /** Backend base URL (set by `pair`); never holds a token. */
   apiUrl?: string;
 }
 

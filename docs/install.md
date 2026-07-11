@@ -42,12 +42,12 @@ The CLI works on macOS, Linux, and Windows.
 
 ---
 
-## 2. Pair your machine — `birdybeep login`
+## 2. Pair your machine — `birdybeep pair`
 
 Pairing links this machine to your BirdyBeep account so events can be delivered to you.
 
 ```bash
-birdybeep login
+birdybeep pair
 ```
 
 This uses a device-flow pairing handshake. The CLI prints a short link and a code, then waits:
@@ -74,7 +74,7 @@ What this does with your token:
 - The server stores only a **hash** of the token. The token is shown once and can be revoked or
   rotated at any time from the mobile app.
 
-> Note: the pairing backend endpoints are provisional and may change. If `login` can't reach the
+> Note: the pairing backend endpoints are provisional and may change. If `pair` can't reach the
 > backend yet, pair later — adapter installs don't require a token.
 
 To unpair, run `birdybeep logout`, which removes the token from the keychain and the file fallback.
@@ -203,7 +203,7 @@ birdybeep status
 
 ```text
 Machine: MacBook Pro (macos)
-Login:   paired
+Paired:  yes
 Integrations:
   Claude Code: installed
   Codex: needs_trust
@@ -211,9 +211,9 @@ Integrations:
 Queue:   0 queued → 0 delivered, 0 remaining
 ```
 
-`status` shows your machine identity, login state, per-harness integration status, and the local
+`status` shows your machine identity, pairing state, per-harness integration status, and the local
 queue depth. It opportunistically drains any queued events while it runs, and exits non-zero if
-you're not logged in (handy for scripts). Add `--json` for the machine-readable form.
+you're not paired (handy for scripts). Add `--json` for the machine-readable form.
 
 Send a real test event end-to-end:
 

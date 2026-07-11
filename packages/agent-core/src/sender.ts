@@ -151,7 +151,7 @@ export function createSender(config: SenderConfig): Sender {
       const deadline = clock() + totalBudgetMs;
       const token = await getToken(config.tokenOptions);
       if (token === null) {
-        queue.enqueue(event); // not paired yet → retry after `birdybeep login`
+        queue.enqueue(event); // not paired yet → retry after `birdybeep pair`
         return { outcome: "queued" };
       }
       const a = await attempt(event, token, Math.min(timeoutMs, totalBudgetMs));

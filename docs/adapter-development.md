@@ -200,7 +200,7 @@ export interface DoctorResult {
 Codex's [`doctor()`](../packages/codex/src/status.ts) walks an ordered checklist — harness present?
 config valid? notify + hooks installed? trust granted? config writable? machine token resolvable? —
 and each failing check carries a concrete `remedy`, e.g. `"Open Codex and run /hooks to trust the
-BirdyBeep hooks."` or `"Run \`birdybeep login\` to pair this machine."`
+BirdyBeep hooks."` or `"Run \`birdybeep pair\` to pair this machine."`
 
 ### `normalizeEvent(input)` → `BirdyBeepAgentEvent`
 

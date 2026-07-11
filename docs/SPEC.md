@@ -57,7 +57,7 @@ There is **no** local background daemon in MVP. Local delivery behavior:
 ## 4. CLI commands (PRD §9.4)
 
 ```bash
-birdybeep login
+birdybeep pair
 birdybeep logout
 birdybeep status
 birdybeep test
@@ -235,7 +235,7 @@ type AgentSessionStatus =
 ## 11. Security, privacy & what's sent (PRD §15.1–15.3)
 
 **Pairing protocol (device-code flow; schemas mirrored from the product `packages/schemas`):**
-`birdybeep login` POSTs `/v1/pair/start` (`{ machine_label, os?, cli_version?, requested_scopes? }`)
+`birdybeep pair` POSTs `/v1/pair/start` (`{ machine_label, os?, cli_version?, requested_scopes? }`)
 → bare `{ device_code, user_code, qr_payload, expires_at }`; it shows `qr_payload` + `user_code`
 (the QR carries only the short code, never a token) and polls `POST /v1/pair/token`
 (`{ device_code, machine_fingerprint? }`) — a `validation_failed`/4xx means "not approved yet,

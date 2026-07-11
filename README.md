@@ -54,9 +54,9 @@ Install the CLI, pair the machine, then wire up your agents.
 ```bash
 npm install -g @birdybeep/cli   # or pnpm add -g / yarn global add
 
-birdybeep login                 # device-flow pairing: prints a short URL + code, polls until paired
+birdybeep pair                 # device-flow pairing: prints a short URL + code, polls until paired
 birdybeep agent install all     # detect installed agents and wire them up (or: claude | codex | opencode)
-birdybeep status                # confirm machine, login, and per-harness integration state
+birdybeep status                # confirm machine, pairing, and per-harness integration state
 ```
 
 `agent install` is **idempotent** — re-running it produces the same result. It backs up any
@@ -83,9 +83,10 @@ The CLI surface (run `birdybeep <command> --help` for per-command help):
 
 | Command                                                    | What it does                                                                                                                                                                          |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `birdybeep login`                                          | Device-flow pairing — prints a short URL + code, polls until paired, stores the machine token in the secure store.                                                                    |
-| `birdybeep logout`                                         | Removes the machine token (keychain + file fallback). Idempotent.                                                                                                                     |
-| `birdybeep status`                                         | Machine + login state, per-harness integration status, and queue depth. Drains the queue opportunistically; exits non-zero if not logged in.                                          |
+| `birdybeep pair`                                          | Device-flow pairing — prints a short URL + code, polls until paired, stores the machine token in the secure store.                                                                    |
+| `birdybeep logout`                                         | Removes the machine token (keychain + file fallback). Idempotent. Same as `unpair`.                                                                                                   |
+| `birdybeep unpair`                                         | Unpairs this machine — removes the machine token (keychain + file fallback). Idempotent. Same as `logout`.                                                                            |
+| `birdybeep status`                                         | Machine + pairing state, per-harness integration status, and queue depth. Drains the queue opportunistically; exits non-zero if not paired.                                           |
 | `birdybeep test`                                           | Sends a test event through the real sender path and reports whether it was delivered or queued.                                                                                       |
 | `birdybeep doctor`                                         | Checks the token, each adapter (`needs_trust` / `needs_restart` / `error`), the queue, and backend reachability; prints a fix per failure; drains the queue; non-zero on any failure. |
 | `birdybeep agent install [all\|claude\|codex\|opencode]`   | Detect + install per harness (idempotent, backs up, managed entries only, no token).                                                                                                  |
@@ -175,7 +176,7 @@ earns trust by being **open and auditable**:
 | Doc                                                            | Contents                                                            |
 | -------------------------------------------------------------- | ------------------------------------------------------------------- |
 | [`docs/install.md`](./docs/install.md)                         | Detailed install + uninstall, per harness.                          |
-| [`docs/pairing.md`](./docs/pairing.md)                         | How `login` pairing works.                                          |
+| [`docs/pairing.md`](./docs/pairing.md)                         | How `pair` pairing works.                                          |
 | [`docs/security.md`](./docs/security.md)                       | Tokens, redaction, and exactly what data is sent.                   |
 | [`docs/troubleshooting.md`](./docs/troubleshooting.md)         | `doctor`, `needs_trust`, `needs_restart`, offline queue.            |
 | [`docs/adapter-development.md`](./docs/adapter-development.md) | Building and patching adapters.                                     |
@@ -185,7 +186,7 @@ earns trust by being **open and auditable**:
 
 | Package                  | Description                                                                              |
 | ------------------------ | ---------------------------------------------------------------------------------------- |
-| `@birdybeep/cli`         | The `birdybeep` CLI: login, logout, status, test, doctor, agent install/uninstall, hook. |
+| `@birdybeep/cli`         | The `birdybeep` CLI: pair, logout, unpair, status, test, doctor, agent install/uninstall, hook. |
 | `@birdybeep/agent-core`  | Event schema, normalizer/redaction, local queue, sender, token store, adapter interface. |
 | `@birdybeep/claude-code` | Claude Code adapter + hook templates.                                                    |
 | `@birdybeep/codex`       | Codex adapter + config templates.                                                        |
