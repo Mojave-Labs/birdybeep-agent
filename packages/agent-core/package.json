@@ -1,6 +1,6 @@
 {
   "name": "@birdybeep/agent-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "BirdyBeep agent core: event schema, normalizer/redaction, local queue, sender, token store, and the AgentAdapter interface.",
   "license": "MIT",
   "repository": {
