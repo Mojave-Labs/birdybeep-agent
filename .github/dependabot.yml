@@ -1,0 +1,31 @@
+# Keeps the SHA-pinned GitHub Actions from rotting (birdybeep-agent-mj8).
+#
+# Pinning to a commit SHA closes the "upstream retags v1 and steals NPM_TOKEN" hole,
+# but a SHA is a FROZEN reference: without an automated bumper we would simply sit on
+# stale, unpatched action versions forever and never learn about upstream security
+# fixes. Dependabot is the other half of the pinning strategy, not a nice-to-have —
+# it rewrites the SHA *and* the trailing `# vX.Y.Z` comment together.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    # Two directories on purpose. Dependabot's github-actions fetcher hardcodes
+    # `.github/workflows` for the root directory (see dependabot-core
+    # github_actions/lib/dependabot/github_actions/file_fetcher.rb), so "/" alone
+    # would silently NEVER bump our composite action at .github/actions/setup —
+    # which is exactly the file that runs pnpm/action-setup inside the release job,
+    # alongside NPM_TOKEN. Listing its directory explicitly makes the fetcher scan it.
+    directories:
+      - "/"
+      - "/.github/actions/setup"
+    schedule:
+      interval: "weekly"
+    # One PR for all action bumps rather than five — less review noise, and the
+    # security-relevant bumps don't get lost in a pile of individual PRs.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
