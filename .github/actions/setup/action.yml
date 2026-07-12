@@ -4,15 +4,20 @@ description: Install pnpm + Node, restore the Turbo cache, and install dependenc
 # Mirrors the private product repo's .github/actions/setup so both halves of
 # BirdyBeep set up identically. Cross-OS safe: pnpm/action-setup + setup-node and
 # `shell: bash` (Git Bash ships on the Windows runner) work on macOS/Linux/Windows.
+# Actions are SHA-pinned, not tag-pinned. This composite runs INSIDE the release job,
+# so anything it executes sits in the same job as NPM_TOKEN and the OIDC id-token — a
+# retargeted upstream tag here reaches the publish credentials just as directly as one
+# in release.yml itself. Bump via Dependabot (.github/dependabot.yml); enforced by
+# packages/test-harness/src/workflow-pinning.test.ts.
 runs:
   using: composite
   steps:
     # pnpm version is read from the root package.json "packageManager" field.
     - name: Install pnpm
-      uses: pnpm/action-setup@v4
+      uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
     - name: Install Node
-      uses: actions/setup-node@v5
+      uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
       with:
         node-version: "22"
         cache: pnpm
@@ -24,7 +29,7 @@ runs:
 
     # Turbo's local cache, restored across runs so unchanged tasks are skipped.
     - name: Restore Turbo cache
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: .turbo
         key: turbo-${{ github.job }}-${{ runner.os }}-${{ github.sha }}

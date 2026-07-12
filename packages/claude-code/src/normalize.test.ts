@@ -4,7 +4,7 @@
  * §10.5 notify-default, and schema validity; plus deterministic best-effort session
  * id, typed rejection of garbled payloads, and the privacy invariant (cwd hashed).
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -281,5 +281,190 @@ describe("descriptive completion push (0r6)", () => {
     expect(ev.title).toBe(`${basename(repo)} — Claude Code finished`);
     expect(ev.workspace.repo_name).toBe(basename(repo));
     expect(ev.workspace.branch).toBeUndefined();
+  });
+});
+
+/**
+ * sv1: when the user has NAMED the session (Claude Code `--name` / `/rename`), the push
+ * title should say WHICH session wants them. `session_title` is exposed ONLY in the
+ * SessionStart hook payload (never in Stop), and hooks are separate processes — so the
+ * name is captured at SessionStart, persisted keyed by session_id, and read back when a
+ * later event composes its title. Precedence: session name → repo · branch → repo → plain.
+ */
+describe("session name in the push title (sv1)", () => {
+  const tmpDirs: string[] = [];
+  function sandboxDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "bb-sv1-"));
+    tmpDirs.push(dir);
+    return dir;
+  }
+  function gitCheckout(name: string, head: string): string {
+    const root = sandboxDir();
+    const repo = join(root, name);
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    writeFileSync(join(repo, ".git", "HEAD"), head);
+    return repo;
+  }
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("SessionStart persists session_title; a later Stop leads the title with the NAME, not repo · branch", async () => {
+    const stateDir = sandboxDir();
+    const repo = gitCheckout("myapp", "ref: refs/heads/main\n");
+    const opts = { ...DET, sessionStateDir: stateDir };
+
+    // 1. SessionStart carries the name (the ONLY hook that does).
+    await normalizeClaudeCodeEvent(
+      {
+        ...base,
+        cwd: repo,
+        hook_event_name: "SessionStart",
+        source: "startup",
+        session_title: "billing refactor",
+      },
+      opts,
+    );
+
+    // 2. A LATER Stop — no session_title in this payload at all — still knows the name.
+    const stop = await normalizeClaudeCodeEvent(
+      { ...base, cwd: repo, hook_event_name: "Stop", last_assistant_message: "All green." },
+      opts,
+    );
+    expect(stop.title).toBe("billing refactor — Claude Code finished");
+    // The repo/branch workspace labels are unaffected — only the TITLE lead changes.
+    expect(stop.workspace.repo_name).toBe("myapp");
+    expect(stop.workspace.branch).toBe("main");
+  });
+
+  it("no session name set → behavior is EXACTLY 0r6 (repo · branch leads)", async () => {
+    const stateDir = sandboxDir();
+    const repo = gitCheckout("myapp", "ref: refs/heads/main\n");
+    const opts = { ...DET, sessionStateDir: stateDir };
+    // SessionStart WITHOUT a session_title must persist nothing.
+    await normalizeClaudeCodeEvent(
+      { ...base, cwd: repo, hook_event_name: "SessionStart", source: "startup" },
+      opts,
+    );
+    const stop = await normalizeClaudeCodeEvent(
+      { ...base, cwd: repo, hook_event_name: "Stop" },
+      opts,
+    );
+    expect(stop.title).toBe("myapp · main — Claude Code finished");
+  });
+
+  it("the name leads even outside a git checkout (name → repo · branch → repo → plain)", async () => {
+    const stateDir = sandboxDir();
+    const opts = { ...DET, sessionStateDir: stateDir };
+    await normalizeClaudeCodeEvent(
+      { ...base, hook_event_name: "SessionStart", session_title: "scratch pad" },
+      opts,
+    );
+    // RAW_CWD is not a checkout → 0r6 would give a bare action; the name still leads.
+    const stop = await normalizeClaudeCodeEvent({ ...base, hook_event_name: "Stop" }, opts);
+    expect(stop.title).toBe("scratch pad — Claude Code finished");
+  });
+
+  it("names are per-session: another session_id keeps its own repo · branch title", async () => {
+    const stateDir = sandboxDir();
+    const repo = gitCheckout("myapp", "ref: refs/heads/main\n");
+    const opts = { ...DET, sessionStateDir: stateDir };
+    await normalizeClaudeCodeEvent(
+      {
+        ...base,
+        cwd: repo,
+        hook_event_name: "SessionStart",
+        session_title: "billing refactor",
+      },
+      opts,
+    );
+    const other = await normalizeClaudeCodeEvent(
+      { ...base, session_id: "sess_cc_OTHER", cwd: repo, hook_event_name: "Stop" },
+      opts,
+    );
+    expect(other.title).toBe("myapp · main — Claude Code finished");
+  });
+
+  it("SessionEnd cleans the name up — no state leaks past the session's life", async () => {
+    const stateDir = sandboxDir();
+    const repo = gitCheckout("myapp", "ref: refs/heads/main\n");
+    const opts = { ...DET, sessionStateDir: stateDir };
+    await normalizeClaudeCodeEvent(
+      { ...base, cwd: repo, hook_event_name: "SessionStart", session_title: "billing refactor" },
+      opts,
+    );
+    expect(readdirSync(stateDir).length).toBe(1);
+
+    // SessionEnd still SHOWS the name (it is the last word on this session)…
+    const ended = await normalizeClaudeCodeEvent(
+      { ...base, cwd: repo, hook_event_name: "SessionEnd", reason: "clear" },
+      opts,
+    );
+    expect(ended.title).toBe("billing refactor — Claude Code session ended");
+    // …but leaves nothing behind on disk.
+    expect(readdirSync(stateDir).length).toBe(0);
+  });
+
+  it("an expired name (TTL) is swept and the title falls back to repo · branch", async () => {
+    const stateDir = sandboxDir();
+    const repo = gitCheckout("myapp", "ref: refs/heads/main\n");
+    let clock = 1_000_000;
+    const opts = {
+      ...DET,
+      sessionStateDir: stateDir,
+      sessionStateTtlMs: 60_000,
+      sessionStateNow: () => clock,
+    };
+    await normalizeClaudeCodeEvent(
+      { ...base, cwd: repo, hook_event_name: "SessionStart", session_title: "stale session" },
+      opts,
+    );
+    clock += 60_001; // past the TTL
+    const stop = await normalizeClaudeCodeEvent(
+      { ...base, cwd: repo, hook_event_name: "Stop" },
+      opts,
+    );
+    expect(stop.title).toBe("myapp · main — Claude Code finished");
+    expect(readdirSync(stateDir).length).toBe(0); // expired entry pruned, no unbounded growth
+  });
+
+  it("writes NO state when Claude Code gives no session_id (best-effort ids can't correlate)", async () => {
+    const stateDir = sandboxDir();
+    const opts = { ...DET, sessionStateDir: stateDir };
+    const ev = await normalizeClaudeCodeEvent(
+      {
+        transcript_path: "/t.jsonl",
+        cwd: RAW_CWD,
+        hook_event_name: "SessionStart",
+        session_title: "unkeyed",
+      },
+      opts,
+    );
+    expect(ev.source_session_id).toMatch(/^cc_[0-9a-f]{16}$/);
+    // The best-effort id is derived per-event (it seeds on hook_event_name), so it could
+    // never be looked up by a later Stop — persisting under it would only leak junk files.
+    expect(existsSync(stateDir) ? readdirSync(stateDir).length : 0).toBe(0);
+  });
+
+  it("is fail-soft: an unusable state dir never throws into the hook (falls back to 0r6)", async () => {
+    // A FILE where the state dir should be → every fs op on it fails (ENOTDIR).
+    const root = sandboxDir();
+    const notADir = join(root, "blocked");
+    writeFileSync(notADir, "i am a file, not a directory");
+    const repo = gitCheckout("myapp", "ref: refs/heads/main\n");
+    const opts = { ...DET, sessionStateDir: notADir };
+
+    await expect(
+      normalizeClaudeCodeEvent(
+        { ...base, cwd: repo, hook_event_name: "SessionStart", session_title: "doomed" },
+        opts,
+      ),
+    ).resolves.toBeDefined(); // must NOT reject — the hook keeps working
+
+    const stop = await normalizeClaudeCodeEvent(
+      { ...base, cwd: repo, hook_event_name: "Stop" },
+      opts,
+    );
+    expect(stop.title).toBe("myapp · main — Claude Code finished"); // graceful 0r6 fallback
   });
 });

@@ -15,7 +15,7 @@
  * runner + a stub sink; the default spawns the `birdybeep hook opencode` CLI command
  * (built in the a-cli epic) fire-and-forget.
  */
-import { spawn } from "node:child_process";
+import { safeSpawn } from "@birdybeep/agent-core";
 
 /** The envelope forwarded to the BirdyBeep hook path; `normalizeOpenCodeEvent` consumes it. */
 export interface OpenCodeEventEnvelope {
@@ -68,7 +68,7 @@ let spawnFailureLogged = false;
 function logSpawnFailureOnce(reason: string): void {
   if (spawnFailureLogged) return;
   spawnFailureLogged = true;
-  // eslint-disable-next-line no-console -- deliberate, once-per-process diagnosability breadcrumb
+
   console.error(
     `birdybeep: could not spawn the CLI to deliver an event (${reason}). ` +
       `Events from this OpenCode session are being dropped — check that \`birdybeep\` is on PATH and run \`birdybeep doctor\`.`,
@@ -78,20 +78,33 @@ function logSpawnFailureOnce(reason: string): void {
 /** Default delivery: hand the envelope to `birdybeep hook opencode` and return immediately. */
 function defaultInvokeHook(envelope: OpenCodeEventEnvelope): void {
   try {
-    // Windows npm installs expose the CLI as a `birdybeep.cmd` shim; Node ≥20 refuses to
-    // spawn .cmd/.bat without a shell (CVE-2024-27980 hardening), and spawning the bare
-    // name without `shell` fails with ENOENT/EINVAL — which the old swallow-everything
-    // handler turned into 100% silent event loss on Windows (erm). The command string is
-    // a constant (the payload rides stdin), so `shell: true` adds no injection surface.
-    const win = process.platform === "win32";
-    const child = win
-      ? spawn("birdybeep hook opencode", { stdio: ["pipe", "ignore", "ignore"], shell: true })
-      : spawn("birdybeep", ["hook", "opencode"], {
-          stdio: ["pipe", "ignore", "ignore"],
-          detached: true,
-        });
+    // SECURITY (sec-review-2026-07 H1): we MUST NOT spawn the bare name `birdybeep`. This
+    // plugin's cwd is the repo the developer just opened, and on Windows the OS resolver
+    // (cmd.exe under `shell: true`, and libuv for a bare name) searches the CURRENT WORKING
+    // DIRECTORY *before* PATH, applying PATHEXT — so a hostile repo shipping birdybeep.exe/
+    // .cmd/.bat at its root would get executed on an ordinary lifecycle event. This is an
+    // EXECUTABLE-RESOLUTION hijack (not argument injection): the payload riding stdin was
+    // never the risk. `safeSpawn` resolves `birdybeep` to an ABSOLUTE path on PATH only
+    // (never cwd) and launches that, so the planted binary is never reachable. A Windows
+    // .cmd shim still needs a shell (Node ≥20 refuses .cmd without one, CVE-2024-27980), so
+    // safeSpawn routes it through cmd.exe with the fully-qualified quoted path + a trusted
+    // cwd + windowsHide. Fire-and-forget: detach so the hook outlives this OpenCode event.
+    //
+    // Deliver the envelope on STDIN via `input` (NOT a hand-written child.stdin pipe): a pipe
+    // into a Windows `.cmd` through cmd.exe does not reliably reach the batch shim's `node`
+    // grandchild, so every event silently dropped on Windows. `input` routes the payload
+    // through a strict-perm temp file the CLI reads as stdin — reliable on all platforms.
+    const child = safeSpawn("birdybeep", ["hook", "opencode"], {
+      input: JSON.stringify(envelope),
+      detached: true,
+    });
+    if (child === null) {
+      // `birdybeep` is not on PATH — drop the event (never a bare-name fallback). One
+      // breadcrumb per process so this doesn't silently vanish (the old failure mode, erm).
+      logSpawnFailureOnce("`birdybeep` was not found on PATH");
+      return;
+    }
     child.on("error", (err) => logSpawnFailureOnce(err.message)); // best-effort, never block
-    child.stdin?.end(JSON.stringify(envelope));
     child.unref();
   } catch (err) {
     logSpawnFailureOnce(err instanceof Error ? err.message : String(err));
