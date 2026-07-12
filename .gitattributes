@@ -4,6 +4,13 @@
 # clean checkout even with core.autocrlf=true.
 * text=auto eol=lf
 
+# Source is always textual — force a text diff even if a stray control byte (e.g. a NUL
+# used as a join separator) sneaks into a historical blob, so the change stays reviewable
+# on GitHub/`git diff` instead of collapsing to "Binary files differ".
+*.ts diff
+*.tsx diff
+*.mjs diff
+
 # Binary/generated artifacts that must never be line-ending munged.
 *.png binary
 *.jpg binary
