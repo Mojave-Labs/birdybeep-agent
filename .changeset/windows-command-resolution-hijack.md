@@ -23,3 +23,12 @@ shim (which Node refuses to spawn without a shell) is run through the shell with
 fully-qualified quoted path, so no cwd-first resolution can occur. If the CLI isn't on PATH
 the event is dropped with a one-time breadcrumb instead of falling back to a bare-name spawn.
 POSIX behavior is unchanged (its PATH search never included the cwd).
+
+On Windows the resolver now tries the real PATHEXT extensions (`.CMD`/`.EXE`/`.BAT`/…) and no
+longer prefers an extensionless PATH match. A standard `npm i -g` co-locates an extensionless
+`birdybeep` (a `#!/bin/sh` wrapper) with `birdybeep.cmd` in the same on-PATH directory;
+resolving the sh wrapper made it spawn without a shell, which Windows CreateProcess can't
+launch — silently dropping every OpenCode event and degrading version detection to "unknown".
+Picking the `.cmd` restores delivery on the exact platform this fix targets. On POSIX the
+resolver is now `execvp`-aware: a present-but-non-executable file earlier on PATH is skipped
+so the search continues to the real executable instead of failing with EACCES.

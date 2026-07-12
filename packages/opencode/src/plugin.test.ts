@@ -180,6 +180,15 @@ describe("defaultInvokeHook resolves birdybeep on PATH, never a cwd-planted bina
         `process.stdin.resume();`,
     );
     if (IS_WINDOWS) {
+      // Replicate the REAL `npm i -g` layout: the extensionless `birdybeep` (#!/bin/sh wrapper
+      // for MSYS/Git-Bash) is co-located with `birdybeep.cmd` in the SAME on-PATH dir. The
+      // resolver MUST pick the .cmd — CreateProcess can't launch the shebang wrapper, so
+      // resolving it would drop this event and the assertion below would (correctly) fail. This
+      // makes windows-latest CI exercise the npm-layout regression, not just an isolated .cmd.
+      writeFileSync(
+        join(binDir, "birdybeep"),
+        `#!/bin/sh\nexec "${process.execPath}" "${shimJs}" "$@"\n`,
+      );
       writeFileSync(join(binDir, "birdybeep.cmd"), `@"${process.execPath}" "${shimJs}" %*\r\n`);
     } else {
       const p = join(binDir, "birdybeep");

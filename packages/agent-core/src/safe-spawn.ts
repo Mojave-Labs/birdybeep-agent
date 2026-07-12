@@ -19,7 +19,7 @@
  * resolves against a trusted directory rather than the attacker's repo.
  */
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, statSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 
@@ -33,14 +33,50 @@ export interface ResolveOptions {
   platform?: NodeJS.Platform;
 }
 
-/** Executable extensions to try on Windows, in PATHEXT order, plus "" for extensionless files. */
+/**
+ * Executable extensions to try on Windows, in PATHEXT order.
+ *
+ * We deliberately do NOT include the empty extension "". On Windows a bare-name command is
+ * resolved via PATHEXT, and an extensionless file is not directly launchable by CreateProcess
+ * (nor picked up by cmd.exe's bare-name lookup) anyway. Preferring "" caused a real functional
+ * regression: a standard npm global install co-locates an extensionless `birdybeep` (a
+ * `#!/bin/sh` wrapper for MSYS/Git-Bash) with `birdybeep.cmd` and `birdybeep.ps1` in the SAME
+ * on-PATH directory. Resolving the extensionless sh wrapper made `needsShellToLaunch` false, so
+ * the spawn tried to launch it WITHOUT a shell — which Windows CreateProcess cannot do with a
+ * shebang script — silently dropping every OpenCode event and degrading version detection to
+ * "unknown". Trying the real PATHEXT extensions first picks `birdybeep.cmd`, which IS launchable
+ * (via the shell), matching how Windows actually resolves a bare command name.
+ */
 function windowsExtensions(env: NodeJS.ProcessEnv): string[] {
   const raw = env["PATHEXT"] ?? ".COM;.EXE;.BAT;.CMD";
-  const exts = raw
+  return raw
     .split(";")
     .map((e) => e.trim())
     .filter((e) => e.length > 0);
-  return ["", ...exts];
+}
+
+/**
+ * Is `candidate` an existing, launchable file for this platform?
+ *
+ * On POSIX we mirror `execvp`: a PATH entry that exists but is NOT executable (e.g. a data
+ * file, or a name earlier on PATH the user lacks +x on) is skipped so the search continues to a
+ * later directory that holds the real executable — returning the non-executable hit would make
+ * the subsequent spawn fail with EACCES even though a runnable binary exists further down PATH.
+ * On Windows there is no exec bit (runnability is governed by PATHEXT, handled above), and
+ * `X_OK` collapses to a mere existence check, so we keep a plain existence test there. Assumes a
+ * non-root caller on POSIX (root's `access(X_OK)` succeeds regardless of the mode bits — same as
+ * the OS, so this can never be *less* correct than a bare existence check).
+ */
+function isLaunchableFile(candidate: string, isWindows: boolean): boolean {
+  if (!existsSync(candidate)) return false;
+  if (isWindows) return true;
+  try {
+    if (!statSync(candidate).isFile()) return false;
+    accessSync(candidate, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** PATH directories, in order. Reads `PATH` then `Path` (a plain injected env is case-sensitive). */
@@ -64,9 +100,11 @@ function quoteForShell(token: string): string {
  * Resolve a BARE command name to an ABSOLUTE path by searching PATH ONLY — never the current
  * working directory. This is the core of the CWD-binary-planting fix: relative PATH entries
  * (including a literal `.`) resolve against cwd, so they are skipped; only absolute PATH
- * directories are searched. On Windows, PATHEXT variants are tried in order. Returns `null`
- * when the command is not found on PATH (callers treat that as "not available", never as a
- * reason to fall back to a bare-name spawn).
+ * directories are searched. On Windows, PATHEXT variants are tried in order (NOT the bare
+ * extensionless name — see {@link windowsExtensions}); on POSIX only the bare name, and a
+ * non-executable hit is skipped like `execvp` would. Returns `null` when the command is not
+ * found on PATH (callers treat that as "not available", never as a reason to fall back to a
+ * bare-name spawn).
  */
 export function resolveOnPath(command: string, options: ResolveOptions = {}): string | null {
   const platform = options.platform ?? process.platform;
@@ -80,7 +118,7 @@ export function resolveOnPath(command: string, options: ResolveOptions = {}): st
     if (!isAbsolute(dir)) continue;
     for (const ext of extensions) {
       const candidate = join(dir, command + ext);
-      if (existsSync(candidate)) return candidate;
+      if (isLaunchableFile(candidate, isWindows)) return candidate;
     }
   }
   return null;

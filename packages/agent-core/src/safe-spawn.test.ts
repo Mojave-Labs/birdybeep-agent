@@ -17,7 +17,7 @@
  */
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -68,7 +68,9 @@ describe("resolveOnPath — searches PATH only, never the cwd (the hijack fix)",
   it("returns the absolute path of a binary that exists in an absolute PATH dir", () => {
     const binDir = makeTempDir("bb-bin-");
     const name = IS_WINDOWS ? "tool.cmd" : "tool";
-    writeFileSync(join(binDir, name), "x");
+    const p = join(binDir, name);
+    writeFileSync(p, "x");
+    if (!IS_WINDOWS) chmodSync(p, 0o755); // POSIX: resolver is now execvp-like (skips non-exec)
     const resolved = resolveOnPath("tool", {
       platform: process.platform,
       env: { PATH: binDir, PATHEXT: ".CMD;.EXE" },
@@ -127,6 +129,78 @@ describe("resolveOnPath — searches PATH only, never the cwd (the hijack fix)",
     // Windows is case-insensitive; the resolved path carries PATHEXT's casing (`.EXE`).
     expect(resolved?.toLowerCase()).toBe(join(binDir, "tool.exe").toLowerCase());
   });
+
+  it("prefers birdybeep.cmd over a co-located extensionless npm sh-wrapper on Windows (real npm layout)", () => {
+    // REGRESSION GUARD (birdybeep-agent-llp/6pf/dr8 follow-up): a standard `npm i -g` co-locates
+    // THREE files for `birdybeep` in ONE on-PATH directory — an extensionless `birdybeep` (a
+    // `#!/bin/sh` shebang wrapper, for MSYS/Git-Bash), `birdybeep.cmd` (cmd.exe) and
+    // `birdybeep.ps1` (PowerShell). Windows CreateProcess cannot launch the shebang wrapper, so
+    // the resolver MUST pick the `.cmd`. Resolving the extensionless wrapper (the bug: extension
+    // list led with "") makes needsShellToLaunch false → spawn-without-shell → OpenCode event
+    // delivery breaks and version detection degrades to "unknown", on the exact platform the fix
+    // targets. Injected win32 → this discriminates the fix on any host (incl. macOS CI).
+    const binDir = makeTempDir("bb-npm-");
+    writeFileSync(join(binDir, "birdybeep"), "#!/bin/sh\nexec node bb.js \"$@\"\n"); // sh wrapper
+    writeFileSync(join(binDir, "birdybeep.cmd"), "@node bb.js %*\r\n"); // cmd.exe shim
+    writeFileSync(join(binDir, "birdybeep.ps1"), "#!/usr/bin/env pwsh\n"); // powershell shim
+    const resolved = resolveOnPath("birdybeep", {
+      platform: "win32",
+      env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+    });
+    expect(resolved?.toLowerCase()).toBe(join(binDir, "birdybeep.cmd").toLowerCase());
+    expect(resolved).not.toBe(join(binDir, "birdybeep")); // NOT the extensionless sh wrapper
+    expect(needsShellToLaunch(resolved as string)).toBe(true); // so safeSpawn uses the shell
+  });
+
+  it("picks the absolute PATH birdybeep, never a cwd-planted .cmd/.exe reached via a leading `.` (win32, host-observable)", () => {
+    // The hijack itself, made observable ON THE HOST WE RUN ON: inject win32 + put a hostile
+    // `birdybeep.cmd`/`.exe` in the (simulated) harness cwd and `.` FIRST on PATH — so a resolver
+    // that honored cwd/relative entries would return the hostile one before ever reaching the
+    // legit install dir. The correct resolver skips `.` and returns the absolute PATH entry. This
+    // fails against a cwd-searching resolver on macOS (not only on windows-latest CI).
+    const repo = makeTempDir("bb-hijack-"); // the harness cwd == the attacker's repo
+    const legit = makeTempDir("bb-legit-"); // the real global install dir, on PATH
+    writeFileSync(join(repo, "birdybeep.cmd"), "@echo pwned\r\n"); // hostile, in cwd
+    writeFileSync(join(repo, "birdybeep.exe"), "MZ"); // hostile alt, in cwd
+    writeFileSync(join(legit, "birdybeep.cmd"), "@node real.js %*\r\n"); // legit, on PATH
+    const prev = process.cwd();
+    try {
+      process.chdir(repo);
+      // `pathDirectories` splits on the HOST `delimiter`, so join with it (":" on macOS, ";" on
+      // windows-latest) to get "." as a genuine, standalone leading entry on either CI host.
+      const resolved = resolveOnPath("birdybeep", {
+        platform: "win32",
+        env: { PATH: `.${delimiter}${legit}`, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+      });
+      expect(resolved?.toLowerCase()).toBe(join(legit, "birdybeep.cmd").toLowerCase());
+      expect(resolved).not.toBe(join(repo, "birdybeep.cmd")); // hijack .cmd not chosen
+      expect(resolved).not.toBe(join(repo, "birdybeep.exe")); // hijack .exe not chosen
+    } finally {
+      process.chdir(prev);
+    }
+  });
+
+  it.skipIf(IS_WINDOWS)(
+    "skips a non-executable file earlier on PATH and keeps searching (POSIX, execvp semantics)",
+    () => {
+      // execvp does NOT stop at the first name match — it skips a present-but-non-executable file
+      // and continues down PATH. A bare existsSync would return the non-exec hit and the later
+      // spawn would EACCES. (Assumes a non-root test user; root's access(X_OK) ignores mode bits.)
+      const early = makeTempDir("bb-noexec-");
+      const late = makeTempDir("bb-exec-");
+      const nonExec = join(early, "tool");
+      writeFileSync(nonExec, "just data, not runnable");
+      chmodSync(nonExec, 0o644); // present but NOT executable → must be skipped
+      const good = join(late, "tool");
+      writeFileSync(good, "#!/bin/sh\n:\n");
+      chmodSync(good, 0o755); // the real executable, later on PATH
+      const resolved = resolveOnPath("tool", {
+        platform: "linux",
+        env: { PATH: `${early}${delimiter}${late}` },
+      });
+      expect(resolved).toBe(good);
+    },
+  );
 
   it("reads Path when PATH is absent (Windows env casing)", () => {
     const binDir = makeTempDir("bb-casing-");
