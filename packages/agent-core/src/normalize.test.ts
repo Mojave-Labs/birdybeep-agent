@@ -164,12 +164,19 @@ describe("absolute-path scrub covers spaces / ~ / UNC / drive (yop)", () => {
     {
       name: "POSIX path with a space (the reported leak)",
       path: "/Users/alice/Client Work/acme/.env.production",
-      leaks: ["Client Work", "Work/acme", "acme", ".env.production", "/Users/alice"],
+      // "Work" is the bare dir word the PRE-FIX regex left behind: it hashed `/Users/alice/Client`
+      // and `/acme/.env.production` around the space and forwarded the middle word verbatim. That
+      // bare fragment — not "Client Work"/"Work/acme" (both absent pre-fix once the neighbours are
+      // hashed) — is what actually leaked and what pins the fix.
+      leaks: ["Work", "Client Work", "Work/acme", "acme", ".env.production", "/Users/alice"],
     },
     {
       name: "~ expansion with a spaced dir (Application Support)",
       path: "~/Library/Application Support/birdybeep/token.json",
-      leaks: ["Application Support", "birdybeep", "token.json"],
+      // "Support" is the bare dir word the PRE-FIX regex left behind after hashing
+      // `/Library/Application` and `/birdybeep/token.json` around the space ("Application" is
+      // consumed into the first hash; "Support" survives). It pins the fix.
+      leaks: ["Support", "Application", "Application Support", "birdybeep", "token.json"],
     },
     {
       name: "UNC share with a spaced dir",
@@ -213,6 +220,97 @@ describe("absolute-path scrub covers spaces / ~ / UNC / drive (yop)", () => {
   it("does NOT hash slash-glued prose (and/or, fractions, URLs) — precision", () => {
     const text = "use read/write and/or 1/2 ratio, TCP/IP at 24/7, see https://ex.com/a/b/c";
     expect(scrubAbsolutePaths(text)).toBe(text);
+  });
+});
+
+// birdybeep-agent-yop (glued-lead fix): the PR anchored a POSIX root at a boundary to stop
+// `and/or`/`1/2` false positives — but that lookbehind REGRESSED real paths glued to `:` `@`
+// a letter or a digit, which then left the machine un-hashed: scp `user@host:/path`, `file:/path`,
+// `from/Users/…`, `9/Users/…`. Each case lists PATH fragments that MUST NOT survive in any field
+// the adapter forwards. (These fail against the current-PR regex and pass after the broadening.)
+describe("absolute-path scrub covers colon/letter/digit-glued paths (yop glued-lead)", () => {
+  const cases: { name: string; input: string; leaks: string[] }[] = [
+    {
+      name: "scp user@host:/abs/path (colon-glued)",
+      input: "backup to user@host:/Users/alice/.ssh/id_rsa now",
+      leaks: ["/Users/alice", "Users/alice", ".ssh", "id_rsa"],
+    },
+    {
+      name: "scp git remote host:/abs/path",
+      input: "clone git@github.com:/Users/alice/ClientCorp/deploy.pem here",
+      leaks: ["/Users/alice", "ClientCorp", "deploy.pem"],
+    },
+    {
+      name: "file: scheme, single slash (not a // URL)",
+      input: "open file:/Users/alice/vault/.env.production",
+      leaks: ["/Users/alice", "vault", ".env.production"],
+    },
+    {
+      name: "letter-glued absolute path",
+      input: "loaded config from/Users/alice/project-x/keychain.db ok",
+      leaks: ["/Users/alice", "project-x", "keychain.db"],
+    },
+    {
+      name: "digit-glued absolute path",
+      input: "worker 9/Users/alice/scratchpad/output.log flushed",
+      leaks: ["/Users/alice", "scratchpad", "output.log"],
+    },
+  ];
+
+  it.each(cases)("hashes $name with no path fragment leak", ({ input, leaks }) => {
+    // The scrubber alone must remove the whole path run (regression pinned at the unit boundary).
+    const scrubbed = scrubAbsolutePaths(input);
+    for (const frag of leaks) expect(scrubbed).not.toContain(frag);
+
+    // …and end-to-end through normalizeEvent in every carrier field the adapter forwards.
+    const ev = normalizeEvent({
+      ...baseDraft,
+      source_session_id: input,
+      title: input,
+      body: `context: ${input}`,
+      metadata: { line: input, nested: { also: input } },
+    });
+    const serialized = JSON.stringify(ev);
+    for (const frag of leaks) expect(serialized).not.toContain(frag);
+  });
+
+  it("preserves a real http(s) URL while still hashing a glued path beside it", () => {
+    const out = scrubAbsolutePaths(
+      "see https://ex.com/a/b/c then open file:/Users/alice/vault/.env",
+    );
+    expect(out).toContain("https://ex.com/a/b/c"); // URL untouched (its /a/b/c is remote)
+    expect(out).not.toContain("/Users/alice"); // the glued local path is hashed
+    expect(out).not.toContain("vault");
+    expect(out).not.toContain(".env");
+  });
+});
+
+// birdybeep-agent-yop/zov (pipeline ordering): scrubAbsolutePaths now runs on the redactSecrets
+// OUTPUT, so base64 secret material containing `/` (and `+`) is redacted WHOLE before any path
+// scanning — it can no longer be partly path-hashed into a `prefix+h_<hex>` remnant that slips
+// under the 28-char entropy floor and leaks the prefix. This suite fails under the old
+// scrub-then-redact order (the prefix `kJ8nQ2rV` survives) and passes after redact-then-scrub.
+describe("secret-then-path ordering is robust for base64 with slashes (yop/zov)", () => {
+  // Split so no contiguous secret literal sits in this source file (push-protection scanners).
+  const b64Secret = "kJ8nQ2rV" + "+/aX7bC9dE/fG1hI4jK6lM0nP5qR3sT8uW2yZ/bD7";
+  const prefix = "kJ8nQ2rV"; // the readable head a naive scrub-first pass would leave behind
+
+  it("redacts the whole contiguous base64 run (detector sees it before any /-splitting)", () => {
+    expect(redactSecrets(b64Secret)).toBe("[redacted]");
+  });
+
+  it("leaves no base64 fragment and no path-hash splice end-to-end", () => {
+    const ev = normalizeEvent({
+      ...baseDraft,
+      title: b64Secret,
+      body: `key material: ${b64Secret} <-`,
+      metadata: { secret: b64Secret, nested: { also: b64Secret } },
+    });
+    const serialized = JSON.stringify(ev);
+    expect(serialized).not.toContain(prefix); // the head must not survive
+    expect(serialized).not.toContain("aX7bC9dE"); // nor any interior chunk
+    // The field that held ONLY the secret redacts to the marker — not a `prefix+h_<hex>` splice.
+    expect((ev.metadata as Record<string, unknown>)["secret"]).toBe("[redacted]");
   });
 });
 

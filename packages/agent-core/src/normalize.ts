@@ -65,46 +65,63 @@ function hashToken(value: string): string {
 
 // --- Absolute-path scrubbing (birdybeep-agent-yop) --------------------------------
 // The invariant is ABSOLUTE: no raw absolute path (or path FRAGMENT) leaves the machine.
-// The previous regex used a segment class that excluded spaces and required ≥2 segments,
-// so `/Users/alice/Client Work/acme/.env` hashed only `/Users/alice/Client` and forwarded
-// `Work/acme/.env` verbatim, and UNC paths were missed entirely. This version:
-//   • lets a segment contain internal spaces (`Client Work`, `Application Support`), so the
-//     WHOLE run is hashed — real user paths have spaces;
-//   • matches `~`-rooted, Windows-drive (`C:\…`), and UNC (`\\server\share\…`) shapes;
-//   • drops the ≥2-segment floor (single `/etc` is still a path);
-//   • anchors each root at a boundary (not glued to an alnum), so `and/or`, `1/2`, `TCP/IP`,
-//     and `https://…` URLs are NOT mistaken for paths.
-// Deliberate trade-off (safe direction): because `~/Library/Application Support` (a real path
-// ending in a spaced dir) is indistinguishable from `/tmp/x done` (a path then a prose word),
-// trailing/interstitial prose after a path may be absorbed into the hash. Over-redaction is
-// acceptable; leaking a path fragment is not.
+// A segment may contain internal spaces (`Client Work`, `Application Support`) so the WHOLE
+// run is hashed; we match POSIX/`~`, Windows-drive (`C:\…`), and UNC (`\\server\share\…`)
+// shapes; a single segment counts (`/etc`); and each root is anchored so it is not confused
+// with a slash-operator or a URL.
+//
+// TWO POSIX leads (birdybeep-agent-yop glued-path fix):
+//   • CLEAN lead — the root `/`/`~` sits at a boundary (start, space, `_`, `-`, `(`, …). One
+//     segment is enough (`/etc`). Excludes a preceding alnum/`.`/`:`/`~`/slash, so `and/or`,
+//     `v1.0/x`, and a `scheme://` authority are not treated as roots.
+//   • GLUED lead — the root `/` is glued to `:` `@` or an alnum: `user@host:/Users/…` (scp),
+//     `file:/Users/…`, `from/Users/…`, `9/Users/…`. These are the shapes that LEAKED — the
+//     clean lead deliberately rejects those chars (to keep `and/or` out), which let a real
+//     glued path through un-hashed. To avoid re-catching single-slash prose (`read/write`,
+//     `1/2`, `TCP/IP`) a GLUED run must have ≥2 segments. It is not preceded by a slash, so a
+//     `//host` URL authority is excluded here; genuine `http(s)://`/`ws(s)://` URLs are also
+//     preserved wholesale by scrubAbsolutePaths before this runs (`https://ex.com/a/b/c` is
+//     never touched even though `/a/b/c` is a ≥2-segment alnum-glued run).
+// Deliberate trade-off (safe direction): trailing/interstitial prose after a path may be
+// absorbed into the hash. Over-redaction is acceptable; leaking a path fragment is not.
 const PATH_SEGMENT = String.raw`[^\s\\/]+(?: +[^\s\\/]+)*`;
-// POSIX/`~` root must not be glued to a preceding ALNUM (or `.`/`:`/slash), which is what marks
-// a `/` as an operator not a path root: `and/or`, `1/2`, `TCP/IP`, `v1.0/x`, `http://…`. Delimiters
-// like `_`/`-` DO legitimately precede a path (e.g. `sess_12_/Users/…`), so they must NOT block a
-// match — excluding them would re-open a fragment leak.
+// A single space-FREE segment. The glued lead uses this for its first two segments so a real
+// path (`/Users/alice/…`) is recognised by its two adjacent slashes, while slash-separated prose
+// (`read/write and/or 1/2`) — whose slash groups are split by SPACES — never forms one.
+const PATH_SEGMENT_NS = String.raw`[^\s\\/]+`;
 const POSIX_LEAD = String.raw`(?<![A-Za-z0-9.:~\\/])`;
+// Glued root: preceded by `:` `@` or an alnum (the chars the clean lead rejects). Explicitly
+// NOT `/`, so the `//host` authority of a `scheme://` URL is not admitted as a path here.
+const POSIX_GLUE_LEAD = String.raw`(?<=[A-Za-z0-9:@])`;
 /** Drive/UNC root must not follow an alphanumeric (rules out `fooC:\…`). */
 const WINISH_LEAD = String.raw`(?<![A-Za-z0-9])`;
-const ABSOLUTE_PATH_RE = new RegExp(
-  [
-    // Windows drive: C:\a\b  or  C:/a/b
-    `${WINISH_LEAD}` +
-      String.raw`[A-Za-z]:[\\/]` +
-      `${PATH_SEGMENT}(?:` +
-      String.raw`[\\/]` +
-      `${PATH_SEGMENT})*`,
-    // UNC: \\server\share\...
-    `${WINISH_LEAD}` +
-      String.raw`\\\\` +
-      `${PATH_SEGMENT}(?:` +
-      String.raw`[\\/]` +
-      `${PATH_SEGMENT})*`,
-    // POSIX / home: /a/b c/d  or  ~/Library/Application Support
-    `${POSIX_LEAD}~?/${PATH_SEGMENT}(?:/${PATH_SEGMENT})*`,
-  ].join("|"),
-  "g",
-);
+const ABSOLUTE_PATH_SRC = [
+  // Windows drive: C:\a\b  or  C:/a/b
+  `${WINISH_LEAD}` +
+    String.raw`[A-Za-z]:[\\/]` +
+    `${PATH_SEGMENT}(?:` +
+    String.raw`[\\/]` +
+    `${PATH_SEGMENT})*`,
+  // UNC: \\server\share\...
+  `${WINISH_LEAD}` +
+    String.raw`\\\\` +
+    `${PATH_SEGMENT}(?:` +
+    String.raw`[\\/]` +
+    `${PATH_SEGMENT})*`,
+  // POSIX / home at a CLEAN boundary: /a/b c/d  or  ~/Library/Application Support (≥1 segment)
+  `${POSIX_LEAD}~?/${PATH_SEGMENT}(?:/${PATH_SEGMENT})*`,
+  // POSIX GLUED to `:`/`@`/alnum: user@host:/Users/…, file:/Users/…, from/Users/…. Needs two
+  // space-free segments up front (`/Users/alice`) to distinguish a real path from single-slash
+  // prose; further segments may then contain spaces (`/My Documents`), so the whole run hashes.
+  `${POSIX_GLUE_LEAD}/${PATH_SEGMENT_NS}/${PATH_SEGMENT_NS}(?:/${PATH_SEGMENT})*`,
+].join("|");
+// `scheme://` web URLs are matched FIRST and preserved verbatim: their path is remote and the
+// `/a/b/c` tail would otherwise read as a local path. Only genuine `://` authority forms are
+// spared — `file:/…` and scp `host:/…` (no `//`) are NOT URLs and stay subject to the scrub.
+const WEB_URL_SRC = String.raw`\b(?:https?|wss?):\/\/\S+`;
+// Single pass: a web URL (capture group 1, kept as-is) OR an absolute path (hashed). The URL
+// alternative wins wherever it starts, so a URL's path-shaped tail is never hashed.
+const SCRUB_RE = new RegExp(`(${WEB_URL_SRC})|(?:${ABSOLUTE_PATH_SRC})`, "gi");
 
 // --- Secret redaction (birdybeep-agent-zov) ---------------------------------------
 // Redaction is the ONLY privacy control for secrets — truncation is NOT a backstop (a
@@ -162,9 +179,13 @@ function redactHighEntropyTokens(text: string): string {
   });
 }
 
-/** Replace every absolute path in a string with a stable hash (no raw path survives). */
+/**
+ * Replace every absolute path in a string with a stable hash (no raw path survives).
+ * `http(s)://` / `ws(s)://` URLs are matched and preserved verbatim first, so a URL's remote
+ * `/a/b/c` tail is never mistaken for (and hashed as) a local path (birdybeep-agent-yop).
+ */
 export function scrubAbsolutePaths(text: string): string {
-  return text.replace(ABSOLUTE_PATH_RE, (match) => hashToken(match));
+  return text.replace(SCRUB_RE, (match, url) => (url ? match : hashToken(match)));
 }
 
 /** Replace secret-looking substrings with a redaction marker (explicit shapes + entropy). */
@@ -188,9 +209,20 @@ export function hashPath(path: string): string {
   return hashToken(path);
 }
 
-/** Full string-cleaning pipeline: scrub paths → redact secrets → truncate. */
+/**
+ * Full string-cleaning pipeline: redact secrets → scrub paths → truncate.
+ *
+ * Secrets are redacted BEFORE paths are scrubbed (birdybeep-agent-yop/zov ordering fix):
+ * base64 secret material can contain `/` and `+`, so a `+/a/b`-shaped run inside a token could
+ * otherwise be PARTLY path-hashed before redactSecrets ran — splitting the secret, possibly
+ * leaving a readable fragment or defeating the high-entropy detector (which needs a contiguous
+ * ≥28-char run). Redacting first collapses the whole token to `[redacted]` before any path
+ * scanning, so the two controls no longer interact order-dependently. Path hashes (`h_<16hex>`)
+ * are produced AFTER redaction, so they are never fed to the entropy detector — and at 18 chars
+ * sit below its 28-char floor regardless.
+ */
 function cleanString(text: string, max: number): string {
-  return truncate(redactSecrets(scrubAbsolutePaths(text)), max);
+  return truncate(scrubAbsolutePaths(redactSecrets(text)), max);
 }
 
 /** Recursively sanitize an arbitrary metadata value, bounding depth/size and scrubbing strings. */
