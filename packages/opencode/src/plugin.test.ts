@@ -211,7 +211,7 @@ describe("defaultInvokeHook resolves birdybeep on PATH, never a cwd-planted bina
     }
   }
 
-  async function waitForFile(p: string, ms = 4000): Promise<boolean> {
+  async function waitForFile(p: string, ms = 12000): Promise<boolean> {
     const start = Date.now();
     while (Date.now() - start < ms) {
       if (existsSync(p)) return true;

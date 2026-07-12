@@ -61,7 +61,7 @@ function awaitExit(child: import("node:child_process").ChildProcess): Promise<vo
     const done = (): void => resolve();
     child.on("exit", done);
     child.on("error", done);
-    setTimeout(done, 4000).unref?.();
+    setTimeout(done, 12000).unref?.(); // generous: cmd.exe + node cold start on a loaded Windows runner
   });
 }
 
@@ -79,9 +79,12 @@ describe("resolveOnPath — searches PATH only, never the cwd (the hijack fix)",
     const p = join(binDir, name);
     writeFileSync(p, "x");
     if (!IS_WINDOWS) chmodSync(p, 0o755); // POSIX: resolver is now execvp-like (skips non-exec)
+    // Lowercase PATHEXT so the resolver's `command + ext` matches the lowercase planted file on
+    // BOTH case-insensitive (Windows/macOS) and case-sensitive (linux) filesystems — PATHEXT
+    // casing is irrelevant on real Windows, but a case-sensitive host needs the cases to agree.
     const resolved = resolveOnPath("tool", {
       platform: process.platform,
-      env: { PATH: binDir, PATHEXT: ".CMD;.EXE" },
+      env: { PATH: binDir, PATHEXT: ".cmd;.exe" },
     });
     expect(resolved).toBe(join(binDir, name));
   });
@@ -130,11 +133,12 @@ describe("resolveOnPath — searches PATH only, never the cwd (the hijack fix)",
     const binDir = makeTempDir("bb-ext-");
     writeFileSync(join(binDir, "tool.cmd"), "x");
     writeFileSync(join(binDir, "tool.exe"), "x");
+    // Lowercase PATHEXT (casing is irrelevant on real Windows) so `tool + .exe` matches the
+    // lowercase planted file on a case-sensitive host too; `.exe` before `.cmd` proves the order.
     const resolved = resolveOnPath("tool", {
       platform: "win32",
-      env: { PATH: binDir, PATHEXT: ".EXE;.CMD" },
+      env: { PATH: binDir, PATHEXT: ".exe;.cmd" },
     });
-    // Windows is case-insensitive; the resolved path carries PATHEXT's casing (`.EXE`).
     expect(resolved?.toLowerCase()).toBe(join(binDir, "tool.exe").toLowerCase());
   });
 
@@ -153,7 +157,7 @@ describe("resolveOnPath — searches PATH only, never the cwd (the hijack fix)",
     writeFileSync(join(binDir, "birdybeep.ps1"), "#!/usr/bin/env pwsh\n"); // powershell shim
     const resolved = resolveOnPath("birdybeep", {
       platform: "win32",
-      env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+      env: { PATH: binDir, PATHEXT: ".com;.exe;.bat;.cmd" }, // lowercase → matches on case-sensitive fs too
     });
     expect(resolved?.toLowerCase()).toBe(join(binDir, "birdybeep.cmd").toLowerCase());
     expect(resolved).not.toBe(join(binDir, "birdybeep")); // NOT the extensionless sh wrapper
@@ -178,7 +182,7 @@ describe("resolveOnPath — searches PATH only, never the cwd (the hijack fix)",
       // windows-latest) to get "." as a genuine, standalone leading entry on either CI host.
       const resolved = resolveOnPath("birdybeep", {
         platform: "win32",
-        env: { PATH: `.${delimiter}${legit}`, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+        env: { PATH: `.${delimiter}${legit}`, PATHEXT: ".com;.exe;.bat;.cmd" }, // lowercase: case-sensitive-fs safe
       });
       expect(resolved?.toLowerCase()).toBe(join(legit, "birdybeep.cmd").toLowerCase());
       expect(resolved).not.toBe(join(repo, "birdybeep.cmd")); // hijack .cmd not chosen
@@ -215,7 +219,7 @@ describe("resolveOnPath — searches PATH only, never the cwd (the hijack fix)",
     writeFileSync(join(binDir, "tool.cmd"), "x");
     const resolved = resolveOnPath("tool", {
       platform: "win32",
-      env: { Path: binDir, PATHEXT: ".CMD" },
+      env: { Path: binDir, PATHEXT: ".cmd" }, // lowercase → matches on case-sensitive fs too
     });
     expect(resolved?.toLowerCase()).toBe(join(binDir, "tool.cmd").toLowerCase());
   });
@@ -356,19 +360,24 @@ describe("safeSpawn — input delivers the payload to the child's stdin (Windows
     },
   );
 
-  it("delivers input to a Windows .cmd shim via `< file` shell redirection (injected win32)", async () => {
+  it("delivers input to a Windows .cmd shim via `< file` shell redirection, even with detached requested (injected win32)", async () => {
     // On macOS/linux this drives Node's shell:true through /bin/sh, which honors `"cmd" < "file"`
-    // just like cmd.exe — so it fails against a stdin-pipe delivery (old code) and passes with the
-    // redirect, ON THIS HOST, not only on windows-latest.
+    // just like cmd.exe. It mirrors the real plugin path: the npm layout co-locates an
+    // extensionless `birdybeep` (a `#!/bin/sh` wrapper) with `birdybeep.cmd` — the resolver must
+    // still pick the `.cmd` — and the caller requests `detached: true`. On windows-latest a
+    // DETACHED shell spawn drops the redirect, so safeSpawn must NOT detach the `.cmd` branch;
+    // this asserts delivery still happens with detached requested (the fix), on the host we run on.
     const binDir = makeTempDir("bb-in-cmd-");
     const marker = join(binDir, "GOT.json");
+    writeFileSync(join(binDir, "birdybeep"), "#!/bin/sh\nexit 0\n"); // co-located extensionless wrapper
     plantStdinEcho(binDir, "birdybeep.cmd", marker);
     const payload = JSON.stringify({ type: "session.created", via: "redirect" });
 
     const child = safeSpawn("birdybeep", ["hook", "opencode"], {
-      env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+      env: { PATH: binDir, PATHEXT: ".com;.exe;.bat;.cmd" }, // lowercase → matches on case-sensitive fs too
       platform: "win32",
       input: payload,
+      detached: true, // requested by the caller; the .cmd redirect branch ignores it (delivery must still work)
     });
     expect(child).not.toBeNull();
     if (child !== null) await awaitExit(child);

@@ -212,12 +212,16 @@ export function safeSpawn(
       // no cmd.exe argument quoting/length limit applies. The file is deleted when the child exits.
       const file = writeStdinTempFile(options.input);
       const line = `${[absolute, ...args].map(quoteForShell).join(" ")} < ${quoteForShell(file)}`;
+      // NOTE: do NOT pass `detached` here. On Windows a DETACHED cmd.exe launched with `shell:true`
+      // + `stdio: 'ignore'` does not deliver the `< file` redirect to the batch shim's node
+      // grandchild (windows-latest: every event dropped), whereas a non-detached shell spawn does.
+      // We don't need detachment: the child is short-lived, `unref()`d by the caller so it never
+      // blocks the harness, and on Windows a child is not killed when its parent exits anyway.
       const child = spawn(line, {
         shell: true,
         cwd: trustedCwd,
         windowsHide: true,
         stdio: ["ignore", "ignore", "ignore"],
-        ...detachedOpt,
       });
       child.once("exit", () => unlinkQuietly(file));
       child.once("error", () => unlinkQuietly(file));
