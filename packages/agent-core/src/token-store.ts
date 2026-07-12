@@ -9,7 +9,7 @@
  * suite). On a headless/SSH machine with no secret service, the file fallback is
  * the working path — which is exactly what CI Linux/Windows exercise.
  */
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -21,11 +21,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { promisify } from "node:util";
 
 import { birdyBeepDataDir } from "./paths";
-
-const execFileAsync = promisify(execFile);
 
 /** Keychain namespacing for the single machine installation token. */
 const SERVICE = "birdybeep";
@@ -132,42 +129,100 @@ export const unavailableKeychainBackend: KeychainBackend = {
   delete: () => Promise.resolve(),
 };
 
+/**
+ * How the macOS `security` CLI is invoked. Injectable so the unit suite can capture the
+ * exact argv/stdin we hand to the child WITHOUT touching the real OS keychain — that is
+ * what pins the "no secret on argv" invariant below.
+ *
+ * Resolves the child's stdout; rejects on a non-zero exit.
+ */
+export type SecurityRunner = (args: readonly string[], stdin?: string) => Promise<string>;
+
+/** Spawn the real `security` binary, piping `stdin` in (never the shell, never argv). */
+const spawnSecurity: SecurityRunner = (args, stdin) =>
+  new Promise<string>((resolve, reject) => {
+    const child = spawn("security", [...args], { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code === 0) resolve(stdout);
+      else reject(new Error(`security ${args[0] ?? "?"} exited ${String(code)}: ${stderr.trim()}`));
+    });
+    // If `security` exits before draining stdin we get EPIPE; the `close` handler above
+    // reports the real failure, so swallow it rather than crashing the host process.
+    child.stdin.once("error", () => {
+      /* EPIPE — see above */
+    });
+    child.stdin.end(stdin ?? "");
+  });
+
+/** Read a secret back out of the keychain. `null` when absent/locked. */
+async function findSecret(
+  run: SecurityRunner,
+  service: string,
+  account: string,
+): Promise<string | null> {
+  try {
+    const stdout = await run(["find-generic-password", "-s", service, "-a", account, "-w"]);
+    const value = stdout.replace(/\n$/, "");
+    return value.length > 0 ? value : null;
+  } catch {
+    return null; // not found / locked → treat as absent
+  }
+}
+
+export interface MacosKeychainOptions {
+  /** Override how `security` is invoked (tests). Defaults to spawning the real binary. */
+  run?: SecurityRunner;
+}
+
 /** macOS Keychain via the built-in `security` CLI. */
-export function macosKeychainBackend(): KeychainBackend {
+export function macosKeychainBackend(options: MacosKeychainOptions = {}): KeychainBackend {
+  const run = options.run ?? spawnSecurity;
   return {
     available: process.platform === "darwin",
-    async get(service, account) {
-      try {
-        const { stdout } = await execFileAsync("security", [
-          "find-generic-password",
-          "-s",
-          service,
-          "-a",
-          account,
-          "-w",
-        ]);
-        const value = stdout.replace(/\n$/, "");
-        return value.length > 0 ? value : null;
-      } catch {
-        return null; // not found / locked → treat as absent
-      }
-    },
+    get: (service, account) => findSecret(run, service, account),
     async set(service, account, secret) {
+      // SECURITY (birdybeep-agent-5qd): the token must NEVER be an argv element. A process's
+      // argument vector is world-readable on macOS (`ps -axo args` shows other users' args),
+      // so the old `-w <token>` form let any co-located local process scrape the durable
+      // machine token during the write. Instead we pass `-w` as the LAST option, which makes
+      // `security` PROMPT for the password — and it reads that prompt from stdin. The secret
+      // therefore travels over a pipe and never appears in the process table.
+      //
+      // Two wrinkles, both established by running the real binary (see the guarded E2E below):
+      //  1. It prompts TWICE ("password data for new item" + "retype"), so the secret is fed
+      //     twice, each newline-terminated. A newline inside the secret would desync that, so
+      //     reject it up front rather than corrupt the item.
+      //  2. If the two feeds disagree, `security` stores an EMPTY password and STILL EXITS 0.
+      //     A zero exit is therefore not proof of a write, so we read the value back and
+      //     verify — otherwise a silent mis-store would wipe the user's token and leave them
+      //     failing auth forever with no diagnostic.
+      if (/[\r\n]/.test(secret)) {
+        throw new Error("machine token must not contain a newline; refusing to store it");
+      }
       // -U updates an existing item; namespaced to BirdyBeep's service/account.
-      await execFileAsync("security", [
-        "add-generic-password",
-        "-U",
-        "-s",
-        service,
-        "-a",
-        account,
-        "-w",
-        secret,
-      ]);
+      await run(
+        ["add-generic-password", "-U", "-s", service, "-a", account, "-w"],
+        `${secret}\n${secret}\n`,
+      );
+      if ((await findSecret(run, service, account)) !== secret) {
+        // Never include the secret itself in the message — it would land in logs.
+        throw new Error("macOS keychain did not store the machine token (read-back mismatch)");
+      }
     },
     async delete(service, account) {
       try {
-        await execFileAsync("security", ["delete-generic-password", "-s", service, "-a", account]);
+        await run(["delete-generic-password", "-s", service, "-a", account]);
       } catch {
         /* already absent → fine */
       }
