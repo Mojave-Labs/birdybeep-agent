@@ -32,6 +32,7 @@ const ALL_COMMANDS = [
   "status",
   "test",
   "doctor",
+  "update",
   "agent",
   "hook",
   "queue",

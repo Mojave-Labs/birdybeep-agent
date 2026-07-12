@@ -13,6 +13,7 @@ import { createQueueCommand } from "./commands/queue";
 import { createReportStatusCommand } from "./commands/report-status";
 import { createStatusCommand } from "./commands/status";
 import { createTestCommand } from "./commands/test";
+import { createUpdateCommand } from "./commands/update";
 import { type Command } from "./framework";
 
 /** Build the full §9.4 command tree. */
@@ -24,6 +25,7 @@ export function buildCommands(): Command[] {
     createStatusCommand(),
     createTestCommand(),
     createDoctorCommand(),
+    createUpdateCommand(),
     createAgentCommand(),
     createHookCommand(),
     createQueueCommand(),

@@ -236,7 +236,35 @@ queue as it goes and exits non-zero if anything is wrong.
 
 ---
 
-## 6. Uninstalling — `birdybeep agent uninstall`
+## 6. Staying up to date — `birdybeep update`
+
+To check whether a newer CLI is out, run:
+
+```bash
+birdybeep update
+```
+
+It asks the npm registry for the latest published `@birdybeep/cli` and compares it to the version
+you're running. If you're behind, it prints the exact upgrade command:
+
+```text
+A new version of birdybeep is available: 0.1.0 → 0.2.0
+Upgrade with:  npm install -g @birdybeep/cli@latest
+(pnpm: `pnpm add -g @birdybeep/cli@latest` · yarn: `yarn global add @birdybeep/cli@latest`)
+```
+
+`update` is **read-only** — it never touches your install, so you stay in control of when and how you
+upgrade (run the printed command with whichever package manager you installed with). It's also
+best-effort: if the registry can't be reached it says so and exits non-zero, but it never blocks. Add
+`--json` for `{ current, latest, updateAvailable, upgradeCommand }` in scripts. It respects a custom
+`npm_config_registry` if you have one set.
+
+Once you've upgraded, re-running `birdybeep agent install all` is safe (idempotent) and refreshes any
+adapter config that changed between versions.
+
+---
+
+## 7. Uninstalling — `birdybeep agent uninstall`
 
 Uninstall is the exact inverse of install: it removes only BirdyBeep-managed entries and restores
 your config from the backup.
