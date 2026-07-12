@@ -140,7 +140,7 @@ describe("resolveOnPath — searches PATH only, never the cwd (the hijack fix)",
     // delivery breaks and version detection degrades to "unknown", on the exact platform the fix
     // targets. Injected win32 → this discriminates the fix on any host (incl. macOS CI).
     const binDir = makeTempDir("bb-npm-");
-    writeFileSync(join(binDir, "birdybeep"), "#!/bin/sh\nexec node bb.js \"$@\"\n"); // sh wrapper
+    writeFileSync(join(binDir, "birdybeep"), '#!/bin/sh\nexec node bb.js "$@"\n'); // sh wrapper
     writeFileSync(join(binDir, "birdybeep.cmd"), "@node bb.js %*\r\n"); // cmd.exe shim
     writeFileSync(join(binDir, "birdybeep.ps1"), "#!/usr/bin/env pwsh\n"); // powershell shim
     const resolved = resolveOnPath("birdybeep", {
