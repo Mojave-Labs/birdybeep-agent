@@ -1,6 +1,6 @@
 {
   "name": "@birdybeep/opencode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "BirdyBeep adapter for OpenCode: plugin package, global plugin install (restart-once to load), and event normalization.",
   "license": "MIT",
   "repository": {
