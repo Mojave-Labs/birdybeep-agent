@@ -166,7 +166,12 @@ describe("defaultInvokeHook resolves birdybeep on PATH, never a cwd-planted bina
     vi.restoreAllMocks();
     while (dirs.length > 0) {
       const d = dirs.pop();
-      if (d !== undefined) rmSync(d, { recursive: true, force: true });
+      // maxRetries/retryDelay: on Windows the delivered child runs with cwd = this bin dir and
+      // is executing shim.cjs inside it, so the dir stays LOCKED for a moment after it writes the
+      // marker; retry the rmdir until the child fully exits and releases its handles (EBUSY).
+      if (d !== undefined) {
+        rmSync(d, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
+      }
     }
   });
 

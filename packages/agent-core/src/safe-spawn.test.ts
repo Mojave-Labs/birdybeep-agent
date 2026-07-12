@@ -68,7 +68,11 @@ function awaitExit(child: import("node:child_process").ChildProcess): Promise<vo
 afterEach(() => {
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
-    if (dir !== undefined) rmSync(dir, { recursive: true, force: true });
+    // maxRetries/retryDelay: a spawned child runs with cwd = its bin dir on Windows, which locks
+    // the dir until the child exits — retry the rmdir past the transient EBUSY rather than fail.
+    if (dir !== undefined) {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
+    }
   }
 });
 
