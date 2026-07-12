@@ -428,16 +428,16 @@ through the gated path proves the gate was cleared** — an untrusted hook never
 unloaded plugin never fires, so such an event is the only honest proof.
 
 > **Only count events that actually traverse the gate.** This is the subtle part, and getting it
-> wrong produces a *false* "installed" — the worst possible failure for a trust signal, because the
+> wrong produces a _false_ "installed" — the worst possible failure for a trust signal, because the
 > user is told approval beeps work when they silently do not. Codex is the cautionary example: it
 > exposes **two** surfaces, and only one is gated.
 >
-> | Surface                       | Trust-gated?                        | Proof of trust? |
-> | ----------------------------- | ----------------------------------- | --------------- |
+> | Surface                       | Trust-gated?                         | Proof of trust? |
+> | ----------------------------- | ------------------------------------ | --------------- |
 > | `notify = [...]` program      | **No** — runs on every turn-complete | **No**          |
 > | `[[hooks.X]]` lifecycle hooks | Yes — only after `/hooks`            | Yes             |
 >
-> Counting *any* event (including `notify`) flipped Codex to `installed` on the first turn-complete
+> Counting _any_ event (including `notify`) flipped Codex to `installed` on the first turn-complete
 > while the security-relevant `PermissionRequest` → `approval_required` hook was still untrusted and
 > dropped (birdybeep-agent-qyf). Identify the gated payload shape explicitly.
 
