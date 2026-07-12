@@ -247,6 +247,10 @@ To clear a stale local token first:
 birdybeep logout   # removes the token from keychain + file fallback; safe to run anytime
 ```
 
+**To remove a machine entirely** (so it stops showing in the app), run `birdybeep unpair` instead —
+it revokes the machine on the server _and_ clears the local token. `logout` only clears the local
+token; the machine stays paired on your account until you unpair it here or revoke it in the app.
+
 ---
 
 ### Backend unreachable

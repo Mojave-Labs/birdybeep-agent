@@ -157,26 +157,46 @@ permissions and the keychain fallback, live in [Security](./security.md).
 
 ---
 
-## Logout
+## Unpair vs. logout
+
+Two commands tear down this machine's pairing. They differ in whether they touch the **server**:
 
 ```bash
-birdybeep logout
+birdybeep unpair   # revoke the machine server-side AND remove the local token (the reverse of `pair`)
+birdybeep logout   # remove the local token only (the machine stays on your account)
 ```
 
+### `birdybeep unpair`
+
+`unpair` is the true reverse of `pair`. It **revokes the machine on the server** — so it disappears
+from the BirdyBeep app and its token stops working everywhere — and then removes the local token:
+
+```text
+Unpaired — the machine was revoked and removed from your account.
+```
+
+If the backend can't be reached, `unpair` still removes the local token and tells you to finish the
+job in the app, so no stale machine lingers on your account:
+
+```text
+Unpaired locally, but the server was unreachable — the machine may still show in the app. Open
+BirdyBeep and revoke it there to fully remove it.
+```
+
+### `birdybeep logout`
+
 `birdybeep logout` removes the local machine token from **both** the OS keychain and the
-strict-permission file fallback:
+strict-permission file fallback, but **does not touch the server** — the machine stays paired on your
+account, and you can sign back in by re-pairing:
 
 ```text
 Logged out — the machine token was removed.
 ```
 
-It's **idempotent** — running it when you're already logged out is not an error. Logout only
-touches the token; it does **not** remove your agent integrations (use
-[`birdybeep agent uninstall`](./install.md) for that) or clear the local event queue.
-
-To fully sign a machine out everywhere, run `birdybeep logout` on the machine **and** revoke its
-token from the BirdyBeep app — revoking invalidates the server-side hash even if a copy of the
-token still exists somewhere.
+Both commands are **idempotent** (running them when already signed out is not an error) and neither
+removes your agent integrations (use [`birdybeep agent uninstall`](./install.md) for that) or clears
+the local event queue. You can also revoke any machine directly from the BirdyBeep app at any time —
+revoking invalidates the server-side token hash even if a copy of the token still exists somewhere.
 
 ---
 

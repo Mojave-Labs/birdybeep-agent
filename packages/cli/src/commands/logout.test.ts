@@ -65,12 +65,27 @@ describe("birdybeep logout", () => {
 });
 
 describe("birdybeep unpair", () => {
-  it("is the token-clearing twin of logout (removes the token, idempotent)", async () => {
+  /** A fetch that records its calls and returns a fixed status. */
+  function recordingFetch(status: number) {
+    const calls: { url: string; auth: string | null; method: string | undefined }[] = [];
+    const impl = ((url: string | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      calls.push({
+        url: String(url),
+        auth: headers.get("authorization"),
+        method: init?.method,
+      });
+      return Promise.resolve(new Response(JSON.stringify({ revoked: true }), { status }));
+    }) as unknown as typeof fetch;
+    return { impl, calls };
+  }
+
+  it("revokes the machine server-side with its token, THEN clears the local token", async () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
-    expect(await getToken(FILE_ONLY)).toBe(TOKEN);
+    const { impl, calls } = recordingFetch(200);
 
-    const cmd = createUnpairCommand({ tokenOptions: FILE_ONLY });
+    const cmd = createUnpairCommand({ tokenOptions: FILE_ONLY, fetchImpl: impl });
     const out = capture();
     const code = await runCli(["unpair", "--json"], {
       commands: [cmd],
@@ -78,18 +93,54 @@ describe("birdybeep unpair", () => {
       stderr: out.writer,
       ensureConfig: false,
     });
-    expect(code).toBe(EXIT.OK);
-    expect(JSON.parse(out.text())).toEqual({ unpaired: true });
-    expect(await getToken(FILE_ONLY)).toBeNull(); // token gone
 
-    // Idempotent: unpairing again is fine.
-    const code2 = await runCli(["unpair"], {
+    expect(code).toBe(EXIT.OK);
+    expect(JSON.parse(out.text())).toEqual({ unpaired: true, serverRevoked: true });
+    // It called the self-revoke endpoint with the machine token as a bearer, BEFORE clearing it.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toMatch(/\/v1\/machine\/revoke-self$/);
+    expect(calls[0]!.method).toBe("POST");
+    expect(calls[0]!.auth).toBe(`Bearer ${TOKEN}`);
+    // Local token is gone afterward.
+    expect(await getToken(FILE_ONLY)).toBeNull();
+  });
+
+  it("still clears the local token (and reports it) when the server is unreachable", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const offline = (() => Promise.reject(new Error("offline"))) as unknown as typeof fetch;
+
+    const cmd = createUnpairCommand({ tokenOptions: FILE_ONLY, fetchImpl: offline });
+    const out = capture();
+    const code = await runCli(["unpair", "--json"], {
       commands: [cmd],
-      stdout: capture().writer,
-      stderr: capture().writer,
+      stdout: out.writer,
+      stderr: out.writer,
       ensureConfig: false,
     });
-    expect(code2).toBe(EXIT.OK);
+
+    expect(code).toBe(EXIT.OK);
+    // Offline → serverRevoked:false so the human copy tells the user to revoke in the app.
+    expect(JSON.parse(out.text())).toEqual({ unpaired: true, serverRevoked: false });
+    expect(await getToken(FILE_ONLY)).toBeNull(); // token still cleared — unpair works offline
+  });
+
+  it("is idempotent — unpairing with no local token never calls the server and succeeds", async () => {
+    sandbox = createSandbox();
+    const { impl, calls } = recordingFetch(200);
+
+    const cmd = createUnpairCommand({ tokenOptions: FILE_ONLY, fetchImpl: impl });
+    const out = capture();
+    const code = await runCli(["unpair", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+
+    expect(code).toBe(EXIT.OK);
+    expect(JSON.parse(out.text())).toEqual({ unpaired: true, serverRevoked: false });
+    expect(calls).toHaveLength(0); // no token → nothing to revoke server-side
   });
 });
 
