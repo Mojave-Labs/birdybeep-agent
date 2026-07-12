@@ -10,11 +10,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  cleanSessionName,
-  SESSION_NAME_MAX_CHARS,
-  SessionNameStore,
-} from "./session-names";
+import { cleanSessionName, SESSION_NAME_MAX_CHARS, SessionNameStore } from "./session-names";
 
 const dirs: string[] = [];
 function sandbox(): string {
