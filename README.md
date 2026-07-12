@@ -100,6 +100,20 @@ Two internal commands are invoked by BirdyBeep itself, not by you:
   failure, and **always returns fast and exits 0**.
 - `birdybeep report-status` — posts each adapter's pre-event integration status to the backend.
 
+### Update notices
+
+There's no `update` command — the CLI tells you on its own. When you run a command, it prints a
+one-line notice to **stderr** if a newer `@birdybeep/cli` has been published:
+
+```text
+a new version of birdybeep is available: 0.1.0 → 0.2.0
+upgrade with: npm install -g @birdybeep/cli@latest
+```
+
+The check is cached (refreshed from the npm registry at most once a day), never runs on the `hook`
+hot path, and is skipped for `--json`, `--non-interactive`, non-TTY output, and CI. Silence it
+entirely with `NO_UPDATE_NOTIFIER=1` (or `BIRDYBEEP_NO_UPDATE_NOTIFIER=1`).
+
 ### Global flags & exit codes
 
 Available on the root command and per command:
