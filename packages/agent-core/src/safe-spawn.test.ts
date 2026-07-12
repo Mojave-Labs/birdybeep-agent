@@ -15,7 +15,15 @@
  *     the planted binary is NEVER executed. On windows-latest these genuinely reproduce the OS
  *     cwd-first behavior; on POSIX they still exercise the real spawn end-to-end.
  */
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
@@ -286,5 +294,100 @@ describe("safeExecFile — read-only probes never execute a cwd-planted binary",
     }
     await new Promise((r) => setTimeout(r, 200));
     expect(existsSync(pwned)).toBe(false);
+  });
+});
+
+/**
+ * DELIVERY proof (birdybeep-agent-dr8 real-Windows follow-up): `safeSpawn({ input })` must get the
+ * event payload to the launched CLI's STDIN on Windows too. Piping into a `.cmd` through cmd.exe
+ * did NOT reach the batch shim's node grandchild (windows-latest CI: every event dropped), so the
+ * payload is now delivered via a strict-perm temp file the child reads as stdin — an inherited fd
+ * on POSIX, and a `< "file"` shell redirection for a Windows `.cmd`. Both are exercised HERE on the
+ * host we run on: the win32 case injects `platform: "win32"`, which makes Node's `shell: true` use
+ * the host shell (`/bin/sh` on macOS/linux), and `/bin/sh` honors `cmd < file` exactly like
+ * `cmd.exe` — so the redirect-line construction is proven off-Windows, leaving only the shell's
+ * redirect parser (identical semantics on both) to windows-latest.
+ */
+describe("safeSpawn — input delivers the payload to the child's stdin (Windows-safe temp-file path)", () => {
+  /** Plant a `birdybeep`-like command that copies its STDIN into `marker` then exits (host-native). */
+  function plantStdinEcho(dir: string, name: string, marker: string): void {
+    const p = join(dir, name);
+    if (IS_WINDOWS && name.toLowerCase().endsWith(".cmd")) {
+      // A real Windows batch shim: node copies stdin (redirected from our temp file) to the marker.
+      const js =
+        "const fs=require('fs');let d='';" +
+        "process.stdin.on('data',c=>d+=c);" +
+        `process.stdin.on('end',()=>fs.writeFileSync(${JSON.stringify(marker)},d));` +
+        "process.stdin.resume();";
+      writeFileSync(p, `@"${process.execPath}" -e "${js.replace(/"/g, '\\"')}"\r\n`);
+    } else {
+      // POSIX executable. Also used for the injected-win32-on-macOS `.cmd` case: `/bin/sh` execs
+      // this via its shebang and feeds it the redirected stdin, mirroring cmd.exe running a batch.
+      writeFileSync(p, `#!/bin/sh\ncat > ${JSON.stringify(marker)}\n`);
+      chmodSync(p, 0o755);
+    }
+  }
+
+  function lingeringDeliveryTempFiles(): string[] {
+    return readdirSync(tmpdir()).filter((f) => f.startsWith("birdybeep-hook-"));
+  }
+
+  it.skipIf(IS_WINDOWS)(
+    "delivers input to a POSIX binary by piping straight to stdin",
+    async () => {
+      const binDir = makeTempDir("bb-in-posix-");
+      const marker = join(binDir, "GOT.json");
+      plantStdinEcho(binDir, "birdybeep", marker);
+      const payload = JSON.stringify({ type: "session.created", n: 1 });
+      const before = lingeringDeliveryTempFiles().length;
+
+      const child = safeSpawn("birdybeep", ["hook", "opencode"], {
+        env: { PATH: binDir },
+        platform: "linux",
+        input: payload,
+      });
+      expect(child).not.toBeNull();
+      if (child !== null) await awaitExit(child);
+      await new Promise((r) => setTimeout(r, 100));
+
+      expect(existsSync(marker)).toBe(true);
+      expect(readFileSync(marker, "utf8")).toBe(payload); // the exact bytes reached stdin
+      expect(lingeringDeliveryTempFiles().length).toBe(before); // POSIX uses no temp file (none leaked)
+    },
+  );
+
+  it("delivers input to a Windows .cmd shim via `< file` shell redirection (injected win32)", async () => {
+    // On macOS/linux this drives Node's shell:true through /bin/sh, which honors `"cmd" < "file"`
+    // just like cmd.exe — so it fails against a stdin-pipe delivery (old code) and passes with the
+    // redirect, ON THIS HOST, not only on windows-latest.
+    const binDir = makeTempDir("bb-in-cmd-");
+    const marker = join(binDir, "GOT.json");
+    plantStdinEcho(binDir, "birdybeep.cmd", marker);
+    const payload = JSON.stringify({ type: "session.created", via: "redirect" });
+
+    const child = safeSpawn("birdybeep", ["hook", "opencode"], {
+      env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+      platform: "win32",
+      input: payload,
+    });
+    expect(child).not.toBeNull();
+    if (child !== null) await awaitExit(child);
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(marker, "utf8").trim()).toBe(payload); // the payload arrived on stdin
+  });
+
+  it("writes NO delivery temp file (and spawns nothing) when the command is not on PATH", async () => {
+    const emptyPath = makeTempDir("bb-in-nopath-");
+    const before = lingeringDeliveryTempFiles().length;
+    const child = safeSpawn("birdybeep", ["hook", "opencode"], {
+      env: { PATH: emptyPath },
+      platform: "linux",
+      input: JSON.stringify({ type: "session.created" }),
+    });
+    expect(child).toBeNull(); // resolve fails first → no temp file is ever created
+    await new Promise((r) => setTimeout(r, 50));
+    expect(lingeringDeliveryTempFiles().length).toBe(before);
   });
 });

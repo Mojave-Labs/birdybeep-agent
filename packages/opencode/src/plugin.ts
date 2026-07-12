@@ -89,8 +89,13 @@ function defaultInvokeHook(envelope: OpenCodeEventEnvelope): void {
     // .cmd shim still needs a shell (Node ≥20 refuses .cmd without one, CVE-2024-27980), so
     // safeSpawn routes it through cmd.exe with the fully-qualified quoted path + a trusted
     // cwd + windowsHide. Fire-and-forget: detach so the hook outlives this OpenCode event.
+    //
+    // Deliver the envelope on STDIN via `input` (NOT a hand-written child.stdin pipe): a pipe
+    // into a Windows `.cmd` through cmd.exe does not reliably reach the batch shim's `node`
+    // grandchild, so every event silently dropped on Windows. `input` routes the payload
+    // through a strict-perm temp file the CLI reads as stdin — reliable on all platforms.
     const child = safeSpawn("birdybeep", ["hook", "opencode"], {
-      stdio: ["pipe", "ignore", "ignore"],
+      input: JSON.stringify(envelope),
       detached: true,
     });
     if (child === null) {
@@ -100,7 +105,6 @@ function defaultInvokeHook(envelope: OpenCodeEventEnvelope): void {
       return;
     }
     child.on("error", (err) => logSpawnFailureOnce(err.message)); // best-effort, never block
-    child.stdin?.end(JSON.stringify(envelope));
     child.unref();
   } catch (err) {
     logSpawnFailureOnce(err instanceof Error ? err.message : String(err));

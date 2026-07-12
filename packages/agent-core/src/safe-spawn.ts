@@ -17,9 +17,28 @@
  * quoted path plus an explicit TRUSTED cwd and `windowsHide`, so `cmd.exe` does no cwd-first
  * lookup (an absolute path is unambiguous) and any bare-name lookup the shim itself performs
  * resolves against a trusted directory rather than the attacker's repo.
+ *
+ * Delivering the event payload to the launched CLI's STDIN (`safeSpawn`'s `input`): on POSIX and a
+ * Windows `.exe` we pipe it straight to the child's stdin (a direct spawn, no intermediary shell).
+ * But piping into a Windows `.cmd` through `cmd.exe` (`shell: true`) is unreliable — the parent's
+ * write to `child.stdin` does not dependably reach the batch file's `node` grandchild, so the
+ * payload (and its EOF) is lost and every OpenCode event silently dropped on Windows. For that
+ * case we instead write the payload to a strict-perm (0o600) temp file and redirect the shell's
+ * stdin FROM it (`... < "file"`): cmd.exe opens the file itself — no fragile pipe hand-off — and
+ * the payload never rides the command line, so no argument quoting/length limit applies. The temp
+ * file is deleted when the child exits. Either way the CLI's "read stdin to EOF" contract holds.
  */
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { accessSync, constants as fsConstants, existsSync, statSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import {
+  accessSync,
+  constants as fsConstants,
+  existsSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 
@@ -128,6 +147,33 @@ export function resolveOnPath(command: string, options: ResolveOptions = {}): st
 export interface SafeSpawnOptions extends ResolveOptions {
   stdio?: Parameters<typeof spawn>[2] extends { stdio?: infer S } ? S : unknown;
   detached?: boolean;
+  /**
+   * Data to deliver to the launched CLI's STDIN. Delivered via a strict-perm temp file the child
+   * reads (an inherited read fd on POSIX / a Windows `.exe`; a `< "file"` shell redirection for a
+   * Windows `.cmd`/`.bat`), NOT a parent-held pipe — piping into `cmd.exe` does not reliably reach
+   * a batch shim's `node` grandchild. When set, `stdio` is managed by this helper and ignored.
+   */
+  input?: string;
+}
+
+/**
+ * Write `data` to a fresh strict-perm (0o600) temp file and return its path. The payload is the
+ * pre-redaction event envelope (no durable token — the CLI reads the token from its secure store
+ * at send time), but 0o600 keeps it owner-only while it briefly exists on a shared machine.
+ */
+function writeStdinTempFile(data: string): string {
+  const file = join(tmpdir(), `birdybeep-hook-${randomBytes(16).toString("hex")}.json`);
+  writeFileSync(file, data, { mode: 0o600 });
+  return file;
+}
+
+/** Best-effort deletion of a delivery temp file; never throws (cleanup must not break delivery). */
+function unlinkQuietly(file: string): void {
+  try {
+    rmSync(file, { force: true });
+  } catch {
+    /* the OS reclaims tmp eventually; a failed unlink must never surface */
+  }
 }
 
 /**
@@ -138,6 +184,10 @@ export interface SafeSpawnOptions extends ResolveOptions {
  * The child's cwd is forced to a TRUSTED directory (the directory the resolved binary lives in —
  * a PATH location, never the inherited/attacker-controlled cwd) so a `.cmd` shim that itself
  * invokes a bare name (npm shims call `node`) can't be hijacked by a planted `node.exe` either.
+ *
+ * Pass `options.input` to deliver a stdin payload reliably across platforms (see the interface
+ * doc and the file header): it is written to a strict-perm temp file the child reads, cleaned up
+ * on exit — never piped through `cmd.exe`, where the bytes can silently fail to reach the shim.
  */
 export function safeSpawn(
   command: string,
@@ -149,9 +199,54 @@ export function safeSpawn(
   if (absolute === null) return null;
 
   const trustedCwd = dirname(absolute);
+  const detachedOpt = options.detached === true ? { detached: true } : {};
+  const needsShell = platform === "win32" && needsShellToLaunch(absolute);
+
+  if (options.input !== undefined) {
+    if (needsShell) {
+      // Windows `.cmd`/`.bat`: a stdin PIPE written by the parent does NOT reliably reach the
+      // batch shim's `node` grandchild through cmd.exe — the payload (and its EOF) is silently
+      // lost, dropping every OpenCode event on Windows. Instead write the payload to a strict-perm
+      // temp file and redirect the shell's stdin FROM it (`... < "file"`); cmd.exe opens the file
+      // itself, so no fragile pipe/console hand-off. The payload never rides the command line, so
+      // no cmd.exe argument quoting/length limit applies. The file is deleted when the child exits.
+      const file = writeStdinTempFile(options.input);
+      const line = `${[absolute, ...args].map(quoteForShell).join(" ")} < ${quoteForShell(file)}`;
+      const child = spawn(line, {
+        shell: true,
+        cwd: trustedCwd,
+        windowsHide: true,
+        stdio: ["ignore", "ignore", "ignore"],
+        ...detachedOpt,
+      });
+      child.once("exit", () => unlinkQuietly(file));
+      child.once("error", () => unlinkQuietly(file));
+      return child;
+    }
+
+    // POSIX / Windows `.exe`: pipe the payload straight to the child's stdin (the proven path —
+    // no intermediary shell to lose the bytes). Swallow an EPIPE if the child died early; the
+    // caller also listens for 'error'. This never blocks the harness: the write is fire-and-forget.
+    const child = spawn(absolute, args as string[], {
+      cwd: trustedCwd,
+      windowsHide: true,
+      stdio: ["pipe", "ignore", "ignore"],
+      ...detachedOpt,
+    });
+    child.stdin?.on("error", () => {
+      /* child exited before we finished writing — best-effort, never throw */
+    });
+    try {
+      child.stdin?.end(options.input);
+    } catch {
+      /* stdin already torn down; the event is simply dropped */
+    }
+    return child;
+  }
+
   const stdio = options.stdio as never;
 
-  if (platform === "win32" && needsShellToLaunch(absolute)) {
+  if (needsShell) {
     // .cmd/.bat can't be spawned without a shell; go through cmd.exe with the fully-qualified
     // quoted path (no cwd-first lookup for an absolute path) + trusted cwd + windowsHide.
     const line = [absolute, ...args].map(quoteForShell).join(" ");
@@ -160,7 +255,7 @@ export function safeSpawn(
       cwd: trustedCwd,
       windowsHide: true,
       stdio,
-      ...(options.detached === true ? { detached: true } : {}),
+      ...detachedOpt,
     });
   }
 
@@ -168,7 +263,7 @@ export function safeSpawn(
     cwd: trustedCwd,
     windowsHide: true,
     stdio,
-    ...(options.detached === true ? { detached: true } : {}),
+    ...detachedOpt,
   });
 }
 

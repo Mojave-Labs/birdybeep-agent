@@ -32,3 +32,10 @@ launch — silently dropping every OpenCode event and degrading version detectio
 Picking the `.cmd` restores delivery on the exact platform this fix targets. On POSIX the
 resolver is now `execvp`-aware: a present-but-non-executable file earlier on PATH is skipped
 so the search continues to the real executable instead of failing with EACCES.
+
+The OpenCode plugin also delivers its event envelope on the CLI's STDIN reliably on Windows:
+piping the payload to a `.cmd` through `cmd.exe` did not dependably reach the batch shim's
+`node` grandchild (the bytes and their EOF were lost, dropping every event), so for a Windows
+`.cmd`/`.bat` the payload is now written to a strict-perm temp file and the shell's stdin is
+redirected from it (`… < "file"`), deleted when the child exits. POSIX and a Windows `.exe`
+still pipe straight to stdin. The CLI's "read stdin to EOF" contract is unchanged.
