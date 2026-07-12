@@ -20,6 +20,7 @@ export * from "./pairing";
 export * from "./paths";
 export * from "./primitives";
 export * from "./queue";
+export * from "./safe-spawn";
 export * from "./sender";
 export * from "./token-store";
 export * from "./workspace";
