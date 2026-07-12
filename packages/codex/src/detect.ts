@@ -3,23 +3,27 @@
  * lives. Side-effect-free (no writes), HOME/$CODEX_HOME-relative, never throws —
  * absence returns a clean not-detected result so `agent install` can skip gracefully.
  */
-import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { promisify } from "node:util";
 
-import type { DetectionResult } from "@birdybeep/agent-core";
+import { type DetectionResult, safeExecFile } from "@birdybeep/agent-core";
 
 import { codexConfigDir, codexConfigFile, type CodexPathOptions } from "./paths";
 
-const execFileAsync = promisify(execFile);
-
-/** Best-effort `codex --version` probe; returns a version string or null (never throws). */
+/**
+ * Best-effort `codex --version` probe; returns a version string or null (never throws).
+ * SECURITY (sec-review-2026-07 M6): resolves `codex` to an ABSOLUTE path on PATH only via
+ * `safeExecFile` — never the cwd. On Windows the OS resolves a bare name against the current
+ * directory before PATH, so a repo shipping `codex.exe` at its root would otherwise run when
+ * a dev invokes `birdybeep agent install/doctor` from inside it. `safeExecFile` returns null
+ * (→ version unknown) when `codex` isn't on PATH; config-dir detection still applies.
+ */
 async function probeCodexVersion(): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync("codex", ["--version"], { timeout: 2000 });
-    const match = /(\d+\.\d+\.\d+[\w.-]*)/.exec(stdout);
+    const result = await safeExecFile("codex", ["--version"], { timeout: 2000 });
+    if (result === null) return null;
+    const match = /(\d+\.\d+\.\d+[\w.-]*)/.exec(result.stdout);
     if (match) return match[1] ?? null;
-    const trimmed = stdout.trim();
+    const trimmed = result.stdout.trim();
     return trimmed.length > 0 ? trimmed : null;
   } catch {
     return null;

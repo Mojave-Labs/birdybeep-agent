@@ -4,27 +4,31 @@
  * network) and HOME-relative, so `agent install all` can skip-on-absent and the
  * temp-HOME E2E works. Never throws — absence returns a clean not-detected result.
  */
-import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { promisify } from "node:util";
 
-import type { DetectionResult } from "@birdybeep/agent-core";
+import { type DetectionResult, safeExecFile } from "@birdybeep/agent-core";
 
 import { claudeConfigDir, claudeSettingsPath } from "./paths";
 
-const execFileAsync = promisify(execFile);
-
-/** Best-effort `claude --version` probe; returns a version string or null (never throws). */
+/**
+ * Best-effort `claude --version` probe; returns a version string or null (never throws).
+ * SECURITY (sec-review-2026-07 M6): resolves `claude` to an ABSOLUTE path on PATH only via
+ * `safeExecFile` — never the cwd. On Windows the OS resolves a bare name against the current
+ * directory before PATH, so a repo shipping `claude.exe` at its root would otherwise run when
+ * a dev invokes `birdybeep agent install/doctor` from inside it. `safeExecFile` returns null
+ * (→ version unknown) when `claude` isn't on PATH; config-dir detection still applies.
+ */
 async function probeClaudeVersion(): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync("claude", ["--version"], { timeout: 2000 });
-    const match = /(\d+\.\d+\.\d+[\w.-]*)/.exec(stdout);
+    const result = await safeExecFile("claude", ["--version"], { timeout: 2000 });
+    if (result === null) return null; // not on PATH → absent, not fatal
+    const match = /(\d+\.\d+\.\d+[\w.-]*)/.exec(result.stdout);
     if (match) return match[1] ?? null;
-    const trimmed = stdout.trim();
+    const trimmed = result.stdout.trim();
     return trimmed.length > 0 ? trimmed : null;
   } catch {
-    return null; // not on PATH / errored → absent, not fatal
+    return null; // errored → absent, not fatal
   }
 }
 
