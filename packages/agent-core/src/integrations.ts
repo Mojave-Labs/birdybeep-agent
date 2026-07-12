@@ -42,7 +42,7 @@ export const integrationStatusReportSchema = z.object({
 
 /**
  * The response: the server echoes each harness's EFFECTIVE status (e.g. it forces
- * Codex → `needs_trust` until the first event regardless of what the CLI reported).
+ * Codex → `needs_trust` until a trusted lifecycle hook fires, regardless of what the CLI reported).
  * Tolerant of extra fields so a server addition won't break parsing.
  */
 export const integrationStatusResponseSchema = z.object({

@@ -423,26 +423,49 @@ Some harnesses don't activate the moment you write their config. Two cases ship 
 - **OpenCode** loads plugins only at startup, so the user must **restart** OpenCode after install.
 
 For these, `install()` returns `needs_trust` / `needs_restart` and surfaces the instruction in
-`requiredActions`. `status()` keeps returning that value **until the first real event proves the
-gate was cleared** — an untrusted hook never fires, and an unloaded plugin never fires, so the
-arrival of a real event is the only honest proof.
+`requiredActions`. `status()` keeps returning that value **until an event that could only have come
+through the gated path proves the gate was cleared** — an untrusted hook never fires, and an
+unloaded plugin never fires, so such an event is the only honest proof.
+
+> **Only count events that actually traverse the gate.** This is the subtle part, and getting it
+> wrong produces a *false* "installed" — the worst possible failure for a trust signal, because the
+> user is told approval beeps work when they silently do not. Codex is the cautionary example: it
+> exposes **two** surfaces, and only one is gated.
+>
+> | Surface                       | Trust-gated?                        | Proof of trust? |
+> | ----------------------------- | ----------------------------------- | --------------- |
+> | `notify = [...]` program      | **No** — runs on every turn-complete | **No**          |
+> | `[[hooks.X]]` lifecycle hooks | Yes — only after `/hooks`            | Yes             |
+>
+> Counting *any* event (including `notify`) flipped Codex to `installed` on the first turn-complete
+> while the security-relevant `PermissionRequest` → `approval_required` hook was still untrusted and
+> dropped (birdybeep-agent-qyf). Identify the gated payload shape explicitly.
 
 Codex implements this with a small **trust marker** file in the BirdyBeep data dir (strict perms,
 never repo-local), carrying a timestamp only — never notification content
 ([`trust.ts`](../packages/codex/src/trust.ts)):
 
 ```ts
+// Trust-gated hook payloads are keyed by `hook_event_name`; the notify program is keyed by `type`.
+const TRUST_PROVING_OUTCOMES = new Set<HookOutcome>(["delivered", "queued"]);
+
 export async function runCodexHook(rawInput, options): Promise<HookResult> {
   const result = await runAgentHook(codexAdapter, rawInput, options);
-  if (result.outcome !== "skipped") recordCodexEventSeen(options); // first real event = trust granted
+  // BOTH halves matter: a trust-gated payload AND a clean end-to-end fire.
+  // A notify fire satisfies the second but never the first, so it never grants trust.
+  if (isCodexLifecycleHookPayload(rawInput) && TRUST_PROVING_OUTCOMES.has(result.outcome)) {
+    recordCodexEventSeen(options);
+  }
   return result;
 }
 ```
 
-`status()` then reads the marker: config fully written **and** an event seen → `installed`;
-config written but no event yet → `needs_trust`. `uninstall()` clears the marker. If your harness
-has any gating step (trust prompt, restart, an enable toggle), follow this shape: write config, hold
-the gated status, and flip to `installed` only on observed first-event delivery.
+`status()` then reads the marker: config fully written **and** a trust-gated hook seen →
+`installed`; config written but no such hook yet → `needs_trust`. `uninstall()` clears the marker.
+If your harness has any gating step (trust prompt, restart, an enable toggle), follow this shape:
+write config, hold the gated status, and flip to `installed` only on an observed event that
+**could not have arrived without the gate being cleared**. When in doubt, under-claim: a lingering
+`needs_trust` is a nudge, a false `installed` is a broken promise.
 
 ---
 

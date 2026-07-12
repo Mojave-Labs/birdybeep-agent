@@ -158,6 +158,22 @@ function mapCodexPayload(payload: Record<string, unknown>): MappedEvent {
   throw new CodexMappingError("payload has neither a string hook_event_name nor type");
 }
 
+/**
+ * Is this payload a TRUST-GATED lifecycle hook (vs. the notify program)?
+ *
+ * This is the trust signal (birdybeep-agent-qyf). Codex refuses to run a `[[hooks.X]]`
+ * command until the user reviews and trusts it via `/hooks`, so a hook payload arriving
+ * here is proof trust was granted. The top-level `notify` program has NO such gate —
+ * Codex runs it on every turn-complete regardless — so a notify payload proves nothing.
+ *
+ * Deliberately mirrors {@link mapCodexPayload}'s dispatch precedence (hook_event_name
+ * wins over type): whatever the mapper treats as a hook is what we count as trust proof,
+ * so the two can never disagree.
+ */
+export function isCodexLifecycleHookPayload(input: unknown): boolean {
+  return typeof asRecord(input)["hook_event_name"] === "string";
+}
+
 function buildAndNormalize(input: unknown, opts: NormalizeOptions): BirdyBeepAgentEvent {
   const payload = asRecord(input);
   const mapped = mapCodexPayload(payload); // throws CodexMappingError on unknown
