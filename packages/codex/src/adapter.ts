@@ -1,6 +1,6 @@
 /**
  * The Codex AgentAdapter (§9.6) — launch integration with a one-time hook-trust
- * caveat (surfaced as `needs_trust` until the first event arrives). Built up across
+ * caveat (surfaced as `needs_trust` until a trusted lifecycle hook fires). Built up across
  * the a-codex tickets: detect() is live (CX-DETECT); install/uninstall/status/doctor/
  * normalizeEvent land in their own tickets and replace the stubs below.
  */

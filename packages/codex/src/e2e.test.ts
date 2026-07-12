@@ -164,7 +164,7 @@ describe("CX-E2E: install → fire real notify + hooks → assert delivered", ()
     expect(readFileSync(codexConfigFile({ home: sb.home }), "utf8")).not.toContain(TOKEN);
   });
 
-  it("trust transition: needs_trust before any event → installed after the first", async () => {
+  it("trust transition: needs_trust before any event → installed after the first hook", async () => {
     const { fire } = await setUp();
     expect(await codexAdapter.status()).toBe("needs_trust"); // installed files, no event yet
     const outcome = await fire({
@@ -173,7 +173,20 @@ describe("CX-E2E: install → fire real notify + hooks → assert delivered", ()
       source: "startup",
     });
     expect(outcome).toBe("delivered");
-    expect(await codexAdapter.status()).toBe("installed"); // first real event flipped it
+    expect(await codexAdapter.status()).toBe("installed"); // first real HOOK flipped it
+  });
+
+  // birdybeep-agent-qyf: notify is not trust-gated, so it must not flip the status —
+  // otherwise we'd tell the user "installed" (approval beeps work) while the untrusted
+  // PermissionRequest hook is still being silently dropped by Codex.
+  it("trust transition: a delivered notify does NOT flip needs_trust → installed", async () => {
+    const { fire } = await setUp();
+    expect(await codexAdapter.status()).toBe("needs_trust");
+
+    const outcome = await fire({ type: "agent-turn-complete", "thread-id": SESSION, cwd: RAW_CWD });
+
+    expect(outcome).toBe("delivered"); // the notify beep really is delivered…
+    expect(await codexAdapter.status()).toBe("needs_trust"); // …and yet: still untrusted
   });
 
   it("never persists user/assistant content (tool_input + last-assistant-message)", async () => {

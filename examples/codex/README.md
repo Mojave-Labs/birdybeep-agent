@@ -62,7 +62,8 @@ array — and uninstall restores it.) The original file is backed up once to
 Codex skips hooks it does not trust, so after install BirdyBeep reports **`needs_trust`**. To finish:
 
 > **Open Codex and run `/hooks`** to trust the hooks. After trust is granted, Codex sessions on this
-> machine are tracked automatically — the integration goes live on the first real event.
+> machine are tracked automatically — the integration goes live on the first trusted lifecycle hook
+> (a turn-complete beep via the ungated `notify` program does not count as proof of trust).
 
 ## No token here
 

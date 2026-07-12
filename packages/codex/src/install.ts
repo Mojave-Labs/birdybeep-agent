@@ -139,6 +139,6 @@ export function installCodex(
     changedFiles: [configPath],
     backupFiles: existed ? [backupPath] : [],
     requiredActions: [...TRUST_INSTRUCTIONS], // printed by the CLI
-    status: "needs_trust", // not fully installed until the first event arrives (CX-TRUST)
+    status: "needs_trust", // not installed until a trusted lifecycle hook fires (CX-TRUST)
   });
 }

@@ -97,8 +97,10 @@ checks appear.
 ```
 
 **Why** — Codex is special. Writing the config (`notify` + the lifecycle hooks in `~/.codex/config.toml`)
-is **not** enough to count as installed: Codex requires a **one-time trust** of those hooks. Until the
-first real event flows through, BirdyBeep deliberately reports `needs_trust` rather than `installed`.
+is **not** enough to count as installed: Codex requires a **one-time trust** of those hooks. Until a
+trusted **lifecycle hook** actually fires, BirdyBeep deliberately reports `needs_trust` rather than
+`installed`. (Turn-complete beeps arriving via the ungated `notify` program do **not** count — they
+work without trust, so they are no proof the approval hooks are trusted.)
 
 **Fix** — open Codex and run:
 
@@ -106,9 +108,9 @@ first real event flows through, BirdyBeep deliberately reports `needs_trust` rat
 /hooks
 ```
 
-Trust the BirdyBeep hooks. The status flips to `installed` after the **first real event** is seen — it
-does not flip the moment you trust. Just keep working in Codex; the next lifecycle event (a session
-start, a tool call, etc.) marks it trusted, and `doctor` will then show:
+Trust the BirdyBeep hooks. The status flips to `installed` after the **first trusted lifecycle hook**
+fires — it does not flip the moment you trust. Just keep working in Codex; the next lifecycle event (a
+session start, a tool call, an approval prompt, etc.) marks it trusted, and `doctor` will then show:
 
 ```
 ✓  Codex: Codex hooks trusted

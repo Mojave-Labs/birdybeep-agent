@@ -146,7 +146,7 @@ Codex may require one-time hook trust. Open Codex and run /hooks.
 After trust is granted, Codex sessions on this machine will be tracked automatically.
 ```
 
-Do **not** mark Codex fully installed until the first event arrives; surface the state as `needs_trust` until then.
+Do **not** mark Codex fully installed until a trusted **lifecycle hook** fires; surface the state as `needs_trust` until then. A turn-complete beep via the ungated `notify` program is **not** proof of trust and must not flip the state (see birdybeep-agent-qyf).
 
 ## 7. OpenCode integration (PRD §9.7)
 
