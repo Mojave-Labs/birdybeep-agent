@@ -8,7 +8,9 @@
  * exercised by OC-E2E.
  */
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createSender, setToken, unavailableKeychainBackend } from "@birdybeep/agent-core";
 import {
@@ -17,7 +19,7 @@ import {
   type Sandbox,
   StubEventSink,
 } from "@birdybeep/test-harness";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { type BirdyBeepHooks, createBirdyBeepPlugin, type OpenCodeEventEnvelope } from "./plugin";
 import {
@@ -133,5 +135,124 @@ describe("hook runner is non-blocking + queues on failure", () => {
     expect(result.outcome).toBe("skipped");
     expect(sink.received()).toHaveLength(0);
     expect(hasOpenCodeEventBeenSeen()).toBe(false);
+  });
+});
+
+/**
+ * SECURITY (sec-review-2026-07 H1 / OC-DR8): exercise the REAL default delivery path
+ * (`createBirdyBeepPlugin()` with no injected `invokeHook` → `defaultInvokeHook` → `safeSpawn`)
+ * against a `birdybeep` shim on PATH while the process cwd is a hostile repo that has planted
+ * its OWN `birdybeep` at its root. Runs on every OS (never skipped): on windows-latest it
+ * reproduces the OS cwd-first resolution that the old `spawn("birdybeep …", { shell: true })`
+ * fell victim to; on POSIX it still drives the real spawn end-to-end. Proves BOTH that delivery
+ * works (dr8) and that the cwd binary is NEVER executed (H1).
+ */
+describe("defaultInvokeHook resolves birdybeep on PATH, never a cwd-planted binary (H1/dr8)", () => {
+  const IS_WINDOWS = process.platform === "win32";
+  const dirs: string[] = [];
+  const makeDir = (p: string): string => {
+    const d = mkdtempSync(join(tmpdir(), p));
+    dirs.push(d);
+    return d;
+  };
+  let prevCwd: string | undefined;
+  let prevPath: string | undefined;
+
+  afterEach(() => {
+    if (prevCwd !== undefined) process.chdir(prevCwd);
+    if (prevPath !== undefined) process.env["PATH"] = prevPath;
+    prevCwd = undefined;
+    prevPath = undefined;
+    vi.restoreAllMocks();
+    while (dirs.length > 0) {
+      const d = dirs.pop();
+      if (d !== undefined) rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  /** Plant a legit, node-backed `birdybeep` on PATH that records the delivered envelope. */
+  function plantLegitOnPath(binDir: string, marker: string): void {
+    const shimJs = join(binDir, "shim.cjs");
+    writeFileSync(
+      shimJs,
+      `let d="";process.stdin.on("data",c=>d+=c);` +
+        `process.stdin.on("end",()=>{require("fs").writeFileSync(${JSON.stringify(marker)},d);process.exit(0);});` +
+        `process.stdin.resume();`,
+    );
+    if (IS_WINDOWS) {
+      writeFileSync(join(binDir, "birdybeep.cmd"), `@"${process.execPath}" "${shimJs}" %*\r\n`);
+    } else {
+      const p = join(binDir, "birdybeep");
+      writeFileSync(p, `#!/bin/sh\nexec "${process.execPath}" "${shimJs}" "$@"\n`);
+      chmodSync(p, 0o755);
+    }
+  }
+
+  /** Plant a hostile `birdybeep` in the (cwd) repo that writes `marker` if it is ever run. */
+  function plantHostileInCwd(repo: string, marker: string): void {
+    if (IS_WINDOWS) {
+      writeFileSync(
+        join(repo, "birdybeep.cmd"),
+        `@echo off\r\n> ${JSON.stringify(marker)} echo x\r\n`,
+      );
+    } else {
+      const p = join(repo, "birdybeep");
+      writeFileSync(p, `#!/bin/sh\n: > ${JSON.stringify(marker)}\n`);
+      chmodSync(p, 0o755);
+    }
+  }
+
+  async function waitForFile(p: string, ms = 4000): Promise<boolean> {
+    const start = Date.now();
+    while (Date.now() - start < ms) {
+      if (existsSync(p)) return true;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return existsSync(p);
+  }
+
+  it("delivers to the PATH birdybeep and never runs the cwd-planted one", async () => {
+    const repo = makeDir("bb-oc-hostile-");
+    const binDir = makeDir("bb-oc-legit-");
+    const good = join(binDir, "DELIVERED.json");
+    const pwned = join(repo, "PWNED");
+    plantLegitOnPath(binDir, good);
+    plantHostileInCwd(repo, pwned);
+
+    prevCwd = process.cwd();
+    prevPath = process.env["PATH"];
+    process.chdir(repo); // the harness cwd == the hostile repo
+    process.env["PATH"] = binDir; // only the legit birdybeep is on PATH
+
+    const plugin = createBirdyBeepPlugin(); // NO deps → real defaultInvokeHook → safeSpawn
+    const hooks = await plugin({ directory: repo });
+    await hooks.event({ event: { type: "session.created", properties: { info: { id: SID } } } });
+
+    expect(await waitForFile(good)).toBe(true); // the PATH birdybeep received the event
+    expect(readFileSync(good, "utf8")).toContain("session.created"); // …the exact envelope
+    expect(existsSync(pwned)).toBe(false); // the cwd birdybeep was NEVER executed
+  });
+
+  it("drops the event with a one-time breadcrumb (never a bare-name fallback) when birdybeep is absent from PATH", async () => {
+    const repo = makeDir("bb-oc-absent-");
+    const emptyBin = makeDir("bb-oc-empty-");
+    const pwned = join(repo, "PWNED");
+    plantHostileInCwd(repo, pwned); // planted in cwd, but NOT on PATH
+
+    prevCwd = process.cwd();
+    prevPath = process.env["PATH"];
+    process.chdir(repo);
+    process.env["PATH"] = emptyBin; // birdybeep is nowhere on PATH
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const plugin = createBirdyBeepPlugin();
+    const hooks = await plugin({ directory: repo });
+    await hooks.event({ event: { type: "session.created", properties: { info: { id: SID } } } });
+    await new Promise((r) => setTimeout(r, 300));
+
+    expect(existsSync(pwned)).toBe(false); // the cwd binary was NOT run (no bare-name fallback)
+    // A breadcrumb was emitted so the drop isn't silent (once-per-process; this worker's first).
+    const logged = errSpy.mock.calls.some((c) => String(c[0]).includes("birdybeep"));
+    expect(logged).toBe(true);
   });
 });
