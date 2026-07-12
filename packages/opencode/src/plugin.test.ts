@@ -34,6 +34,22 @@ const FILE_ONLY = { backend: unavailableKeychainBackend };
 const CWD = "/Users/dev/code/opencode-project";
 const SID = "ses_plugin_1";
 
+/**
+ * Remove a temp dir, tolerating a lingering Windows handle. The delivery test spawns a real
+ * `birdybeep` child whose cwd is its own bin dir (the trusted-cwd security behavior) and which
+ * executes `shim.cjs` inside it; on Windows that dir (and the freshly-written `.cmd`/`.js`, which
+ * Defender may briefly scan) stays LOCKED for a short while after the child writes its marker.
+ * Cleanup of an OS temp dir is best-effort — the delivery/hijack ASSERTIONS run in the test body
+ * and are unaffected; a leaked temp dir on an ephemeral CI runner is harmless. POSIX never locks.
+ */
+function removeDirBestEffort(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
+  } catch {
+    /* a just-spawned child still holds the dir (EBUSY/EPERM); leave it for the runner to reap */
+  }
+}
+
 let sandbox: Sandbox | undefined;
 let sink: EventSink | undefined;
 afterEach(async () => {
@@ -166,12 +182,7 @@ describe("defaultInvokeHook resolves birdybeep on PATH, never a cwd-planted bina
     vi.restoreAllMocks();
     while (dirs.length > 0) {
       const d = dirs.pop();
-      // maxRetries/retryDelay: on Windows the delivered child runs with cwd = this bin dir and
-      // is executing shim.cjs inside it, so the dir stays LOCKED for a moment after it writes the
-      // marker; retry the rmdir until the child fully exits and releases its handles (EBUSY).
-      if (d !== undefined) {
-        rmSync(d, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
-      }
+      if (d !== undefined) removeDirBestEffort(d);
     }
   });
 

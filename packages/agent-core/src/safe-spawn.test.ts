@@ -65,14 +65,24 @@ function awaitExit(child: import("node:child_process").ChildProcess): Promise<vo
   });
 }
 
+/**
+ * Remove a temp dir, tolerating a lingering Windows handle. A spawned child runs with cwd = its
+ * own bin dir on Windows (the trusted-cwd behavior), which keeps the dir LOCKED until the child
+ * exits (and Defender may briefly scan freshly-written `.cmd`/`.js`). Cleanup of an OS temp dir is
+ * best-effort — the assertions run in each test body; a leaked temp dir on CI is harmless.
+ */
+function removeDirBestEffort(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
+  } catch {
+    /* a just-spawned child still holds the dir (EBUSY/EPERM); leave it for the runner to reap */
+  }
+}
+
 afterEach(() => {
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
-    // maxRetries/retryDelay: a spawned child runs with cwd = its bin dir on Windows, which locks
-    // the dir until the child exits — retry the rmdir past the transient EBUSY rather than fail.
-    if (dir !== undefined) {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
-    }
+    if (dir !== undefined) removeDirBestEffort(dir);
   }
 });
 
