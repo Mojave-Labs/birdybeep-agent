@@ -11,6 +11,8 @@ import {
   METADATA_VALUE_MAX_CHARS,
   NormalizeError,
   normalizeEvent,
+  redactSecrets,
+  scrubAbsolutePaths,
   TITLE_MAX_CHARS,
 } from "./normalize";
 import { isWithinMaxAgentEventSize, MAX_AGENT_EVENT_BYTES } from "./primitives";
@@ -151,6 +153,133 @@ describe("metadata is an open record but bounded", () => {
     });
     expect(birdyBeepAgentEventSchema.safeParse(ev).success).toBe(true);
     expect(ABSOLUTE_PATH.test(JSON.stringify(ev.metadata))).toBe(false);
+  });
+});
+
+// birdybeep-agent-yop: absolute paths with SPACES / ~ / UNC / drive letters must be hashed
+// WHOLE — the old regex leaked the tail after the first space (`Work/acme/.env`) and missed
+// UNC entirely. Each case lists the fragments that MUST NOT survive anywhere in the payload.
+describe("absolute-path scrub covers spaces / ~ / UNC / drive (yop)", () => {
+  const cases: { name: string; path: string; leaks: string[] }[] = [
+    {
+      name: "POSIX path with a space (the reported leak)",
+      path: "/Users/alice/Client Work/acme/.env.production",
+      leaks: ["Client Work", "Work/acme", "acme", ".env.production", "/Users/alice"],
+    },
+    {
+      name: "~ expansion with a spaced dir (Application Support)",
+      path: "~/Library/Application Support/birdybeep/token.json",
+      leaks: ["Application Support", "birdybeep", "token.json"],
+    },
+    {
+      name: "UNC share with a spaced dir",
+      path: "\\\\fileserver\\Team Share\\secrets\\prod.key",
+      leaks: ["fileserver", "Team Share", "secrets", "prod.key"],
+    },
+    {
+      name: "Windows drive with a spaced dir",
+      path: "C:\\Users\\alice\\My Documents\\creds.txt",
+      leaks: ["My Documents", "creds.txt", "Users\\alice"],
+    },
+    {
+      name: "single-segment absolute path (>=2-segment floor dropped)",
+      path: "/etc/passwd",
+      leaks: ["/etc/passwd", "/etc", "passwd"],
+    },
+    {
+      name: "multiple odd space-separated segments",
+      path: "/srv/data/Client A/report Q3/final draft.xlsx",
+      leaks: ["Client A", "report Q3", "final draft.xlsx"],
+    },
+  ];
+
+  it.each(cases)("hashes $name with no fragment leak", ({ path, leaks }) => {
+    // The scrubber alone must remove the whole run (regression at the unit boundary).
+    const scrubbed = scrubAbsolutePaths(`edited ${path} just now`);
+    for (const frag of leaks) expect(scrubbed).not.toContain(frag);
+
+    // …and end-to-end through normalizeEvent in every carrier field the adapter forwards.
+    const ev = normalizeEvent({
+      ...baseDraft,
+      source_session_id: `sess ${path}`,
+      title: `touched ${path}`,
+      body: `read from ${path} while running`,
+      metadata: { file: path, nested: { also: path } },
+    });
+    const serialized = JSON.stringify(ev);
+    for (const frag of leaks) expect(serialized).not.toContain(frag);
+  });
+
+  it("does NOT hash slash-glued prose (and/or, fractions, URLs) — precision", () => {
+    const text = "use read/write and/or 1/2 ratio, TCP/IP at 24/7, see https://ex.com/a/b/c";
+    expect(scrubAbsolutePaths(text)).toBe(text);
+  });
+});
+
+// birdybeep-agent-zov: broaden secret detection; truncation is NOT a redaction backstop.
+// NB: every fixture is concatenated from a prefix + body so the FULL literal never appears in
+// this source file — otherwise secret scanners (GitHub push protection) reject the commit. The
+// runtime value is the joined string, so it still exercises the real detectors.
+describe("secret redaction is broad and position-independent (zov)", () => {
+  const secrets: { name: string; value: string }[] = [
+    { name: "Google API key", value: "AIza" + "SyDaB3dEfGhIjKlMnOpQrStUvWxYz012345678" },
+    { name: "Google OAuth token", value: "ya29." + "a0Ae4lvC-9xQwErTyUiOpAsDfGhage123456" },
+    { name: "Stripe live secret key", value: "sk_live_" + "51ABCdefGHIjklMNOpqrST0123" },
+    { name: "Stripe restricted key", value: "rk_live_" + "9ZyXwVuTsRqPoNmLkJi0123" },
+    { name: "Stripe webhook secret", value: "whsec_" + "ABCdef0123456789ghIJklMNop" },
+    { name: "GitLab PAT", value: "glpat-" + "ABCdef1234567890xyzXY" },
+    { name: "GitHub fine-grained PAT", value: "github_pat_" + "11ABCDE0000abcdefFGHIJ_klmnopQRST" },
+    { name: "Slack app-level token", value: "xapp-1-" + "A012345678-9876543210-abcdefABCDEF" },
+    { name: "Anthropic key", value: "sk-ant-" + "api03-AbCdEf0123456789ghIJkl" },
+    { name: "AWS access key id", value: "AKIA" + "1234567890ABCDEF" },
+    {
+      name: "AWS secret access key (generic entropy)",
+      value: "wJalrXUtnFEMI/" + "K7MDENG+bPxRfiCYEXAMPLEKEY",
+    },
+    {
+      name: "64-char hex API key (generic entropy)",
+      value: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+    },
+  ];
+
+  it.each(secrets)("redacts a $name anywhere in the payload", ({ value }) => {
+    expect(redactSecrets(`credential ${value} end`)).not.toContain(value);
+    const ev = normalizeEvent({
+      ...baseDraft,
+      title: value,
+      body: `token is ${value} do not log`,
+      metadata: { key: value, nested: { also: value } },
+    });
+    expect(JSON.stringify(ev)).not.toContain(value);
+  });
+
+  it("redacts a PEM private key block", () => {
+    // Split so no contiguous key material sits in this source file (secret scanners).
+    const pem =
+      "-----BEGIN RSA PRIVATE KEY-----\n" +
+      "MII" +
+      "EowIBAAKCAQEA1234567890abcdefGHIJKLMNOP\nqrstuvWXYZ+/=\n" +
+      "-----END RSA PRIVATE KEY-----";
+    const ev = normalizeEvent({ ...baseDraft, body: `key:\n${pem}\nafter` });
+    const serialized = JSON.stringify(ev);
+    expect(serialized).not.toContain("EowIBAAKCAQEA");
+    expect(serialized).not.toContain("PRIVATE KEY-----\nMII");
+  });
+
+  it("a secret at the START of a long body is redacted, NOT merely truncated away", () => {
+    const secret = "sk-proj-" + "Abcdefghijklmnop0123456789";
+    const body = `${secret} ${"filler ".repeat(2000)}`; // secret sits well inside the retained head
+    const ev = normalizeEvent({ ...baseDraft, body });
+    expect(ev.body.length).toBeLessThanOrEqual(BODY_MAX_CHARS); // truncation still applied…
+    expect(JSON.stringify(ev)).not.toContain(secret); // …but redaction is what removed the secret
+  });
+
+  it("does NOT redact ordinary long text (no false positives)", () => {
+    const benign = "thisIsALongCamelCaseVariableNameUsedForConfiguration";
+    const sentence = "the quick brown fox jumps over the lazy dog several times over";
+    const out = redactSecrets(`${benign} :: ${sentence}`);
+    expect(out).toContain(benign);
+    expect(out).toContain(sentence);
   });
 });
 

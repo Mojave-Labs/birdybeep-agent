@@ -4,10 +4,12 @@
  * correct OS/label. The live wrangler-dev upsert-idempotency check is the deferred
  * cross-repo gate.
  */
+import { withTempHome } from "@birdybeep/test-harness";
 import { describe, expect, it } from "vitest";
 
 import {
   collectMachineSignals,
+  FINGERPRINT_PEPPER,
   fingerprintFromSignals,
   getMachineFingerprintHash,
   getMachineIdentity,
@@ -15,6 +17,24 @@ import {
   getOS,
   type MachineSignals,
 } from "./fingerprint";
+import { INSTALL_SALT_ENV, resetInstallSaltCache } from "./salt";
+
+const SALT_X = "1".repeat(64);
+const SALT_Y = "2".repeat(64);
+
+/** Run `fn` with the pinned env salt removed and the cache cleared, then restore. */
+async function withoutEnvSalt<T>(fn: () => Promise<T> | T): Promise<T> {
+  const saved = process.env[INSTALL_SALT_ENV];
+  delete process.env[INSTALL_SALT_ENV];
+  resetInstallSaltCache();
+  try {
+    return await fn();
+  } finally {
+    if (saved === undefined) delete process.env[INSTALL_SALT_ENV];
+    else process.env[INSTALL_SALT_ENV] = saved;
+    resetInstallSaltCache();
+  }
+}
 
 const signalsA: MachineSignals = {
   hostname: "SECRET-HOSTNAME-alpha",
@@ -51,6 +71,48 @@ describe("fingerprint hash", () => {
     const b = getMachineFingerprintHash(collectMachineSignals());
     expect(a).toMatch(/^[0-9a-f]{64}$/);
     expect(a).toBe(b);
+  });
+});
+
+// birdybeep-agent-ofi: the fingerprint is HMAC-keyed by a per-install salt, so the SAME host
+// signals hash differently under different installs — offline reversal off the stored hash is
+// no longer possible without the salt, which never leaves the machine.
+describe("salted fingerprint (ofi)", () => {
+  it("changes when the salt changes (same signals → different hash per install)", () => {
+    expect(fingerprintFromSignals(signalsA, SALT_X)).not.toBe(
+      fingerprintFromSignals(signalsA, SALT_Y),
+    );
+  });
+
+  it("is stable for a fixed salt + signals, and still a 64-hex digest", () => {
+    expect(fingerprintFromSignals(signalsA, SALT_X)).toBe(fingerprintFromSignals(signalsA, SALT_X));
+    expect(fingerprintFromSignals(signalsA, SALT_X)).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("still distinguishes machines under one salt (dedup distinctness preserved)", () => {
+    expect(fingerprintFromSignals(signalsA, SALT_X)).not.toBe(
+      fingerprintFromSignals(signalsB, SALT_X),
+    );
+  });
+
+  it("mixes in the static application pepper", () => {
+    expect(FINGERPRINT_PEPPER.length).toBeGreaterThan(0);
+  });
+
+  it("is stable across process runs on one install (persisted salt)", async () => {
+    await withTempHome(async () => {
+      await withoutEnvSalt(() => {
+        const first = getMachineFingerprintHash(signalsA);
+        resetInstallSaltCache(); // simulate a fresh CLI process on the same machine
+        expect(getMachineFingerprintHash(signalsA)).toBe(first);
+      });
+    });
+  });
+
+  it("differs across two installs for identical signals (offline correlation broken)", async () => {
+    const a = await withTempHome(() => withoutEnvSalt(() => getMachineFingerprintHash(signalsA)));
+    const b = await withTempHome(() => withoutEnvSalt(() => getMachineFingerprintHash(signalsA)));
+    expect(a).not.toBe(b);
   });
 });
 
