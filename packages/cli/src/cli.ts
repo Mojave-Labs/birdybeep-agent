@@ -5,6 +5,7 @@
  */
 import { buildCommands } from "./commands";
 import { type Command, dispatch, type Writer } from "./framework";
+import { maybeNotifyUpdate, type NotifyUpdateOptions } from "./update-check";
 import { CLI_VERSION } from "./version";
 
 export { buildCommands } from "./commands";
@@ -18,15 +19,31 @@ export interface RunCliDeps {
   commands?: Command[];
   /** Skip the config-dir bootstrap (tests without filesystem side effects). */
   ensureConfig?: boolean;
+  /**
+   * Override the passive update-notifier. `false` disables it; an object injects the registry
+   * fetch / clock / TTY / cache for hermetic tests. Omitted in production → the real notifier
+   * (which no-ops on a non-TTY stderr, so unit tests capturing to buffers stay offline & quiet).
+   */
+  updateCheck?: Partial<NotifyUpdateOptions> | false;
 }
 
 /** Run the CLI against an argv slice (without `node`/script path). Returns the exit code. */
 export function runCli(argv: string[], deps: RunCliDeps = {}): Promise<number> {
+  const notifyUpdate =
+    deps.updateCheck === false
+      ? undefined
+      : (ctx: {
+          command: string;
+          flags: NotifyUpdateOptions["flags"];
+          io: NotifyUpdateOptions["io"];
+        }) => maybeNotifyUpdate({ ...ctx, ...(deps.updateCheck ?? {}) });
+
   return dispatch(argv, {
     version: CLI_VERSION,
     commands: deps.commands ?? buildCommands(),
     stdout: deps.stdout ?? process.stdout,
     stderr: deps.stderr ?? process.stderr,
+    ...(notifyUpdate !== undefined ? { notifyUpdate } : {}),
     ...(deps.ensureConfig !== undefined ? { ensureConfig: deps.ensureConfig } : {}),
   });
 }

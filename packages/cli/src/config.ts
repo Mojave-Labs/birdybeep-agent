@@ -53,13 +53,13 @@ export function resolveApiUrl(): string {
   return readCliConfig().apiUrl ?? DEFAULT_API_URL;
 }
 
-/** Public npm registry — where `@birdybeep/cli` is published; used by `birdybeep update`. */
+/** Public npm registry — where `@birdybeep/cli` is published; used by the update notifier. */
 export const DEFAULT_REGISTRY_URL = "https://registry.npmjs.org";
 
 /**
- * Resolve the npm registry base URL for the update check: honor `npm_config_registry` (which
- * npm/pnpm/yarn export, so a private-registry user's mirror is respected) and fall back to the
- * public registry. Never carries auth or a token.
+ * Resolve the npm registry base URL for the passive update check: honor `npm_config_registry`
+ * (which npm/pnpm/yarn export, so a private-registry user's mirror is respected) and fall back to
+ * the public registry. Never carries auth or a token.
  */
 export function resolveRegistryUrl(): string {
   const env = process.env["npm_config_registry"];

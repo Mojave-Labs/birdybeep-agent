@@ -182,6 +182,12 @@ export interface DispatchDeps {
   stderr: Writer;
   /** Skip the config-dir bootstrap (tests that don't want filesystem side effects). */
   ensureConfig?: boolean;
+  /**
+   * Optional post-command update notifier, invoked after a command runs successfully (not for
+   * help/version). The framework only invokes it — all registry/cache/semver logic lives in the
+   * CLI layer (`update-check.ts`), never here — and its failure never affects the command result.
+   */
+  notifyUpdate?: (ctx: { command: string; flags: GlobalFlags; io: Io }) => Promise<void>;
 }
 
 /**
@@ -260,8 +266,9 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
     return EXIT.USAGE;
   }
 
+  let code: number;
   try {
-    return await command.run({ args, flags, io });
+    code = await command.run({ args, flags, io });
   } catch (err) {
     if (err instanceof MissingInputError) {
       io.errline(
@@ -272,4 +279,14 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
     io.errline(`birdybeep ${path}: ${err instanceof Error ? err.message : String(err)}`);
     return EXIT.ERROR;
   }
+
+  // Opportunistic, best-effort update notice (never alters the command's exit code or stdout).
+  if (deps.notifyUpdate !== undefined) {
+    try {
+      await deps.notifyUpdate({ command: pathParts[0] ?? "", flags, io });
+    } catch {
+      /* the notifier is best-effort; a failure must not affect the command result */
+    }
+  }
+  return code;
 }

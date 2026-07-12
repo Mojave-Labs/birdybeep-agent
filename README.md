@@ -89,7 +89,6 @@ The CLI surface (run `birdybeep <command> --help` for per-command help):
 | `birdybeep status`                                         | Machine + pairing state, per-harness integration status, and queue depth. Drains the queue opportunistically; exits non-zero if not paired.                                           |
 | `birdybeep test`                                           | Sends a test event through the real sender path and reports whether it was delivered or queued.                                                                                       |
 | `birdybeep doctor`                                         | Checks the token, each adapter (`needs_trust` / `needs_restart` / `error`), the queue, and backend reachability; prints a fix per failure; drains the queue; non-zero on any failure. |
-| `birdybeep update`                                         | Checks the npm registry for a newer CLI and prints the upgrade command when you're behind. Read-only (never self-mutates the install); non-zero only if the check can't complete.     |
 | `birdybeep agent install [all\|claude\|codex\|opencode]`   | Detect + install per harness (idempotent, backs up, managed entries only, no token).                                                                                                  |
 | `birdybeep agent uninstall [all\|claude\|codex\|opencode]` | Remove only managed entries and restore from backup (reversible).                                                                                                                     |
 | `birdybeep queue clear`                                    | Drop all locally-queued events (debug).                                                                                                                                               |
@@ -100,6 +99,20 @@ Two internal commands are invoked by BirdyBeep itself, not by you:
   reads the event payload, normalizes and redacts it, sends with a short timeout, queues on
   failure, and **always returns fast and exits 0**.
 - `birdybeep report-status` — posts each adapter's pre-event integration status to the backend.
+
+### Update notices
+
+There's no `update` command — the CLI tells you on its own. When you run a command, it prints a
+one-line notice to **stderr** if a newer `@birdybeep/cli` has been published:
+
+```text
+a new version of birdybeep is available: 0.1.0 → 0.2.0
+upgrade with: npm install -g @birdybeep/cli@latest
+```
+
+The check is cached (refreshed from the npm registry at most once a day), never runs on the `hook`
+hot path, and is skipped for `--json`, `--non-interactive`, non-TTY output, and CI. Silence it
+entirely with `NO_UPDATE_NOTIFIER=1` (or `BIRDYBEEP_NO_UPDATE_NOTIFIER=1`).
 
 ### Global flags & exit codes
 
@@ -185,13 +198,13 @@ earns trust by being **open and auditable**:
 
 ## Packages
 
-| Package                  | Description                                                                                             |
-| ------------------------ | ------------------------------------------------------------------------------------------------------- |
-| `@birdybeep/cli`         | The `birdybeep` CLI: pair, logout, unpair, status, test, doctor, update, agent install/uninstall, hook. |
-| `@birdybeep/agent-core`  | Event schema, normalizer/redaction, local queue, sender, token store, adapter interface.                |
-| `@birdybeep/claude-code` | Claude Code adapter + hook templates.                                                                   |
-| `@birdybeep/codex`       | Codex adapter + config templates.                                                                       |
-| `@birdybeep/opencode`    | OpenCode plugin/adapter.                                                                                |
+| Package                  | Description                                                                                     |
+| ------------------------ | ----------------------------------------------------------------------------------------------- |
+| `@birdybeep/cli`         | The `birdybeep` CLI: pair, logout, unpair, status, test, doctor, agent install/uninstall, hook. |
+| `@birdybeep/agent-core`  | Event schema, normalizer/redaction, local queue, sender, token store, adapter interface.        |
+| `@birdybeep/claude-code` | Claude Code adapter + hook templates.                                                           |
+| `@birdybeep/codex`       | Codex adapter + config templates.                                                               |
+| `@birdybeep/opencode`    | OpenCode plugin/adapter.                                                                        |
 
 ## Develop
 

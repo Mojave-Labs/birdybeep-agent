@@ -236,28 +236,27 @@ queue as it goes and exits non-zero if anything is wrong.
 
 ---
 
-## 6. Staying up to date — `birdybeep update`
+## 6. Staying up to date
 
-To check whether a newer CLI is out, run:
-
-```bash
-birdybeep update
-```
-
-It asks the npm registry for the latest published `@birdybeep/cli` and compares it to the version
-you're running. If you're behind, it prints the exact upgrade command:
+You don't have to check for updates — the CLI does it for you. When you run any command, it prints a
+one-line notice to **stderr** if a newer `@birdybeep/cli` has been published:
 
 ```text
-A new version of birdybeep is available: 0.1.0 → 0.2.0
-Upgrade with:  npm install -g @birdybeep/cli@latest
-(pnpm: `pnpm add -g @birdybeep/cli@latest` · yarn: `yarn global add @birdybeep/cli@latest`)
+a new version of birdybeep is available: 0.1.0 → 0.2.0
+upgrade with: npm install -g @birdybeep/cli@latest
 ```
 
-`update` is **read-only** — it never touches your install, so you stay in control of when and how you
-upgrade (run the printed command with whichever package manager you installed with). It's also
-best-effort: if the registry can't be reached it says so and exits non-zero, but it never blocks. Add
-`--json` for `{ current, latest, updateAvailable, upgradeCommand }` in scripts. It respects a custom
-`npm_config_registry` if you have one set.
+The notice is **non-intrusive by design**:
+
+- **Cached.** The registry is checked at most once a day; every other run reads a small cache in your
+  config dir, so there's no per-command network hit.
+- **Never on the hot path.** The `hook` command (which runs inside your agent) is never delayed or
+  touched by the check.
+- **Quiet for scripts.** It's skipped under `--json`, `--non-interactive`, non-TTY output (pipes,
+  logs), and `CI`. Turn it off entirely with `NO_UPDATE_NOTIFIER=1` (or
+  `BIRDYBEEP_NO_UPDATE_NOTIFIER=1`). It respects a custom `npm_config_registry` if you have one set.
+- **Advisory only.** It never touches your install — run the printed command (with whichever package
+  manager you installed with) when you're ready.
 
 Once you've upgraded, re-running `birdybeep agent install all` is safe (idempotent) and refreshes any
 adapter config that changed between versions.

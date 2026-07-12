@@ -2,10 +2,12 @@
 "@birdybeep/cli": minor
 ---
 
-Add `birdybeep update` — a read-only check-and-notify command that asks the npm registry for the
-latest published `@birdybeep/cli`, compares it against the running version, and prints the exact
-upgrade command (`npm install -g @birdybeep/cli@latest`, plus pnpm/yarn equivalents) when you're
-behind. It never mutates your install — you stay in control of when and how you upgrade — and is
-best-effort: if the registry can't be reached it says so and exits non-zero without blocking.
-Supports `--json` (`{ current, latest, updateAvailable, upgradeCommand }`) and honors a custom
-`npm_config_registry`.
+Add a passive update notifier. Instead of a manual command, the CLI now checks the npm registry for
+a newer `@birdybeep/cli` on its own and prints a one-line "new version available" notice to stderr
+after you run a command, so you learn about upgrades just by using the tool.
+
+The check is deliberately unobtrusive: it's cached (the registry is hit at most once a day; every
+other run reads a local cache), it never runs on the `hook` hot path, and it's skipped for `--json`,
+`--non-interactive`, non-TTY output, and CI. It can be disabled with `NO_UPDATE_NOTIFIER=1` (or
+`BIRDYBEEP_NO_UPDATE_NOTIFIER=1`) and honors a custom `npm_config_registry`. It's best-effort and
+never affects a command's output or exit code.
