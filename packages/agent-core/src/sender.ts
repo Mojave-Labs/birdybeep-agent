@@ -10,7 +10,7 @@
  * send time and never logged; request bodies/title/body are never logged.
  */
 import { type ErrorCode, errorEnvelopeSchema } from "./api";
-import type { BirdyBeepAgentEvent } from "./event";
+import { agentEventsResponseSchema, type BirdyBeepAgentEvent } from "./event";
 import { DEFAULT_DRAIN_MAX, type DrainOutcome, type DrainResult, LocalEventQueue } from "./queue";
 import { getToken, type TokenStoreOptions } from "./token-store";
 
@@ -83,11 +83,16 @@ function classify(status: number, code: ErrorCode | undefined): "retry" | "drop"
   return "drop"; // other 4xx
 }
 
-/** Extract the ingest decision from a 2xx body, tolerating any shape. */
+/**
+ * Extract the ingest decision from a 2xx body by validating it against the formalized
+ * cross-repo `agentEventsResponseSchema` (`{ accepted, decision }`, kje4). A body that
+ * doesn't match the contract (an older/partial backend, or a decision outside the
+ * accept-path enum) yields `undefined` — the send is still `delivered`, callers just
+ * can't claim a specific decision. Never throws.
+ */
 function parseDecision(body: unknown): string | undefined {
-  if (typeof body !== "object" || body === null) return undefined;
-  const decision = (body as Record<string, unknown>)["decision"];
-  return typeof decision === "string" ? decision : undefined;
+  const parsed = agentEventsResponseSchema.safeParse(body);
+  return parsed.success ? parsed.data.decision : undefined;
 }
 
 export function createSender(config: SenderConfig): Sender {

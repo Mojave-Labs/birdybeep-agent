@@ -84,10 +84,11 @@ describe("birdybeep report-status", () => {
       adapters: [adapter("claude_code", "installed"), adapter("codex", "installed")],
       fetchImpl: recordingFetch(records, {
         status: 200,
+        // The real wire (kje4): the worker echoes `{ harness, status, updated }` per result.
         body: {
           integrations: [
-            { harness: "claude_code", status: "installed" },
-            { harness: "codex", status: "needs_trust" },
+            { harness: "claude_code", status: "installed", updated: true },
+            { harness: "codex", status: "needs_trust", updated: true },
           ],
         },
       }),

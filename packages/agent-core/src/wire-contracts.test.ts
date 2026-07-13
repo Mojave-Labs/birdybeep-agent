@@ -5,9 +5,16 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { INTEGRATION_STATUSES } from "./adapter";
+import {
+  AGENT_EVENT_ACCEPT_DECISIONS,
+  agentEventDecisionSchema,
+  agentEventsResponseSchema,
+} from "./event";
 import {
   integrationStatusReportSchema,
   integrationStatusResponseSchema,
+  integrationStatusResultSchema,
   STATUS_REPORT_MAX_ITEMS,
   STATUS_REPORT_MAX_PAYLOAD_BYTES,
 } from "./integrations";
@@ -89,10 +96,96 @@ describe("integration-status schemas", () => {
     ).toBe(false);
   });
 
-  it("parses the effective-status response and tolerates extra fields", () => {
+  // kje4 — the RESPONSE the worker returns and this repo (report-status / status / doctor)
+  // parses: `{ integrations: [{ harness, status, updated }] }`. Mirrored field-for-field
+  // from the product `integrationStatusResponseSchema`; `updated` is REQUIRED. The live
+  // 200-route parse (real CLI ↔ worker) is the deferred xrepo-e2e gate.
+  it("parses a representative multi-harness response (effective status + updated true/false)", () => {
     const parsed = integrationStatusResponseSchema.safeParse({
-      integrations: [{ harness: "codex", status: "needs_trust", server_note: "until first event" }],
+      integrations: [
+        { harness: "claude_code", status: "installed", updated: true },
+        // Codex `installed` is echoed as the canonicalized `needs_trust` (§9.6/§21.2);
+        // a revoked/skipped integration comes back `updated: false`.
+        { harness: "codex", status: "needs_trust", updated: false },
+      ],
     });
     expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data).toEqual({
+      integrations: [
+        { harness: "claude_code", status: "installed", updated: true },
+        { harness: "codex", status: "needs_trust", updated: false },
+      ],
+    });
+  });
+
+  it("rejects an unknown harness, an unknown status, and a missing `updated` flag", () => {
+    expect(
+      integrationStatusResponseSchema.safeParse({
+        integrations: [{ harness: "nope", status: "installed", updated: true }],
+      }).success,
+    ).toBe(false);
+    expect(
+      integrationStatusResponseSchema.safeParse({
+        integrations: [{ harness: "codex", status: "bogus", updated: true }],
+      }).success,
+    ).toBe(false);
+    expect(
+      integrationStatusResponseSchema.safeParse({
+        integrations: [{ harness: "codex", status: "installed" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("strips unknown result fields (exact shape, lockstep with the product's strict object)", () => {
+    const parsed = integrationStatusResponseSchema.safeParse({
+      integrations: [
+        { harness: "codex", status: "needs_trust", updated: true, server_note: "extra" },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && Object.keys(parsed.data.integrations[0]!).sort()).toEqual([
+      "harness",
+      "status",
+      "updated",
+    ]);
+  });
+
+  it("the result's status enum is DERIVED from the mirrored integration statuses (no drift)", () => {
+    expect([...integrationStatusResultSchema.shape.status.options]).toEqual([
+      ...INTEGRATION_STATUSES,
+    ]);
+  });
+});
+
+// kje4 — the agent-events RESPONSE (`{ accepted, decision }`, 202) parsed by CORE-SENDER.
+// Mirrored field-for-field from the product `agentEventsResponseSchema`. The live 202-route
+// parse is the deferred xrepo-e2e gate; sender.test.ts proves the wired code path.
+describe("agent-events response schema (kje4) — CORE-SENDER lockstep contract", () => {
+  it("parses the worker's accept ack for every accept-path decision", () => {
+    for (const decision of AGENT_EVENT_ACCEPT_DECISIONS) {
+      expect(agentEventsResponseSchema.safeParse({ accepted: true, decision }).success).toBe(true);
+    }
+  });
+
+  it("rejects decisions the worker never puts in this shape (rate_limited/quota_rejected → 429 envelope)", () => {
+    expect(
+      agentEventsResponseSchema.safeParse({ accepted: true, decision: "rate_limited" }).success,
+    ).toBe(false);
+    expect(
+      agentEventsResponseSchema.safeParse({ accepted: true, decision: "quota_rejected" }).success,
+    ).toBe(false);
+    expect(agentEventsResponseSchema.safeParse({ accepted: true, decision: "bogus" }).success).toBe(
+      false,
+    );
+  });
+
+  it("requires both `accepted` and `decision`", () => {
+    expect(agentEventsResponseSchema.safeParse({ accepted: true }).success).toBe(false);
+    expect(agentEventsResponseSchema.safeParse({ decision: "notified" }).success).toBe(false);
+  });
+
+  it("the accept-decision enum equals the exported constant (accept-path subset of the DB enum)", () => {
+    expect([...agentEventDecisionSchema.options]).toEqual([...AGENT_EVENT_ACCEPT_DECISIONS]);
+    expect([...AGENT_EVENT_ACCEPT_DECISIONS]).toEqual(["notified", "deduped", "suppressed"]);
   });
 });
