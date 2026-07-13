@@ -18,6 +18,7 @@ export * from "./integrations";
 export * from "./normalize";
 export * from "./pairing";
 export * from "./paths";
+export * from "./pkce";
 export * from "./primitives";
 export * from "./queue";
 export * from "./safe-spawn";

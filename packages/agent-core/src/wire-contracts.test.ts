@@ -41,6 +41,28 @@ describe("pairing schemas", () => {
       pairTokenResponseSchema.safeParse({ machine_token: "bbm_x", machine_id: "mac_1" }).success,
     ).toBe(true);
   });
+
+  it("mirrors the dgxd PKCE binding fields (optional both ways, lockstep with product)", () => {
+    // /pair/start carries an optional S256 code_challenge; a malformed value is accept-and-ignored.
+    expect(
+      pairStartRequestSchema.safeParse({ machine_label: "m", code_challenge: "abc123" }).success,
+    ).toBe(true);
+    const start = pairStartRequestSchema.parse({ machine_label: "m", code_challenge: 123 });
+    expect(start.code_challenge).toBeUndefined();
+    // /pair/token carries an optional code_verifier (proof-of-possession); still valid without it.
+    expect(
+      pairTokenRequestSchema.safeParse({ device_code: "dc", code_verifier: "v" }).success,
+    ).toBe(true);
+    expect(pairTokenRequestSchema.safeParse({ device_code: "dc" }).success).toBe(true);
+    // /pair/token response surfaces the optional approving identity; still valid without it.
+    expect(
+      pairTokenResponseSchema.safeParse({
+        machine_token: "bbm_x",
+        machine_id: "mac_1",
+        approved_by_email: "becs@example.com",
+      }).success,
+    ).toBe(true);
+  });
 });
 
 describe("integration-status schemas", () => {

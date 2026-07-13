@@ -23,6 +23,12 @@ export interface PairStartInput {
   machineLabel: string;
   os?: string;
   cliVersion?: string;
+  /**
+   * PKCE S256 challenge = base64url(sha256(codeVerifier)) (dgxd). When present, the session is
+   * BOUND to this CLI: the product's `/pair/token` then requires the matching `codeVerifier`.
+   * Omit to keep the legacy device_code-only path (backward compatible with older servers).
+   */
+  codeChallenge?: string;
 }
 
 /** Begin a pairing session (`POST /v1/pair/start`, unauthenticated). */
@@ -35,6 +41,7 @@ export async function pairStart(
     machine_label: input.machineLabel,
     ...(input.os !== undefined ? { os: input.os } : {}),
     ...(input.cliVersion !== undefined ? { cli_version: input.cliVersion } : {}),
+    ...(input.codeChallenge !== undefined ? { code_challenge: input.codeChallenge } : {}),
   };
   const res = await fetchImpl(`${base(apiUrl)}/v1/pair/start`, {
     method: "POST",
@@ -49,7 +56,7 @@ export async function pairStart(
 
 export type PairTokenResult =
   | { status: "pending" }
-  | { status: "paired"; machineToken: string; machineId: string }
+  | { status: "paired"; machineToken: string; machineId: string; approvedByEmail?: string }
   /**
    * The backend returned an outcome that will NOT resolve by waiting (`retryable: false`,
    * e.g. `quota_exceeded` — the install cap is hit) or a transient server-side failure
@@ -88,10 +95,18 @@ export async function pairTokenPoll(
   deviceCode: string,
   fetchImpl: typeof fetch,
   machineFingerprint?: string,
+  /**
+   * PKCE verifier (dgxd) — the secret whose sha256 was committed as `code_challenge` on
+   * `/pair/start`. Sent on EVERY poll: when the session was started with a challenge the server
+   * requires it and checks `sha256Base64Url(verifier) === stored challenge`. Held in memory only;
+   * never written to disk. Omit for a legacy (no-challenge) session.
+   */
+  codeVerifier?: string,
 ): Promise<PairTokenResult> {
   const body = {
     device_code: deviceCode,
     ...(machineFingerprint !== undefined ? { machine_fingerprint: machineFingerprint } : {}),
+    ...(codeVerifier !== undefined ? { code_verifier: codeVerifier } : {}),
   };
   const res = await fetchImpl(`${base(apiUrl)}/v1/pair/token`, {
     method: "POST",
@@ -106,6 +121,11 @@ export async function pairTokenPoll(
       status: "paired",
       machineToken: parsed.data.machine_token,
       machineId: parsed.data.machine_id,
+      // Only surface the key when the server reported it (exactOptionalPropertyTypes: no explicit
+      // undefined). Older servers omit approved_by_email; newer ones (dgxd) include it.
+      ...(parsed.data.approved_by_email !== undefined
+        ? { approvedByEmail: parsed.data.approved_by_email }
+        : {}),
     };
   }
 
