@@ -54,8 +54,7 @@ function stubPairing(
   let polls = 0;
   return ((url: string | URL, init?: RequestInit) => {
     const u = String(url);
-    const reqBody: unknown =
-      typeof init?.body === "string" ? JSON.parse(init.body) : init?.body;
+    const reqBody: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : init?.body;
     if (u.endsWith("/v1/pair/start")) {
       // Capture the request body so tests can assert what the CLI actually sends (s0o7).
       if (opts.onStartBody) opts.onStartBody(reqBody);

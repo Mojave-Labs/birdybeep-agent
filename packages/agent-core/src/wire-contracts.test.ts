@@ -50,9 +50,9 @@ describe("pairing schemas", () => {
     const start = pairStartRequestSchema.parse({ machine_label: "m", code_challenge: 123 });
     expect(start.code_challenge).toBeUndefined();
     // /pair/token carries an optional code_verifier (proof-of-possession); still valid without it.
-    expect(pairTokenRequestSchema.safeParse({ device_code: "dc", code_verifier: "v" }).success).toBe(
-      true,
-    );
+    expect(
+      pairTokenRequestSchema.safeParse({ device_code: "dc", code_verifier: "v" }).success,
+    ).toBe(true);
     expect(pairTokenRequestSchema.safeParse({ device_code: "dc" }).success).toBe(true);
     // /pair/token response surfaces the optional approving identity; still valid without it.
     expect(
