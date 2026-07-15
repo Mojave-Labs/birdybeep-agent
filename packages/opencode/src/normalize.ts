@@ -5,12 +5,13 @@
  * re-implements those rules; never echoes user/assistant content (message text, tool
  * args, permission titles, error messages) into the persisted event.
  *
- * VERIFIED against the OpenCode SDK types (sst/opencode `packages/sdk/.../types.gen.ts`),
- * NOT the PRD §9.7 table — see docs/SPEC.md §7 reconciliation. Two PRD-table corrections:
- *   - `permission.asked` DOES NOT EXIST → the real approval event is `permission.updated`.
- *   - `permission.replied` → the PRD maps it to a `permission_replied` type that is NOT in
- *     §10.1. Rather than invent a wire type (lockstep), it is DROPPED (skipped) — it's the
- *     user's reply, not an agent-attention moment — same precedent as the deferred Task*.
+ * VERIFIED against real `opencode` 1.18.1 event traffic (2026-07-15), NOT the PRD §9.7
+ * table — see docs/SPEC.md §7 reconciliation. Key correction (§21.1 harness drift): the
+ * approval event is `permission.asked` with payload `{id, sessionID, permission, patterns,
+ * metadata, always, tool}` — the type discriminator is `properties.permission` (e.g.
+ * "bash"/"edit"). An earlier SST SDK exposed `permission.updated` with a `type` field; the
+ * current Anomaly build no longer emits it. `permission.replied` (the user's own reply, not
+ * an agent-attention moment) is DROPPED — mapping it would need a wire type not in §10.1.
  *
  * The plugin forwards each event as `{ type, properties, cwd? }` (cwd injected by the
  * plugin from its PluginInput, since most bus events don't carry it). tool.execute.*
@@ -21,7 +22,7 @@
  *   session.status {busy|retry}→ session_active   ; {idle} → agent_idle
  *   session.idle               → agent_idle
  *   session.error              → agent_failed
- *   permission.updated         → approval_required
+ *   permission.asked           → approval_required  (type from properties.permission)
  *   tool.execute.before        → tool_started
  *   tool.execute.after         → tool_finished
  */
@@ -138,10 +139,10 @@ function mapOpenCodeEvent(type: string, props: Record<string, unknown>): MappedE
         metadata: { error: errorName },
       };
     }
-    case "permission.updated": {
-      // `type` is a safe discriminator (e.g. "bash"/"edit"); `title`/`metadata` may carry
-      // the actual command/path — not persisted.
-      const permissionType = str(props["type"]);
+    case "permission.asked": {
+      // `permission` is a safe discriminator (e.g. "bash"/"edit"); `patterns` and
+      // `metadata.command` carry the actual command/path — deliberately NOT persisted.
+      const permissionType = str(props["permission"]);
       return {
         eventType: "approval_required",
         status: "waiting_for_approval",
@@ -171,8 +172,9 @@ function mapOpenCodeEvent(type: string, props: Record<string, unknown>): MappedE
       };
     }
     default:
-      // Includes permission.replied (user's reply — no §10.1 attention event; not invented)
-      // and every non-lifecycle bus event (message.*, file.*, etc.). Dropped, not emitted.
+      // Includes permission.replied (user's reply — no §10.1 attention event; not invented),
+      // the legacy permission.updated (no longer emitted by opencode ≥1.x), and every
+      // non-lifecycle bus event (message.*, file.*, etc.). Dropped, not emitted.
       throw new OpenCodeMappingError(`unsupported OpenCode event: ${JSON.stringify(type)}`);
   }
 }

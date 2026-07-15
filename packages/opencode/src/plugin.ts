@@ -52,14 +52,24 @@ export interface BirdyBeepPluginDeps {
   invokeHook?: (envelope: OpenCodeEventEnvelope) => void | Promise<void>;
 }
 
-/** Bus events we forward (verified §9.7 lifecycle names); high-frequency events are excluded. */
+/**
+ * Bus events we forward; high-frequency events (message.part.*, file.*) are excluded.
+ *
+ * Verified against real `opencode` 1.18.1 event traffic (2026-07-15), NOT a spec table:
+ * the approval event is `permission.asked` (payload `{id, sessionID, permission, patterns,
+ * metadata, always, tool}`) — an earlier SST SDK exposed `permission.updated`, which the
+ * current Anomaly build no longer emits (§21.1 harness drift). Forwarding the stale name
+ * silently dropped every approval, so OpenCode users got no "needs approval" beep.
+ * `permission.replied` is intentionally NOT forwarded (the user's own reply, not an
+ * agent-attention moment).
+ */
 export const FORWARDED_BUS_EVENTS: ReadonlySet<string> = new Set([
   "session.created",
   "session.updated",
   "session.status",
   "session.idle",
   "session.error",
-  "permission.updated",
+  "permission.asked",
 ]);
 
 /** Log a spawn failure ONCE per process — silent drops made every OpenCode event vanish
