@@ -25,7 +25,15 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -207,7 +215,9 @@ try {
     assert(ev.harness === "cursor", `harness !== cursor on ${ev.event_type}`);
   }
 
-  log(`✅ PASS — real cursor-agent → installed hooks.json → hook → sink; ${received.length} event(s), no PII`);
+  log(
+    `✅ PASS — real cursor-agent → installed hooks.json → hook → sink; ${received.length} event(s), no PII`,
+  );
 } finally {
   cleanup();
 }
