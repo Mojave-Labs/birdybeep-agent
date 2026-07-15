@@ -49,8 +49,14 @@ export const AGENT_SESSION_STATUSES = [
 ] as const;
 export type AgentSessionStatus = (typeof AGENT_SESSION_STATUSES)[number];
 
-/** Supported harness ids (§9.5–9.7). Mirrors @birdybeep/shared HARNESS_IDS. */
-export const HARNESS_IDS = ["claude_code", "codex", "opencode"] as const;
+/**
+ * Supported harness ids (§9.5–9.7). Mirrors @birdybeep/shared HARNESS_IDS.
+ *
+ * CROSS-REPO LOCKSTEP (§16.4): `"cursor"` is appended last (preserving every existing
+ * ordinal). The private `@birdybeep/shared` HARNESS_IDS MUST add `"cursor"` before prod
+ * ingest (`POST /v1/agent-events`) will accept cursor events — the two halves move together.
+ */
+export const HARNESS_IDS = ["claude_code", "codex", "opencode", "cursor"] as const;
 export type HarnessId = (typeof HARNESS_IDS)[number];
 
 /** Enum validators derived from the vendored tuples so the validator can't drift from the type. */

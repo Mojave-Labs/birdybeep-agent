@@ -47,7 +47,8 @@ const PRODUCT_SESSION_STATUSES = [
   "failed",
   "unknown",
 ];
-const PRODUCT_HARNESS_IDS = ["claude_code", "codex", "opencode"];
+// "cursor" appended last (lockstep with @birdybeep/shared — see primitives.ts HARNESS_IDS note).
+const PRODUCT_HARNESS_IDS = ["claude_code", "codex", "opencode", "cursor"];
 
 function without(key: string): Record<string, unknown> {
   const copy: Record<string, unknown> = { ...(canonicalEvent as Record<string, unknown>) };

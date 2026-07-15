@@ -1,5 +1,5 @@
 /**
- * `birdybeep hook <claude|codex|opencode>` (§9.2–9.3) — the hot-path entrypoint every
+ * `birdybeep hook <claude|codex|opencode|cursor>` (§9.2–9.3) — the hot-path entrypoint every
  * installed adapter config invokes when its harness fires a lifecycle event. It reads the
  * raw payload (from the trailing arg for Codex's notify argv, else from stdin), selects the
  * named harness's `runXHook` (normalize → redact/hash/truncate → dedup → send w/ short
@@ -18,12 +18,13 @@ import {
 } from "@birdybeep/agent-core";
 import { runClaudeHook } from "@birdybeep/claude-code";
 import { runCodexHook } from "@birdybeep/codex";
+import { runCursorHook } from "@birdybeep/cursor";
 import { runOpenCodeHook } from "@birdybeep/opencode";
 
 import { resolveApiUrl } from "../config";
 import { type Command, EXIT } from "../framework";
 
-export type HarnessName = "claude" | "codex" | "opencode";
+export type HarnessName = "claude" | "codex" | "opencode" | "cursor";
 
 type HarnessRunner = (input: unknown, options: { sender: Sender }) => Promise<HookResult>;
 
@@ -31,9 +32,10 @@ const RUNNERS: Record<HarnessName, HarnessRunner> = {
   claude: runClaudeHook,
   codex: runCodexHook,
   opencode: runOpenCodeHook,
+  cursor: runCursorHook,
 };
 
-export const HOOK_HARNESSES: readonly HarnessName[] = ["claude", "codex", "opencode"];
+export const HOOK_HARNESSES: readonly HarnessName[] = ["claude", "codex", "opencode", "cursor"];
 
 /**
  * Hard cap on reading the payload — a misbehaving harness must never hang the hook.
@@ -63,7 +65,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
 }
 
 export function isHarnessName(value: string | undefined): value is HarnessName {
-  return value === "claude" || value === "codex" || value === "opencode";
+  return value === "claude" || value === "codex" || value === "opencode" || value === "cursor";
 }
 
 /** Run one hook fire: select the harness runner and execute via the shared pipeline. */
@@ -116,7 +118,7 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
   return {
     name: "hook",
     summary: "Internal: normalize + send an event fired by a harness hook",
-    usage: "birdybeep hook <claude|codex|opencode>",
+    usage: "birdybeep hook <claude|codex|opencode|cursor>",
     run: async (ctx) => {
       const harness = ctx.args[0];
       if (!isHarnessName(harness)) {

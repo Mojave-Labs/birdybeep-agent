@@ -8,7 +8,8 @@
       "@birdybeep/agent-core",
       "@birdybeep/claude-code",
       "@birdybeep/codex",
-      "@birdybeep/opencode"
+      "@birdybeep/opencode",
+      "@birdybeep/cursor"
     ]
   ],
   "linked": [],

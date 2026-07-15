@@ -1,17 +1,14 @@
 {
-  "name": "@birdybeep/cli",
+  "name": "@birdybeep/cursor",
   "version": "0.2.0",
-  "description": "The BirdyBeep CLI — pair your machine, install agent adapters, and stream coding-agent lifecycle events to BirdyBeep.",
+  "description": "BirdyBeep adapter for Cursor: non-destructive hooks.json install/uninstall and event normalization.",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Mojave-Labs/birdybeep-agent.git",
-    "directory": "packages/cli"
+    "directory": "packages/cursor"
   },
   "type": "module",
-  "bin": {
-    "birdybeep": "./dist/bin.js"
-  },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -31,18 +28,13 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup src/index.ts --format esm,cjs --dts --sourcemap --clean",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run"
   },
   "dependencies": {
-    "@birdybeep/agent-core": "workspace:*",
-    "@birdybeep/claude-code": "workspace:*",
-    "@birdybeep/codex": "workspace:*",
-    "@birdybeep/cursor": "workspace:*",
-    "@birdybeep/opencode": "workspace:*",
-    "uqr": "0.1.2"
+    "@birdybeep/agent-core": "workspace:*"
   },
   "devDependencies": {
     "@birdybeep/test-harness": "workspace:*"

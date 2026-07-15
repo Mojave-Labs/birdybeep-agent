@@ -1,5 +1,5 @@
 /**
- * `birdybeep agent install|uninstall [all|claude|codex|opencode]` (§7.3, §9.4) — the
+ * `birdybeep agent install|uninstall [all|claude|codex|opencode|cursor]` (§7.3, §9.4) — the
  * once-per-machine setup half: detect supported harnesses and run each adapter's
  * idempotent, non-destructive install/uninstall. Adds ONLY BirdyBeep-managed entries
  * (existing config backed up + preserved), the installed config invokes
@@ -13,20 +13,27 @@
 import type { AgentAdapter, InstallResult } from "@birdybeep/agent-core";
 import { claudeCodeAdapter } from "@birdybeep/claude-code";
 import { codexAdapter } from "@birdybeep/codex";
+import { cursorAdapter } from "@birdybeep/cursor";
 import { opencodeAdapter } from "@birdybeep/opencode";
 
 import { type Command, type CommandContext, EXIT } from "../framework";
 
-const DEFAULT_ADAPTERS: AgentAdapter[] = [claudeCodeAdapter, codexAdapter, opencodeAdapter];
+const DEFAULT_ADAPTERS: AgentAdapter[] = [
+  claudeCodeAdapter,
+  codexAdapter,
+  opencodeAdapter,
+  cursorAdapter,
+];
 
 /** CLI short target name → adapter id (the CLI says `claude`, the adapter id is `claude_code`). */
 const TARGET_TO_ID: Record<string, string> = {
   claude: "claude_code",
   codex: "codex",
   opencode: "opencode",
+  cursor: "cursor",
 };
 
-export const AGENT_TARGETS: readonly string[] = ["all", "claude", "codex", "opencode"];
+export const AGENT_TARGETS: readonly string[] = ["all", "claude", "codex", "opencode", "cursor"];
 
 /** Resolve a target to the adapter(s) it names, or `"unknown"` for a bad target. */
 export function selectAdapters(
@@ -155,18 +162,18 @@ export function createAgentCommand(deps: AgentCommandDeps = {}): Command {
   return {
     name: "agent",
     summary: "Install or uninstall harness adapters",
-    usage: "birdybeep agent <install|uninstall> [all|claude|codex|opencode]",
+    usage: "birdybeep agent <install|uninstall> [all|claude|codex|opencode|cursor]",
     subcommands: [
       {
         name: "install",
         summary: "Install adapters (all | claude | codex | opencode)",
-        usage: "birdybeep agent install [all|claude|codex|opencode]",
+        usage: "birdybeep agent install [all|claude|codex|opencode|cursor]",
         run: (ctx) => installSelected(adapters, ctx),
       },
       {
         name: "uninstall",
         summary: "Restore harness config to its pre-install state",
-        usage: "birdybeep agent uninstall [all|claude|codex|opencode]",
+        usage: "birdybeep agent uninstall [all|claude|codex|opencode|cursor]",
         run: (ctx) => uninstallSelected(adapters, ctx),
       },
     ],

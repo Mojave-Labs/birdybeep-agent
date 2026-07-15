@@ -1,0 +1,233 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`generated config snapshots (§21.1) > from-scratch install writes the canonical BirdyBeep hooks block 1`] = `
+"{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "stop": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ]
+  }
+}
+"
+`;
+
+exports[`generated config snapshots (§21.1) > patches into an existing config that carries extra top-level keys 1`] = `
+"{
+  "version": 1,
+  "settings": {
+    "audit": true
+  },
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "stop": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ]
+  }
+}
+"
+`;
+
+exports[`generated config snapshots (§21.1) > patches into an existing config with a same-event user hook 1`] = `
+"{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "my-own-hook",
+        "timeout": 10
+      },
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "stop": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ]
+  }
+}
+"
+`;
