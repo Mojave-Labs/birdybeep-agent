@@ -1,0 +1,15 @@
+{
+  "conversation_id": "00000000-0000-4000-8000-000000000001",
+  "generation_id": "00000000-0000-4000-8000-000000000001",
+  "model": "default",
+  "reason": "completed",
+  "duration_ms": 14685,
+  "is_background_agent": false,
+  "final_status": "completed",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "hook_event_name": "sessionEnd",
+  "cursor_version": "2026.07.09-a3815c0",
+  "workspace_roots": ["/home/user/project"],
+  "user_email": "user@example.com",
+  "transcript_path": "/home/user/project/.cursor/projects/home-user-project/agent-transcripts/00000000-0000-4000-8000-000000000001/00000000-0000-4000-8000-000000000001.jsonl"
+}
