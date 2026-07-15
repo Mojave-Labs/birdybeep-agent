@@ -139,7 +139,17 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       const sender = makeSender(resolveApiUrl());
       const result = await runHookCommand(harness, payload, sender);
       // Hot path: human mode is silent; --json emits the outcome for scripts/debugging.
-      ctx.io.result({ harness, outcome: result.outcome, eventType: result.eventType });
+      // Surface the backend's 202 decision (notified/suppressed/deduped) + HTTP status when
+      // a send was attempted — the outcome alone ("delivered") can't distinguish a beep that
+      // fired from one the backend accepted-but-suppressed, which is exactly the failure mode
+      // `doctor` and delivery debugging need to see.
+      ctx.io.result({
+        harness,
+        outcome: result.outcome,
+        eventType: result.eventType,
+        ...(result.send?.decision ? { decision: result.send.decision } : {}),
+        ...(result.send?.status !== undefined ? { status: result.send.status } : {}),
+      });
       return EXIT.OK; // delivered/queued/deduped/skipped all return fast + non-erroring
     },
   };
