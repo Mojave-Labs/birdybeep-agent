@@ -31,6 +31,12 @@ const present = (version = "1.2.3"): (() => Promise<DetectionResult>) => {
 const absent: () => Promise<DetectionResult> = () => Promise.resolve({ detected: false });
 
 const POSIX = process.platform !== "win32";
+/**
+ * Root bypasses discretionary file permissions, so a 0o444 file still passes the
+ * `W_OK` access check — the read-only-file scenario simply cannot be reproduced as
+ * root (common in CI/containers). Skip those cases there, same spirit as `!POSIX`.
+ */
+const ROOT = POSIX && typeof process.getuid === "function" && process.getuid() === 0;
 
 describe("status()", () => {
   it("is `installed` when Claude Code is present and all hooks are registered", async () => {
@@ -118,7 +124,7 @@ describe("doctor()", () => {
   });
 
   it("flags a read-only settings file (POSIX)", async () => {
-    if (!POSIX) return;
+    if (!POSIX || ROOT) return; // root bypasses 0o444 → the not-writable case is unreachable
     sandbox = createSandbox();
     await installClaudeCode({}, sandbox.home);
     const path = claudeSettingsPath(sandbox.home);

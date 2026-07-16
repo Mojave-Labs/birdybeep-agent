@@ -9,6 +9,10 @@ sync-state.json
 last-touched
 .exclusive-lock
 
+# Auto-import change-detection fingerprint (machine-specific runtime cache,
+# a {size, mtime_ns} marker for issues.jsonl — not issue data)
+.auto-import-issues.jsonl
+
 # Daemon runtime (lock, log, pid)
 daemon.*
 

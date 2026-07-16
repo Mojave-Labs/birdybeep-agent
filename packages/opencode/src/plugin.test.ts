@@ -82,7 +82,10 @@ describe("plugin forwards lifecycle events through the hook to the sink", () => 
     const hooks = await loadPluginToSink();
     await hooks.event({ event: { type: "session.created", properties: { info: { id: SID } } } });
     await hooks.event({
-      event: { type: "permission.updated", properties: { sessionID: SID, type: "bash" } },
+      event: {
+        type: "permission.asked",
+        properties: { id: "per_1", sessionID: SID, permission: "bash" },
+      },
     });
     await hooks.event({ event: { type: "session.idle", properties: { sessionID: SID } } });
     await hooks["tool.execute.after"]({ tool: "edit", sessionID: SID, callID: "c1" });

@@ -160,16 +160,19 @@ Launch integration. Prefer an OpenCode **plugin package**; configure user-level/
 | `session.status` `{idle}` | `agent_idle` | idle | Yes |
 | `session.idle` | `agent_idle` | idle | Yes |
 | `session.error` | `agent_failed` | failed | Yes |
-| `permission.updated` | `approval_required` | waiting for approval | Yes |
+| `permission.asked` | `approval_required` | waiting for approval | Yes |
 | `tool.execute.before` | `tool_started` | activity update | No |
 | `tool.execute.after` | `tool_finished` | activity update | No |
 | `permission.replied` | _(dropped — see note)_ | — | — |
 
-> **Reconciliation — verified against the OpenCode SDK types (`sst/opencode`
-> `packages/sdk/js/src/gen/types.gen.ts`), not the PRD §9.7 table** (which named two
-> events that don't exist):
-> - **`permission.asked` does NOT exist.** The real approval-request event is
->   **`permission.updated`** (paired with `permission.replied` when the user answers).
+> **Reconciliation — verified against real `opencode` 1.18.1 event traffic (2026-07-15),
+> not the PRD §9.7 table** (and re-verified after the SST→Anomaly rebrand changed the
+> event names — §21.1 harness drift):
+> - **The approval event is `permission.asked`**, payload `{id, sessionID, permission,
+>   patterns, metadata, always, tool}` — the type discriminator is `properties.permission`
+>   (e.g. `"bash"`/`"edit"`). An earlier SST SDK exposed `permission.updated` with a `type`
+>   field; the current Anomaly build no longer emits it, so mapping the old name silently
+>   dropped every approval beep.
 > - **`permission.replied` is DROPPED, not mapped.** The PRD mapped it to a
 >   `permission_replied` type that is **not in §10.1**. Inventing a wire type would break
 >   lockstep, and the reply is the user's action — not an agent-attention moment — so it

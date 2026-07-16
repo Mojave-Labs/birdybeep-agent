@@ -5,7 +5,7 @@
  * those handlers through the hook pipeline (runOpenCodeHook = normalizeEvent → dedup →
  * sender.send + the restart-marker write) and asserts, at the stub sink:
  *   - correct §10.1 mapping for every forwarded surface (session.created→session_started,
- *     permission.updated→approval_required, session.idle→agent_idle, session.error→
+ *     permission.asked→approval_required, session.idle→agent_idle, session.error→
  *     agent_failed, tool.execute.before/after→tool_started/tool_finished);
  *   - the needs_restart → installed transition (the OpenCode-specific gate): needs_restart
  *     before any event → installed after the first real delivered event;
@@ -89,7 +89,10 @@ describe("OC-E2E: install → load plugin → fire real events → assert delive
     const start = Date.now();
     await hooks.event({ event: { type: "session.created", properties: { info: { id: SID } } } });
     await hooks.event({
-      event: { type: "permission.updated", properties: { sessionID: SID, type: "bash" } },
+      event: {
+        type: "permission.asked",
+        properties: { id: "per_1", sessionID: SID, permission: "bash" },
+      },
     });
     await hooks.event({ event: { type: "session.idle", properties: { sessionID: SID } } });
     await hooks.event({
@@ -145,15 +148,17 @@ describe("OC-E2E: install → load plugin → fire real events → assert delive
     expect(await opencodeAdapter.status()).toBe("installed"); // first real event proves the plugin loaded
   });
 
-  it("never persists user content (permission title + tool args)", async () => {
+  it("never persists user content (permission command + tool args)", async () => {
     const { hooks } = await setUp();
     await hooks.event({
       event: {
-        type: "permission.updated",
+        type: "permission.asked",
         properties: {
+          id: "per_1",
           sessionID: SID,
-          type: "bash",
-          title: "cat /Users/dev/.ssh/id_rsa # sk-abcd1234efgh5678",
+          permission: "bash",
+          patterns: ["cat /Users/dev/.ssh/id_rsa # sk-abcd1234efgh5678"],
+          metadata: { command: "cat /Users/dev/.ssh/id_rsa # sk-abcd1234efgh5678" },
         },
       },
     });

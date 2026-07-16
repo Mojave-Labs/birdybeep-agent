@@ -92,10 +92,18 @@ const CASES: Case[] = [
     notifyDefault: true,
   },
   {
-    name: "permission.updated → approval_required",
+    // Real opencode 1.18.1 shape: type discriminator is `permission`; `patterns` +
+    // `metadata.command` carry the actual command and must never be persisted.
+    name: "permission.asked → approval_required",
     payload: {
-      type: "permission.updated",
-      properties: { sessionID: SID, type: "bash", title: "Run npm install" },
+      type: "permission.asked",
+      properties: {
+        id: "per_1",
+        sessionID: SID,
+        permission: "bash",
+        patterns: ["npm install"],
+        metadata: { command: "npm install" },
+      },
       cwd: CWD,
     },
     eventType: "approval_required",
@@ -156,11 +164,17 @@ describe("privacy invariants (§15.6)", () => {
     expect(serialized).not.toMatch(/\/Users\/alice/);
   });
 
-  it("never persists permission title or tool args (only safe discriminators)", async () => {
+  it("never persists the permission command/patterns (only safe discriminators)", async () => {
     const approval = await normalizeOpenCodeEvent(
       {
-        type: "permission.updated",
-        properties: { sessionID: SID, type: "bash", title: "cat /Users/alice/.ssh/id_rsa" },
+        type: "permission.asked",
+        properties: {
+          id: "per_1",
+          sessionID: SID,
+          permission: "bash",
+          patterns: ["cat /Users/alice/.ssh/id_rsa"],
+          metadata: { command: "cat /Users/alice/.ssh/id_rsa" },
+        },
         cwd: CWD,
       },
       OPTS,

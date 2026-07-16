@@ -1,5 +1,5 @@
 /**
- * `birdybeep hook <claude|codex|opencode>` (§9.2–9.3) — the hot-path entrypoint every
+ * `birdybeep hook <claude|codex|opencode|cursor>` (§9.2–9.3) — the hot-path entrypoint every
  * installed adapter config invokes when its harness fires a lifecycle event. It reads the
  * raw payload (from the trailing arg for Codex's notify argv, else from stdin), selects the
  * named harness's `runXHook` (normalize → redact/hash/truncate → dedup → send w/ short
@@ -18,12 +18,13 @@ import {
 } from "@birdybeep/agent-core";
 import { runClaudeHook } from "@birdybeep/claude-code";
 import { runCodexHook } from "@birdybeep/codex";
+import { runCursorHook } from "@birdybeep/cursor";
 import { runOpenCodeHook } from "@birdybeep/opencode";
 
 import { resolveApiUrl } from "../config";
 import { type Command, EXIT } from "../framework";
 
-export type HarnessName = "claude" | "codex" | "opencode";
+export type HarnessName = "claude" | "codex" | "opencode" | "cursor";
 
 type HarnessRunner = (input: unknown, options: { sender: Sender }) => Promise<HookResult>;
 
@@ -31,9 +32,10 @@ const RUNNERS: Record<HarnessName, HarnessRunner> = {
   claude: runClaudeHook,
   codex: runCodexHook,
   opencode: runOpenCodeHook,
+  cursor: runCursorHook,
 };
 
-export const HOOK_HARNESSES: readonly HarnessName[] = ["claude", "codex", "opencode"];
+export const HOOK_HARNESSES: readonly HarnessName[] = ["claude", "codex", "opencode", "cursor"];
 
 /**
  * Hard cap on reading the payload — a misbehaving harness must never hang the hook.
@@ -63,7 +65,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
 }
 
 export function isHarnessName(value: string | undefined): value is HarnessName {
-  return value === "claude" || value === "codex" || value === "opencode";
+  return value === "claude" || value === "codex" || value === "opencode" || value === "cursor";
 }
 
 /** Run one hook fire: select the harness runner and execute via the shared pipeline. */
@@ -116,7 +118,7 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
   return {
     name: "hook",
     summary: "Internal: normalize + send an event fired by a harness hook",
-    usage: "birdybeep hook <claude|codex|opencode>",
+    usage: "birdybeep hook <claude|codex|opencode|cursor>",
     run: async (ctx) => {
       const harness = ctx.args[0];
       if (!isHarnessName(harness)) {
@@ -139,7 +141,17 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       const sender = makeSender(resolveApiUrl());
       const result = await runHookCommand(harness, payload, sender);
       // Hot path: human mode is silent; --json emits the outcome for scripts/debugging.
-      ctx.io.result({ harness, outcome: result.outcome, eventType: result.eventType });
+      // Surface the backend's 202 decision (notified/suppressed/deduped) + HTTP status when
+      // a send was attempted — the outcome alone ("delivered") can't distinguish a beep that
+      // fired from one the backend accepted-but-suppressed, which is exactly the failure mode
+      // `doctor` and delivery debugging need to see.
+      ctx.io.result({
+        harness,
+        outcome: result.outcome,
+        eventType: result.eventType,
+        ...(result.send?.decision ? { decision: result.send.decision } : {}),
+        ...(result.send?.status !== undefined ? { status: result.send.status } : {}),
+      });
       return EXIT.OK; // delivered/queued/deduped/skipped all return fast + non-erroring
     },
   };

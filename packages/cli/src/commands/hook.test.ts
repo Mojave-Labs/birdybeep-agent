@@ -77,6 +77,20 @@ const PAYLOADS: { harness: HarnessName; payload: unknown; eventType: string }[] 
     payload: { type: "session.idle", properties: { sessionID: "sess-o" }, cwd: RAW_CWD },
     eventType: "agent_idle",
   },
+  {
+    // Cursor: sessionEnd(completed) → agent_completed. Carries PII (user_email / transcript_path)
+    // that MUST be dropped — assertNoAbsolutePaths below catches any leaked raw path.
+    harness: "cursor",
+    payload: {
+      hook_event_name: "sessionEnd",
+      session_id: "sess-cur",
+      workspace_roots: [RAW_CWD],
+      final_status: "completed",
+      user_email: "leak@example.com",
+      transcript_path: "/Users/dev/.cursor/transcripts/x.jsonl",
+    },
+    eventType: "agent_completed",
+  },
 ];
 
 describe("runHookCommand delivers the right normalized event per harness", () => {
@@ -179,7 +193,7 @@ describe("hook command dispatch (full CLI path)", () => {
       ensureConfig: false,
     });
     expect(code).toBe(EXIT.USAGE);
-    expect(out.text()).toContain("expected one of claude|codex|opencode");
+    expect(out.text()).toContain("expected one of claude|codex|opencode|cursor");
   });
 
   it("returns fast (skipped) when stdin hangs — never blocks the harness", async () => {
@@ -219,9 +233,10 @@ describe("hook command dispatch (full CLI path)", () => {
 });
 
 describe("helpers", () => {
-  it("isHarnessName guards the three harnesses", () => {
-    expect(HOOK_HARNESSES).toEqual(["claude", "codex", "opencode"]);
+  it("isHarnessName guards the four harnesses", () => {
+    expect(HOOK_HARNESSES).toEqual(["claude", "codex", "opencode", "cursor"]);
     expect(isHarnessName("codex")).toBe(true);
+    expect(isHarnessName("cursor")).toBe(true);
     expect(isHarnessName("bogus")).toBe(false);
     expect(isHarnessName(undefined)).toBe(false);
   });

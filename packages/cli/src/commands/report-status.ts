@@ -21,18 +21,25 @@ import {
 } from "@birdybeep/agent-core";
 import { CLAUDE_CODE_ADAPTER_VERSION, claudeCodeAdapter } from "@birdybeep/claude-code";
 import { CODEX_ADAPTER_VERSION, codexAdapter } from "@birdybeep/codex";
+import { CURSOR_ADAPTER_VERSION, cursorAdapter } from "@birdybeep/cursor";
 import { OPENCODE_ADAPTER_VERSION, opencodeAdapter } from "@birdybeep/opencode";
 
 import { resolveApiUrl } from "../config";
 import { type Command, EXIT } from "../framework";
 
-const DEFAULT_ADAPTERS: AgentAdapter[] = [claudeCodeAdapter, codexAdapter, opencodeAdapter];
+const DEFAULT_ADAPTERS: AgentAdapter[] = [
+  claudeCodeAdapter,
+  codexAdapter,
+  opencodeAdapter,
+  cursorAdapter,
+];
 
 /** Per-harness BirdyBeep adapter version (the schema's optional `adapter_version`). */
 const ADAPTER_VERSIONS: Record<string, string> = {
   claude_code: CLAUDE_CODE_ADAPTER_VERSION,
   codex: CODEX_ADAPTER_VERSION,
   opencode: OPENCODE_ADAPTER_VERSION,
+  cursor: CURSOR_ADAPTER_VERSION,
 };
 
 const base = (apiUrl: string): string => apiUrl.replace(/\/$/, "");

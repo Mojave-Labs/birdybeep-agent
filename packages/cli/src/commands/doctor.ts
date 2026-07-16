@@ -14,13 +14,19 @@ import {
 } from "@birdybeep/agent-core";
 import { claudeCodeAdapter } from "@birdybeep/claude-code";
 import { codexAdapter } from "@birdybeep/codex";
+import { cursorAdapter } from "@birdybeep/cursor";
 import { opencodeAdapter } from "@birdybeep/opencode";
 
 import { resolveApiUrl } from "../config";
 import { isPaired, localQueueDepth } from "../diagnostics";
 import { type Command, EXIT } from "../framework";
 
-const DEFAULT_ADAPTERS: AgentAdapter[] = [claudeCodeAdapter, codexAdapter, opencodeAdapter];
+const DEFAULT_ADAPTERS: AgentAdapter[] = [
+  claudeCodeAdapter,
+  codexAdapter,
+  opencodeAdapter,
+  cursorAdapter,
+];
 
 interface Check {
   name: string;
