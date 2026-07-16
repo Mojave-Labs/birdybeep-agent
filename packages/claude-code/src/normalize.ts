@@ -13,6 +13,7 @@
  *   Stop                              → agent_completed
  *   StopFailure                       → agent_failed (error_type carried into metadata)
  *   SubagentStop                      → subagent_completed
+ *   SessionEnd                        → session_ended (terminal, non-notifying; reason in metadata)
  * SubagentStart and TaskCreated/TaskCompleted are out of scope here (see SPEC §9.5).
  */
 import { createHash } from "node:crypto";
@@ -25,6 +26,22 @@ import {
   type NormalizeOptions,
   type RepoContext,
 } from "@birdybeep/agent-core";
+
+import { cleanSessionName, SessionNameStore } from "./session-names";
+
+/**
+ * Options for {@link normalizeClaudeCodeEvent}. Extends the shared normalizer options with
+ * the sv1 session-name store injection points — all optional; tests pass a sandbox dir/clock,
+ * production uses the real defaults (state under the user data dir).
+ */
+export interface ClaudeCodeNormalizeOptions extends NormalizeOptions {
+  /** Session-name state dir (default `<dataDir>/claude-code/session-names`). Tests override. */
+  sessionStateDir?: string;
+  /** Session-name TTL in ms (default 7d). Tests override to exercise expiry. */
+  sessionStateTtlMs?: number;
+  /** Injectable clock (ms) for the session-name store (default wall clock). Tests override. */
+  sessionStateNow?: () => number;
+}
 
 /** Thrown for an unknown/garbled Claude Code hook payload (never a malformed event). */
 export class ClaudeCodeMappingError extends Error {
@@ -81,6 +98,40 @@ function repoLabel(ctx: RepoContext): string | undefined {
 function bestEffortSessionId(payload: Record<string, unknown>): string {
   const seed = `${str(payload["cwd"]) ?? ""}|${str(payload["transcript_path"]) ?? ""}|${str(payload["hook_event_name"]) ?? ""}`;
   return `cc_${createHash("sha256").update(seed).digest("hex").slice(0, 16)}`;
+}
+
+/**
+ * Resolve the session NAME to lead this event's title with (sv1), and drive the name store's
+ * lifecycle. `session_title` (set via Claude Code `--name` / `/rename`) rides ONLY on the
+ * SessionStart payload, so:
+ *   - SessionStart: capture it and persist keyed by the REAL session_id (best-effort ids are
+ *     per-event and can't be correlated by a later Stop, so we never persist under them).
+ *   - SessionEnd: return the remembered name (it's the last word on this session) then forget
+ *     it, so state never outlives the session.
+ *   - any other event: read back the name captured at SessionStart.
+ * All store ops are best-effort/fail-soft — a lookup miss simply yields undefined and the
+ * caller falls back to the 0r6 repo · branch lead.
+ *
+ * Known limitation (documented on ticket sv1): a mid-session `/rename` AFTER SessionStart is
+ * not reflected — no hook replays `session_title`, so the captured name is the SessionStart one.
+ */
+function resolveSessionName(
+  payload: Record<string, unknown>,
+  realSessionId: string | undefined,
+  store: SessionNameStore,
+): string | undefined {
+  const event = payload["hook_event_name"];
+  if (event === "SessionStart") {
+    const captured = cleanSessionName(payload["session_title"]);
+    if (captured && realSessionId) store.remember(realSessionId, captured);
+    return captured;
+  }
+  if (event === "SessionEnd") {
+    const existing = realSessionId ? store.lookup(realSessionId) : undefined;
+    if (realSessionId) store.forget(realSessionId); // terminal — clean up state
+    return existing;
+  }
+  return realSessionId ? store.lookup(realSessionId) : undefined;
 }
 
 function mapHookEvent(payload: Record<string, unknown>): MappedEvent {
@@ -165,6 +216,19 @@ function mapHookEvent(payload: Record<string, unknown>): MappedEvent {
         body: "Subtask complete",
         metadata: { agent_type: str(payload["agent_type"]) },
       };
+    case "SessionEnd": {
+      // The session actually closed — settle it terminal so it stops looking live. Distinct
+      // from Stop (per-turn): SessionEnd fires once, at the end, and no event follows it.
+      // `reason` (clear / logout / prompt_input_exit / other) is metadata, not an error.
+      const reason = str(payload["reason"]) ?? "other";
+      return {
+        eventType: "session_ended",
+        status: "completed",
+        title: "Claude Code session ended",
+        body: `Session ended (${reason})`,
+        metadata: { reason },
+      };
+    }
     default:
       throw new ClaudeCodeMappingError(
         `unsupported Claude Code hook event: ${JSON.stringify(name)}`,
@@ -172,24 +236,34 @@ function mapHookEvent(payload: Record<string, unknown>): MappedEvent {
   }
 }
 
-function buildAndNormalize(input: unknown, opts: NormalizeOptions): BirdyBeepAgentEvent {
+function buildAndNormalize(input: unknown, opts: ClaudeCodeNormalizeOptions): BirdyBeepAgentEvent {
   const payload = asRecord(input);
   if (typeof payload["hook_event_name"] !== "string") {
     throw new ClaudeCodeMappingError("payload is missing a string hook_event_name");
   }
   const mapped = mapHookEvent(payload); // throws ClaudeCodeMappingError on unknown event
   const sessionId = str(payload["session_id"]);
+  const realSessionId = sessionId && sessionId.length > 0 ? sessionId : undefined;
   const machine = getMachineIdentity();
   const cwd = str(payload["cwd"]) ?? "unknown";
   // Best-effort, fail-soft: which checkout produced this event (§10.2). Populates the
   // repo/branch workspace labels AND leads the title so parallel sessions are told apart.
   const repo = detectRepoContext(cwd);
-  const label = repoLabel(repo);
+  // Title lead precedence (sv1): session NAME (via /rename, persisted at SessionStart) →
+  // repo · branch → repo → plain action. The name is the most human handle, so it wins; the
+  // store is fail-soft so a miss transparently degrades to the 0r6 repo · branch behavior.
+  const store = new SessionNameStore({
+    ...(opts.sessionStateDir !== undefined ? { dir: opts.sessionStateDir } : {}),
+    ...(opts.sessionStateTtlMs !== undefined ? { ttlMs: opts.sessionStateTtlMs } : {}),
+    ...(opts.sessionStateNow !== undefined ? { now: opts.sessionStateNow } : {}),
+  });
+  const sessionName = resolveSessionName(payload, realSessionId, store);
+  const label = sessionName ?? repoLabel(repo);
   const draft = {
     event_type: mapped.eventType,
     status: mapped.status,
     harness: "claude_code",
-    source_session_id: sessionId && sessionId.length > 0 ? sessionId : bestEffortSessionId(payload),
+    source_session_id: realSessionId ?? bestEffortSessionId(payload),
     machine: { label: machine.label, os: machine.os },
     workspace: {
       cwd,
@@ -208,7 +282,7 @@ function buildAndNormalize(input: unknown, opts: NormalizeOptions): BirdyBeepAge
 /** Map + normalize a raw Claude Code hook payload into a validated canonical event. */
 export function normalizeClaudeCodeEvent(
   input: unknown,
-  opts: NormalizeOptions = {},
+  opts: ClaudeCodeNormalizeOptions = {},
 ): Promise<BirdyBeepAgentEvent> {
   try {
     return Promise.resolve(buildAndNormalize(input, opts));

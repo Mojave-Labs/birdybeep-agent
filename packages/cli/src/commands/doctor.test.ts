@@ -124,7 +124,7 @@ describe("birdybeep doctor", () => {
     expect(sink.received()).toHaveLength(1);
   });
 
-  it("flags a missing token with the login remedy", async () => {
+  it("flags a missing token with the pair remedy", async () => {
     sandbox = createSandbox();
     await clearToken(FILE_ONLY);
     const cmd = createDoctorCommand({
@@ -142,7 +142,7 @@ describe("birdybeep doctor", () => {
     });
     expect(code).toBe(EXIT.ERROR);
     expect(out.text()).toMatch(/Machine token/);
-    expect(out.text()).toMatch(/birdybeep login/);
+    expect(out.text()).toMatch(/birdybeep pair/);
   });
 
   it("passes cleanly (exit 0) when token present, adapters healthy, backend reachable", async () => {

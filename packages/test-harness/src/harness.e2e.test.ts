@@ -19,7 +19,7 @@ import {
   assertNoRawValues,
   assertNoTokenInRepo,
   assertPathsHashed,
-  assertRealHomeUntouched,
+  assertRealHomeUnchanged,
   assertTreeDelta,
   assertTreesEqual,
   assertTruncated,
@@ -28,6 +28,7 @@ import {
   deliveredBearerToken,
   eventBody,
   findRepoRoot,
+  snapshotRealHome,
 } from "./contract";
 import {
   BACKUP_REL,
@@ -78,6 +79,12 @@ describe("E2E harness rig (A-TEST-HARNESS self-demo)", () => {
     const claudeDir = sb.path(".claude");
     const beforeInstall = captureTree(claudeDir);
 
+    // Byte-snapshot the REAL home's watched paths so the install can be proven not to
+    // have escaped its sandbox. This machine may legitimately HAVE BirdyBeep installed,
+    // so the oracle compares content before/after rather than asking whether our
+    // artifacts merely exist (birdybeep-agent-2wt).
+    const realHomeBefore = snapshotRealHome(sb.realHome, [SETTINGS_REL, BACKUP_REL, TOKEN_REL]);
+
     // --- install: non-destructive, backs up, only managed entries added ---
     const install1 = referenceAdapter.install(sb);
     expect(install1.changed).toBe(true);
@@ -126,10 +133,10 @@ describe("E2E harness rig (A-TEST-HARNESS self-demo)", () => {
     // --- token never written into any repo-local file ---
     assertNoTokenInRepo(findRepoRoot(process.cwd()), TOKEN);
 
-    // --- the real user HOME was never touched (check uniquely-BirdyBeep artifacts: the
-    // backup + token. The plain SETTINGS_REL legitimately pre-exists for a real Claude
-    // Code user, so it is NOT a valid escape sentinel). ---
-    assertRealHomeUntouched(sb.realHome, [BACKUP_REL, TOKEN_REL]);
+    // --- the real user HOME was never touched: every watched path is byte-identical to
+    // the pre-install snapshot. Catches an escape that creates, modifies, OR deletes —
+    // including one that patches a real, pre-existing .claude/settings.json. ---
+    assertRealHomeUnchanged(realHomeBefore);
 
     // --- uninstall restores the original foreign config byte-for-byte ---
     referenceAdapter.uninstall(sb);

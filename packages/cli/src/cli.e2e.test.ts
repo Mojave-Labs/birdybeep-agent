@@ -1,9 +1,9 @@
 /**
  * CLI-E2E — the mandatory CLI happy-path gate, driven through the real CLI commands in a
- * hermetic temp HOME against a stub backend: `login` (device flow / manual code) mints +
+ * hermetic temp HOME against a stub backend: `pair` (device flow / manual code) mints +
  * stores a token → `agent install all` writes managed config invoking the hook → a real
  * hook fire produces a canonical event observed at the stub's POST /v1/agent-events, carrying
- * the login-issued token as Bearer and with paths hashed. No mocks of the sender/normalizer —
+ * the pair-issued token as Bearer and with paths hashed. No mocks of the sender/normalizer —
  * the real code paths run; only the backend is the stub.
  *
  * DEFERRED (noted follow-up): the LIVE leg against the product `wrangler dev` (EVT-INGEST)
@@ -39,7 +39,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "./cli";
 import { createAgentCommand } from "./commands/agent";
 import { createHookCommand } from "./commands/hook";
-import { createLoginCommand } from "./commands/login";
+import { createPairCommand } from "./commands/pair";
 import { EXIT } from "./framework";
 
 const MACHINE_TOKEN = `bbm_TESTONLY_${randomUUID()}`;
@@ -100,17 +100,17 @@ function stubPairing(): typeof fetch {
   }) as unknown as typeof fetch;
 }
 
-describe("CLI-E2E: login → install → hook → delivered", () => {
+describe("CLI-E2E: pair → install → hook → delivered", () => {
   it("runs the whole happy path through the real CLI commands (stub backend)", async () => {
     sink = await StubEventSink.start();
     const sinkUrl = sink.url;
     sandbox = createSandbox();
     const sb = sandbox;
 
-    // 1. login (manual-code device flow) mints + stores the token in the temp HOME.
-    const loginOk = await runCli(["login"], {
+    // 1. pair (manual-code device flow) mints + stores the token in the temp HOME.
+    const pairOk = await runCli(["pair"], {
       commands: [
-        createLoginCommand({
+        createPairCommand({
           fetchImpl: stubPairing(),
           tokenOptions: FILE_ONLY,
           sleep: () => Promise.resolve(),
@@ -119,7 +119,7 @@ describe("CLI-E2E: login → install → hook → delivered", () => {
       ...quiet(),
       ensureConfig: false,
     });
-    expect(loginOk).toBe(EXIT.OK);
+    expect(pairOk).toBe(EXIT.OK);
     expect(await getToken(FILE_ONLY)).toBe(MACHINE_TOKEN);
 
     // 2. agent install all writes managed config invoking the hook.
@@ -161,13 +161,13 @@ describe("CLI-E2E: login → install → hook → delivered", () => {
     expect(hookOk).toBe(EXIT.OK);
     expect(JSON.parse(out.text())).toMatchObject({ outcome: "delivered" });
 
-    // 4. the delivered event is canonical, authed with the login-issued token, paths hashed.
+    // 4. the delivered event is canonical, authed with the pair-issued token, paths hashed.
     expect(sink.received()).toHaveLength(1);
     const delivered = sink.received()[0]!;
     const body = delivered.body as { event_type: string; harness: string };
     expect(body.event_type).toBe("approval_required");
     expect(body.harness).toBe("claude_code");
-    expect(deliveredBearerToken(delivered)).toBe(MACHINE_TOKEN); // token from login → used by hook
+    expect(deliveredBearerToken(delivered)).toBe(MACHINE_TOKEN); // token from pair → used by hook
     assertPathsHashed(delivered, [RAW_CWD, sb.home, sb.realHome]);
     assertNoAbsolutePaths(delivered);
     // No token in the installed harness config.

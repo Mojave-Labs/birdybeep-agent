@@ -9,12 +9,12 @@ import { join } from "node:path";
 
 import { birdyBeepConfigDir } from "@birdybeep/agent-core";
 
-/** Default backend base URL (overridable via env or `birdybeep login`; finalized in a-release). */
+/** Default backend base URL (overridable via env or `birdybeep pair`; finalized in a-release). */
 export const DEFAULT_API_URL = "https://api.birdybeep.com";
 export const CONFIG_FILE = "config.json";
 
 export interface CliConfig {
-  /** Backend base URL (set by `login`); never holds a token. */
+  /** Backend base URL (set by `pair`); never holds a token. */
   apiUrl?: string;
 }
 
@@ -51,4 +51,18 @@ export function resolveApiUrl(): string {
   const env = process.env["BIRDYBEEP_API_URL"];
   if (env !== undefined && env.length > 0) return env;
   return readCliConfig().apiUrl ?? DEFAULT_API_URL;
+}
+
+/** Public npm registry — where `@birdybeep/cli` is published; used by the update notifier. */
+export const DEFAULT_REGISTRY_URL = "https://registry.npmjs.org";
+
+/**
+ * Resolve the npm registry base URL for the passive update check: honor `npm_config_registry`
+ * (which npm/pnpm/yarn export, so a private-registry user's mirror is respected) and fall back to
+ * the public registry. Never carries auth or a token.
+ */
+export function resolveRegistryUrl(): string {
+  const env = process.env["npm_config_registry"];
+  if (env !== undefined && env.length > 0) return env;
+  return DEFAULT_REGISTRY_URL;
 }

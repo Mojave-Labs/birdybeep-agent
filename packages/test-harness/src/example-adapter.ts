@@ -79,7 +79,7 @@ export function seedFileToken(sandbox: Sandbox, token: string): string {
 function readFileToken(sandbox: Sandbox): string {
   const tokenPath = sandbox.path(TOKEN_REL);
   if (!existsSync(tokenPath)) {
-    throw new Error(`no machine token in file store (${tokenPath}); run \`birdybeep login\` first`);
+    throw new Error(`no machine token in file store (${tokenPath}); run \`birdybeep pair\` first`);
   }
   return readFileSync(tokenPath, "utf8").trim();
 }

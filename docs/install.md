@@ -42,12 +42,12 @@ The CLI works on macOS, Linux, and Windows.
 
 ---
 
-## 2. Pair your machine — `birdybeep login`
+## 2. Pair your machine — `birdybeep pair`
 
 Pairing links this machine to your BirdyBeep account so events can be delivered to you.
 
 ```bash
-birdybeep login
+birdybeep pair
 ```
 
 This uses a device-flow pairing handshake. The CLI prints a short link and a code, then waits:
@@ -74,7 +74,7 @@ What this does with your token:
 - The server stores only a **hash** of the token. The token is shown once and can be revoked or
   rotated at any time from the mobile app.
 
-> Note: the pairing backend endpoints are provisional and may change. If `login` can't reach the
+> Note: the pairing backend endpoints are provisional and may change. If `pair` can't reach the
 > backend yet, pair later — adapter installs don't require a token.
 
 To unpair, run `birdybeep logout`, which removes the token from the keychain and the file fallback.
@@ -203,7 +203,7 @@ birdybeep status
 
 ```text
 Machine: MacBook Pro (macos)
-Login:   paired
+Paired:  yes
 Integrations:
   Claude Code: installed
   Codex: needs_trust
@@ -211,9 +211,9 @@ Integrations:
 Queue:   0 queued → 0 delivered, 0 remaining
 ```
 
-`status` shows your machine identity, login state, per-harness integration status, and the local
+`status` shows your machine identity, pairing state, per-harness integration status, and the local
 queue depth. It opportunistically drains any queued events while it runs, and exits non-zero if
-you're not logged in (handy for scripts). Add `--json` for the machine-readable form.
+you're not paired (handy for scripts). Add `--json` for the machine-readable form.
 
 Send a real test event end-to-end:
 
@@ -236,7 +236,34 @@ queue as it goes and exits non-zero if anything is wrong.
 
 ---
 
-## 6. Uninstalling — `birdybeep agent uninstall`
+## 6. Staying up to date
+
+You don't have to check for updates — the CLI does it for you. When you run any command, it prints a
+one-line notice to **stderr** if a newer `@birdybeep/cli` has been published:
+
+```text
+a new version of birdybeep is available: 0.1.0 → 0.2.0
+upgrade with: npm install -g @birdybeep/cli@latest
+```
+
+The notice is **non-intrusive by design**:
+
+- **Cached.** The registry is checked at most once a day; every other run reads a small cache in your
+  config dir, so there's no per-command network hit.
+- **Never on the hot path.** The `hook` command (which runs inside your agent) is never delayed or
+  touched by the check.
+- **Quiet for scripts.** It's skipped under `--json`, `--non-interactive`, non-TTY output (pipes,
+  logs), and `CI`. Turn it off entirely with `NO_UPDATE_NOTIFIER=1` (or
+  `BIRDYBEEP_NO_UPDATE_NOTIFIER=1`). It respects a custom `npm_config_registry` if you have one set.
+- **Advisory only.** It never touches your install — run the printed command (with whichever package
+  manager you installed with) when you're ready.
+
+Once you've upgraded, re-running `birdybeep agent install all` is safe (idempotent) and refreshes any
+adapter config that changed between versions.
+
+---
+
+## 7. Uninstalling — `birdybeep agent uninstall`
 
 Uninstall is the exact inverse of install: it removes only BirdyBeep-managed entries and restores
 your config from the backup.

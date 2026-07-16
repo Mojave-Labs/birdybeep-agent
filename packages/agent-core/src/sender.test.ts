@@ -172,9 +172,32 @@ describe("delivery decision surfaced from the 202 body (9fh)", () => {
     expect(r.decision).toBe("suppressed"); // …but no push — callers must not claim a beep
   });
 
+  it("surfaces a `notified` decision from the real accept ack", async () => {
+    const { sender } = setup(() =>
+      Promise.resolve(jsonResponse(202, { accepted: true, decision: "notified" })),
+    );
+    const r = await sender.send(event());
+    expect(r.outcome).toBe("delivered");
+    expect(r.decision).toBe("notified");
+  });
+
   it("tolerates a 2xx with no parseable decision (older backend)", async () => {
     const { sender } = setup(() => Promise.resolve(new Response("", { status: 202 })));
     const r = await sender.send(event());
+    expect(r.outcome).toBe("delivered");
+    expect(r.decision).toBeUndefined();
+  });
+
+  it("ignores an off-contract 2xx body — the decision is validated against agentEventsResponseSchema (kje4)", async () => {
+    // Missing `accepted`, and an out-of-enum decision: the loose hand-parse would have
+    // surfaced these; the schema-wired parse rejects them → delivered, decision undefined.
+    const noAccepted = setup(() => Promise.resolve(jsonResponse(202, { decision: "notified" })));
+    expect((await noAccepted.sender.send(event())).decision).toBeUndefined();
+
+    const badDecision = setup(() =>
+      Promise.resolve(jsonResponse(202, { accepted: true, decision: "rate_limited" })),
+    );
+    const r = await badDecision.sender.send(event());
     expect(r.outcome).toBe("delivered");
     expect(r.decision).toBeUndefined();
   });

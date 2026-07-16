@@ -66,3 +66,28 @@ export type BirdyBeepAgentEvent = z.infer<typeof birdyBeepAgentEventSchema>;
  */
 export const agentEventsRequestSchema = birdyBeepAgentEventSchema;
 export type AgentEventsRequest = BirdyBeepAgentEvent;
+
+/**
+ * Delivery decisions the worker surfaces in a `POST /v1/agent-events` 202 accept body
+ * (§14.6). The accept-path SUBSET of the product DB's five-value delivery-decision enum:
+ * `rate_limited` / `quota_rejected` are surfaced as 429 error envelopes (§13.4), NEVER in
+ * this `{ accepted, decision }` shape. LOCKSTEP (§16.4) with the product `packages/schemas`
+ * `agentEventDecisionSchema` — keep these three values (and their order) identical.
+ */
+export const AGENT_EVENT_ACCEPT_DECISIONS = ["notified", "deduped", "suppressed"] as const;
+export const agentEventDecisionSchema = z.enum(AGENT_EVENT_ACCEPT_DECISIONS);
+export type AgentEventDecision = z.infer<typeof agentEventDecisionSchema>;
+
+/**
+ * CROSS-REPO RESPONSE CONTRACT — the `POST /v1/agent-events` 202 accept ack, MIRRORED
+ * field-for-field from the product `packages/schemas` `event.ts` (birdybeep-kje4).
+ * `accepted` is always true on this 202 path; `decision` says which accept branch fired.
+ * Parsed by CORE-SENDER so it can tell "push enqueued" (`notified`) from "accepted but no
+ * push" (`suppressed` / `deduped`). WIRE UNCHANGED: the worker already emits exactly this
+ * shape — this only pins the type. Carries no notification title/body (§15.2).
+ */
+export const agentEventsResponseSchema = z.object({
+  accepted: z.boolean(),
+  decision: agentEventDecisionSchema,
+});
+export type AgentEventsResponse = z.infer<typeof agentEventsResponseSchema>;

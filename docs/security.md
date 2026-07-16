@@ -187,7 +187,7 @@ This is the point of a public, auditable package — don't take our word for it:
 
 ## Changing surfaces
 
-- The `login` device-flow pairing endpoints (`POST /v1/pair/start`, `POST /v1/pair/token`) and the
+- The `pair` device-flow pairing endpoints (`POST /v1/pair/start`, `POST /v1/pair/token`) and the
   batched integration-status endpoint (`POST /v1/integrations/status`) are cross-repo contracts; the
   request/response schemas are mirrored field-for-field in `agent-core` (kept in lockstep with the
   product's `packages/schemas`). The live pass against the product backend is a deferred follow-up.

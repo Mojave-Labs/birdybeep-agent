@@ -7,8 +7,8 @@
 import { createAgentCommand } from "./commands/agent";
 import { createDoctorCommand } from "./commands/doctor";
 import { createHookCommand } from "./commands/hook";
-import { createLoginCommand } from "./commands/login";
-import { createLogoutCommand } from "./commands/logout";
+import { createLogoutCommand, createUnpairCommand } from "./commands/logout";
+import { createPairCommand } from "./commands/pair";
 import { createQueueCommand } from "./commands/queue";
 import { createReportStatusCommand } from "./commands/report-status";
 import { createStatusCommand } from "./commands/status";
@@ -18,8 +18,9 @@ import { type Command } from "./framework";
 /** Build the full §9.4 command tree. */
 export function buildCommands(): Command[] {
   return [
-    createLoginCommand(),
+    createPairCommand(),
     createLogoutCommand(),
+    createUnpairCommand(),
     createStatusCommand(),
     createTestCommand(),
     createDoctorCommand(),

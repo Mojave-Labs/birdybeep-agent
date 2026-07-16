@@ -1,6 +1,6 @@
 # Pairing
 
-`birdybeep login` pairs this machine with your BirdyBeep account so the agent adapters can send
+`birdybeep pair` pairs this machine with your BirdyBeep account so the agent adapters can send
 you Beeps (notifications). Pairing uses a device-authorization-style flow: the CLI shows you a
 short link and a code, you confirm in the BirdyBeep mobile app, and the CLI receives and stores a
 machine token locally.
@@ -13,7 +13,7 @@ CLI once, and stored locally in your OS keychain (or a strict-permission file). 
 > **Wire contract.** The pairing endpoints (`POST /v1/pair/start`, `POST /v1/pair/token`) are a
 > cross-repo contract owned by the BirdyBeep product backend; the request/response schemas are
 > mirrored field-for-field in `agent-core` (kept in lockstep with the product's `packages/schemas`).
-> The CLI reads responses tolerantly. The live `birdybeep login` pass against the product backend
+> The CLI reads responses tolerantly. The live `birdybeep pair` pass against the product backend
 > is a deferred follow-up.
 
 ---
@@ -21,7 +21,7 @@ CLI once, and stored locally in your OS keychain (or a strict-permission file). 
 ## Quick start
 
 ```bash
-birdybeep login
+birdybeep pair
 ```
 
 You'll see a QR code, a link, and a short code. Scan the QR (or open the link / type the code),
@@ -36,7 +36,7 @@ Waiting for confirmation…
 ✓ Paired. Run `birdybeep test` to send a test Beep.
 ```
 
-`birdybeep login` derives this machine's label from your hostname/OS and sends it when it opens
+`birdybeep pair` derives this machine's label from your hostname/OS and sends it when it opens
 the session (editable later in the app). Once paired, run [`birdybeep test`](./install.md) to send
 a test Beep, or `birdybeep status` to check integration state.
 
@@ -44,7 +44,7 @@ a test Beep, or `birdybeep status` to check integration state.
 
 ## How the device flow works
 
-1. **Start.** `birdybeep login` calls `POST /v1/pair/start` with this machine's label (derived from
+1. **Start.** `birdybeep pair` calls `POST /v1/pair/start` with this machine's label (derived from
    your hostname/OS), its OS, and the CLI version. The backend returns a **device code**, a
    human-typeable **user code**, a **QR payload** (which encodes only the short user code), and an
    **`expires_at`** for the pairing session.
@@ -63,7 +63,7 @@ If you don't confirm before the pairing session expires, the CLI stops polling a
 retry:
 
 ```text
-Pairing timed out before it was confirmed. Run `birdybeep login` to retry.
+Pairing timed out before it was confirmed. Run `birdybeep pair` to retry.
 ```
 
 The pairing session is short-lived (the backend sets `expires_at` — a ~10-minute window), the user
@@ -95,7 +95,7 @@ Many agent boxes are remote — a CI runner, a cloud dev box, a server you reach
 browser or camera there, and that's fine: pairing never needs one. The CLI prints the pair URL and
 the **user code** as plain text, so you:
 
-1. Run `birdybeep login` on the remote machine.
+1. Run `birdybeep pair` on the remote machine.
 2. Copy the link or the short code from the terminal.
 3. Open the link (or enter the code) in the BirdyBeep app on **any** device — your phone or a
    laptop.
@@ -106,7 +106,7 @@ you can pair a headless box without ever exposing a browser or token on it.
 
 ### Non-interactive mode
 
-`birdybeep login` works with the global `--non-interactive` flag (never prompts, fails fast) and
+`birdybeep pair` works with the global `--non-interactive` flag (never prompts, fails fast) and
 `--json` (machine-readable output). In `--json` mode the output is NDJSON — one JSON object per
 line. The first line is emitted as soon as the pairing session opens, carrying the code your
 script/agent needs to surface for approval; the last line is the success result:
@@ -130,7 +130,7 @@ This is the core of the trust story:
   try to claim a pairing session that you'd then have to approve in the app.
 - **Single-use code.** The user code is consumed when you approve it; it can't be replayed.
 - **Short expiry.** The pairing session is time-boxed (the backend sets `expires_at` — a
-  ~10-minute window). After it expires, the code is dead and you simply run `birdybeep login` again.
+  ~10-minute window). After it expires, the code is dead and you simply run `birdybeep pair` again.
 - **Token minted server-side, shown once.** The machine token is created by the backend and handed
   to the CLI exactly once during pairing. The server stores only a **hash** of it, never the token
   itself.
@@ -157,34 +157,54 @@ permissions and the keychain fallback, live in [Security](./security.md).
 
 ---
 
-## Logout
+## Unpair vs. logout
+
+Two commands tear down this machine's pairing. They differ in whether they touch the **server**:
 
 ```bash
-birdybeep logout
+birdybeep unpair   # revoke the machine server-side AND remove the local token (the reverse of `pair`)
+birdybeep logout   # remove the local token only (the machine stays on your account)
 ```
 
+### `birdybeep unpair`
+
+`unpair` is the true reverse of `pair`. It **revokes the machine on the server** — so it disappears
+from the BirdyBeep app and its token stops working everywhere — and then removes the local token:
+
+```text
+Unpaired — the machine was revoked and removed from your account.
+```
+
+If the backend can't be reached, `unpair` still removes the local token and tells you to finish the
+job in the app, so no stale machine lingers on your account:
+
+```text
+Unpaired locally, but the server was unreachable — the machine may still show in the app. Open
+BirdyBeep and revoke it there to fully remove it.
+```
+
+### `birdybeep logout`
+
 `birdybeep logout` removes the local machine token from **both** the OS keychain and the
-strict-permission file fallback:
+strict-permission file fallback, but **does not touch the server** — the machine stays paired on your
+account, and you can sign back in by re-pairing:
 
 ```text
 Logged out — the machine token was removed.
 ```
 
-It's **idempotent** — running it when you're already logged out is not an error. Logout only
-touches the token; it does **not** remove your agent integrations (use
-[`birdybeep agent uninstall`](./install.md) for that) or clear the local event queue.
-
-To fully sign a machine out everywhere, run `birdybeep logout` on the machine **and** revoke its
-token from the BirdyBeep app — revoking invalidates the server-side hash even if a copy of the
-token still exists somewhere.
+Both commands are **idempotent** (running them when already signed out is not an error) and neither
+removes your agent integrations (use [`birdybeep agent uninstall`](./install.md) for that) or clears
+the local event queue. You can also revoke any machine directly from the BirdyBeep app at any time —
+revoking invalidates the server-side token hash even if a copy of the token still exists somewhere.
 
 ---
 
 ## Troubleshooting
 
-- **Pairing timed out.** You didn't confirm before the window closed. Run `birdybeep login` again
+- **Pairing timed out.** You didn't confirm before the window closed. Run `birdybeep pair` again
   for a fresh code.
-- **"Code already used."** The user code is single-use. Start over with `birdybeep login`.
+- **"Code already used."** The user code is single-use. Start over with `birdybeep pair`.
 - **Not receiving Beeps after pairing.** Confirm the machine is still authorized in the app (it may
   have been revoked) and run `birdybeep doctor` to check the token, adapters, and backend
   reachability.

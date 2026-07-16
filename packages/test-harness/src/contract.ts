@@ -276,19 +276,60 @@ export function assertNoTokenInRepo(repoRoot: string, token: string): void {
   assert.equal(hits.length, 0, `token leaked into repo-local file(s): ${hits.join(", ")}`);
 }
 
+/** Content hash of a file, or `null` when the path does not exist. */
+function hashIfPresent(abs: string): string | null {
+  if (!existsSync(abs)) return null;
+  return createHash("sha256").update(readFileSync(abs)).digest("hex");
+}
+
+/** A content snapshot of watched paths in the user's REAL home, taken BEFORE an install. */
+export interface RealHomeSnapshot {
+  readonly home: string;
+  readonly entries: readonly { readonly rel: string; readonly hash: string | null }[];
+}
+
 /**
- * Assert the user's REAL home dir was not touched by the install. Pass paths that
- * are UNIQUELY created by BirdyBeep (e.g. the `*.birdybeep-backup` file, the token
- * file) — never paths that can legitimately pre-exist (like `.claude/settings.json`,
- * which a real Claude Code user already has). If the install had escaped the
- * sandbox into the real home, these uniquely-ours artifacts would appear there.
+ * Snapshot the watched paths in the user's REAL home so an install can later be proven
+ * not to have escaped its sandbox (see {@link assertRealHomeUnchanged}).
+ *
+ * The oracle is MUTATION, not existence. An earlier version asserted that uniquely-ours
+ * artifacts (the `*.birdybeep-backup`, the token file) simply did not EXIST in the real
+ * home — but those are exactly what a *legitimate* `birdybeep install` leaves behind, so
+ * the check failed on every machine where BirdyBeep was genuinely installed (every
+ * dogfooding machine, and any real user's) while nothing had escaped at all.
+ *
+ * Comparing content before/after is both correct on those machines AND strictly stronger:
+ * because a path is no longer disqualified merely for being able to pre-exist, paths like
+ * `.claude/settings.json` can now be watched too — a legit one is unchanged by a sandboxed
+ * install, while an escaping one would be patched in place.
  */
-export function assertRealHomeUntouched(
+export function snapshotRealHome(
   realHome: string,
-  birdybeepArtifactRelPaths: readonly string[],
-): void {
-  for (const rel of birdybeepArtifactRelPaths) {
-    const abs = join(realHome, rel);
-    assert.ok(!existsSync(abs), `install escaped the sandbox and wrote to the real home: ${abs}`);
+  watchedRelPaths: readonly string[],
+): RealHomeSnapshot {
+  return {
+    home: realHome,
+    entries: watchedRelPaths.map((rel) => ({ rel, hash: hashIfPresent(join(realHome, rel)) })),
+  };
+}
+
+/**
+ * Assert the user's REAL home is byte-for-byte as it was when {@link snapshotRealHome} ran —
+ * i.e. the install under test stayed inside its sandbox. Catches an escape in all three
+ * shapes: creating, modifying, or deleting a real-home file.
+ */
+export function assertRealHomeUnchanged(before: RealHomeSnapshot): void {
+  for (const { rel, hash } of before.entries) {
+    const abs = join(before.home, rel);
+    const now = hashIfPresent(abs);
+    if (hash === null) {
+      assert.ok(
+        now === null,
+        `install escaped the sandbox and CREATED a file in the real home: ${abs}`,
+      );
+      continue;
+    }
+    assert.ok(now !== null, `install escaped the sandbox and DELETED a real-home file: ${abs}`);
+    assert.equal(now, hash, `install escaped the sandbox and MODIFIED a real-home file: ${abs}`);
   }
 }

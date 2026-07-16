@@ -3,7 +3,8 @@
  * the state of `~/.codex/config.toml` (is the BirdyBeep notify managed + are all lifecycle
  * hook entries present?), and the trust marker (has a real event been seen?). Codex is
  * unique: writing config is NOT "installed" — hooks are trust-gated, so we report
- * `needs_trust` until the first real event flips the marker (CX-TRUST). doctor() diagnoses
+ * `needs_trust` until a real trusted lifecycle hook flips the marker (CX-TRUST; a
+ * turn-complete beep via the ungated notify program does not count). doctor() diagnoses
  * each failure mode with an actionable fix. Both are READ-ONLY: never mutate config.
  */
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
@@ -177,7 +178,9 @@ export async function codexDoctor(opts: CodexStatusOptions = {}): Promise<Doctor
             },
       );
 
-      // 4. Trust granted (a real event has been seen)?
+      // 4. Trust granted (a trust-gated lifecycle hook has actually fired)?
+      // NB: turn-complete beeps can already be arriving via the ungated `notify` program
+      // while the hooks are still untrusted — so the detail must not say "no events yet".
       if (configured) {
         checks.push(
           hasCodexEventBeenSeen(opts)
@@ -186,7 +189,10 @@ export async function codexDoctor(opts: CodexStatusOptions = {}): Promise<Doctor
                 name: "Codex hooks trusted",
                 ok: false,
                 status: "needs_trust",
-                detail: "BirdyBeep hooks are installed but Codex has not sent an event yet.",
+                detail:
+                  "BirdyBeep hooks are installed but Codex has not fired a trusted lifecycle hook yet. " +
+                  "Until they are trusted, Codex silently skips them — so approval beeps will NOT arrive " +
+                  "(turn-complete beeps still work: they come from `notify`, which needs no trust).",
                 remedy: "Open Codex and run /hooks to trust the BirdyBeep hooks.",
               },
         );
@@ -224,7 +230,7 @@ export async function codexDoctor(opts: CodexStatusOptions = {}): Promise<Doctor
           ok: false,
           status: "error",
           detail: "No BirdyBeep machine token found.",
-          remedy: "Run `birdybeep login` to pair this machine.",
+          remedy: "Run `birdybeep pair` to pair this machine.",
         },
   );
 

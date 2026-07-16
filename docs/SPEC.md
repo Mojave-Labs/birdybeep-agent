@@ -57,7 +57,7 @@ There is **no** local background daemon in MVP. Local delivery behavior:
 ## 4. CLI commands (PRD §9.4)
 
 ```bash
-birdybeep login
+birdybeep pair
 birdybeep logout
 birdybeep status
 birdybeep test
@@ -146,7 +146,7 @@ Codex may require one-time hook trust. Open Codex and run /hooks.
 After trust is granted, Codex sessions on this machine will be tracked automatically.
 ```
 
-Do **not** mark Codex fully installed until the first event arrives; surface the state as `needs_trust` until then.
+Do **not** mark Codex fully installed until a trusted **lifecycle hook** fires; surface the state as `needs_trust` until then. A turn-complete beep via the ungated `notify` program is **not** proof of trust and must not flip the state (see birdybeep-agent-qyf).
 
 ## 7. OpenCode integration (PRD §9.7)
 
@@ -235,7 +235,7 @@ type AgentSessionStatus =
 ## 11. Security, privacy & what's sent (PRD §15.1–15.3)
 
 **Pairing protocol (device-code flow; schemas mirrored from the product `packages/schemas`):**
-`birdybeep login` POSTs `/v1/pair/start` (`{ machine_label, os?, cli_version?, requested_scopes? }`)
+`birdybeep pair` POSTs `/v1/pair/start` (`{ machine_label, os?, cli_version?, requested_scopes? }`)
 → bare `{ device_code, user_code, qr_payload, expires_at }`; it shows `qr_payload` + `user_code`
 (the QR carries only the short code, never a token) and polls `POST /v1/pair/token`
 (`{ device_code, machine_fingerprint? }`) — a `validation_failed`/4xx means "not approved yet,

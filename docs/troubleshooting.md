@@ -54,7 +54,7 @@ birdybeep status
 
 `status` prints each integration's state (`installed`, `not_detected`, `needs_trust`, `needs_restart`,
 `unknown`, `error`, `revoked`) and also drains the queue opportunistically. It exits non-zero when
-you are not logged in.
+you are not paired.
 
 Want machine-readable output for either command? Add `--json` — every finding is mirrored there.
 
@@ -97,8 +97,10 @@ checks appear.
 ```
 
 **Why** — Codex is special. Writing the config (`notify` + the lifecycle hooks in `~/.codex/config.toml`)
-is **not** enough to count as installed: Codex requires a **one-time trust** of those hooks. Until the
-first real event flows through, BirdyBeep deliberately reports `needs_trust` rather than `installed`.
+is **not** enough to count as installed: Codex requires a **one-time trust** of those hooks. Until a
+trusted **lifecycle hook** actually fires, BirdyBeep deliberately reports `needs_trust` rather than
+`installed`. (Turn-complete beeps arriving via the ungated `notify` program do **not** count — they
+work without trust, so they are no proof the approval hooks are trusted.)
 
 **Fix** — open Codex and run:
 
@@ -106,9 +108,9 @@ first real event flows through, BirdyBeep deliberately reports `needs_trust` rat
 /hooks
 ```
 
-Trust the BirdyBeep hooks. The status flips to `installed` after the **first real event** is seen — it
-does not flip the moment you trust. Just keep working in Codex; the next lifecycle event (a session
-start, a tool call, etc.) marks it trusted, and `doctor` will then show:
+Trust the BirdyBeep hooks. The status flips to `installed` after the **first trusted lifecycle hook**
+fires — it does not flip the moment you trust. Just keep working in Codex; the next lifecycle event (a
+session start, a tool call, an approval prompt, etc.) marks it trusted, and `doctor` will then show:
 
 ```
 ✓  Codex: Codex hooks trusted
@@ -207,45 +209,49 @@ the file/directory permissions so BirdyBeep can update — and later cleanly uni
 
 ```
 ✗  Machine token — No machine token found.
-     → Run `birdybeep login` to pair this machine.
+     → Run `birdybeep pair` to pair this machine.
 ```
 
 You may also see a per-harness variant:
 
 ```
 ✗  Codex: Machine token present — No BirdyBeep machine token found.
-     → Run `birdybeep login` to pair this machine.
+     → Run `birdybeep pair` to pair this machine.
 ```
 
 And `status` shows:
 
 ```
-Login:   NOT logged in — run `birdybeep login`
+Paired:  no — run `birdybeep pair`
 ```
 
 **Fix** — pair the machine:
 
 ```bash
-birdybeep login
+birdybeep pair
 ```
 
-`login` runs a device-flow pairing: it shows a short URL and a code, then polls until you approve it from
+`pair` runs a device-flow pairing: it shows a short URL and a code, then polls until you approve it from
 the mobile app. On success it stores the machine token in the OS keychain (or, where there is no keychain,
 a strict-permission file in your user config directory). The token is **never** written into harness
 config or any repo file.
 
 > The pairing endpoints are provisional and may change in a future release.
 
-**If your pairing code expired or was already used**, just run `birdybeep login` again to get a fresh
+**If your pairing code expired or was already used**, just run `birdybeep pair` again to get a fresh
 code — codes are short-lived and single-use.
 
 **If you revoked the machine from the mobile app**, the stored token stops working. Tokens are shown once
-and can be revoked at any time; the server only ever stores token _hashes_. Re-pair with `birdybeep login`.
+and can be revoked at any time; the server only ever stores token _hashes_. Re-pair with `birdybeep pair`.
 To clear a stale local token first:
 
 ```bash
 birdybeep logout   # removes the token from keychain + file fallback; safe to run anytime
 ```
+
+**To remove a machine entirely** (so it stops showing in the app), run `birdybeep unpair` instead —
+it revokes the machine on the server _and_ clears the local token. `logout` only clears the local
+token; the machine stays paired on your account until you unpair it here or revoke it in the app.
 
 ---
 

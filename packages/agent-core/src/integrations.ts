@@ -41,16 +41,29 @@ export const integrationStatusReportSchema = z.object({
 });
 
 /**
- * The response: the server echoes each harness's EFFECTIVE status (e.g. it forces
- * Codex → `needs_trust` until the first event regardless of what the CLI reported).
- * Tolerant of extra fields so a server addition won't break parsing.
+ * CROSS-REPO RESPONSE CONTRACT — one result per reported harness, MIRRORED field-for-field
+ * from the product `packages/schemas` `integrations.ts` `integrationStatusResultSchema`
+ * (birdybeep-kje4). `status` is the EFFECTIVE status the server stored (e.g. it forces a
+ * Codex `installed` report to `needs_trust` until a trusted lifecycle hook fires, §9.6/§21.2);
+ * `updated` is false when a revoked integration was skipped rather than written. WIRE
+ * UNCHANGED: the worker already emits exactly `{ harness, status, updated }`.
+ */
+export const integrationStatusResultSchema = z.object({
+  harness: harnessSchema,
+  status: integrationStatusSchema,
+  updated: z.boolean(),
+});
+
+/**
+ * The batched `POST /v1/integrations/status` response. LOCKSTEP (§16.4) with the product
+ * `integrationStatusResponseSchema` — `updated` is REQUIRED (not tolerated-if-absent) and
+ * unknown fields are stripped, exactly matching the product contract kje4 formalized.
  */
 export const integrationStatusResponseSchema = z.object({
-  integrations: z.array(
-    z.object({ harness: harnessSchema, status: integrationStatusSchema }).catchall(z.unknown()),
-  ),
+  integrations: z.array(integrationStatusResultSchema),
 });
 
 export type IntegrationStatusItem = z.infer<typeof integrationStatusItemSchema>;
 export type IntegrationStatusReport = z.infer<typeof integrationStatusReportSchema>;
+export type IntegrationStatusResult = z.infer<typeof integrationStatusResultSchema>;
 export type IntegrationStatusResponse = z.infer<typeof integrationStatusResponseSchema>;

@@ -1,5 +1,5 @@
 /**
- * `birdybeep login` (§7.1/§7.2/§9.4) — pair this machine via the device-code flow.
+ * `birdybeep pair` (§7.1/§7.2/§9.4) — pair this machine via the device-code flow.
  * `POST /v1/pair/start` (machine_label derived from hostname/OS) → show a scannable
  * QR matrix + the pair link + `user_code` → poll `POST /v1/pair/token` with the device
  * code (+ stable machine fingerprint) until it returns the durable token or the
@@ -16,7 +16,13 @@
  *
  * fetch/sleep/clock/QR/TTY are injectable for hermetic tests.
  */
-import { getMachineIdentity, setToken, type TokenStoreOptions } from "@birdybeep/agent-core";
+import {
+  deriveCodeChallengeS256,
+  generateCodeVerifier,
+  getMachineIdentity,
+  setToken,
+  type TokenStoreOptions,
+} from "@birdybeep/agent-core";
 // uqr is the CLI's ONLY third-party runtime dep (MIT, itself zero-dependency), pinned
 // EXACTLY in package.json: QR encoding (Reed–Solomon + masking) is too error-prone to
 // vendor, and a floating range would defeat the small-auditable-supply-chain goal (§16.4).
@@ -31,7 +37,7 @@ import { CLI_VERSION } from "../version";
 export const DEFAULT_POLL_INTERVAL_MS = 2000;
 
 /**
- * How often to reprint a "still waiting…" heartbeat while polling. Without it, `login`
+ * How often to reprint a "still waiting…" heartbeat while polling. Without it, `pair`
  * prints the code once and then appears frozen ("stuck doing nothing") for the whole
  * 10-minute window — the reported bug. Time-gated on the injected clock so it never
  * fires spuriously in the fast, instant-sleep tests.
@@ -46,7 +52,7 @@ export function renderQrMatrix(qrPayload: string): string {
   return renderUnicodeCompact(qrPayload, { border: 2 });
 }
 
-export interface LoginCommandDeps {
+export interface PairCommandDeps {
   fetchImpl?: typeof fetch;
   tokenOptions?: TokenStoreOptions;
   /** Injectable delay between polls (default real setTimeout; tests make it instant). */
@@ -61,7 +67,7 @@ export interface LoginCommandDeps {
   pollIntervalMs?: number;
 }
 
-export function createLoginCommand(deps: LoginCommandDeps = {}): Command {
+export function createPairCommand(deps: PairCommandDeps = {}): Command {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const clock = deps.now ?? (() => Date.now());
@@ -69,15 +75,22 @@ export function createLoginCommand(deps: LoginCommandDeps = {}): Command {
   const intervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
   return {
-    name: "login",
+    name: "pair",
     summary: "Pair this machine with your BirdyBeep account (QR or manual)",
-    usage: "birdybeep login [--json]",
+    usage: "birdybeep pair [--json]",
     run: async (ctx) => {
       const apiUrl = resolveApiUrl();
       const identity = getMachineIdentity(); // { label, os, fingerprintHash }
+      // PKCE (dgxd): commit to a fresh random verifier by sending only its S256 challenge on
+      // /pair/start; prove possession of the verifier on every /pair/token. The verifier is a
+      // short-lived SECRET kept in memory for this `pair` run ONLY — never persisted to disk or
+      // the token store. Binds the token mint to THIS CLI so an interceptor of the device_code
+      // can't redeem it. A newer server enforces it; an older one ignores it (backward compatible).
+      const codeVerifier = generateCodeVerifier();
+      const codeChallenge = deriveCodeChallengeS256(codeVerifier);
       const start = await pairStart(
         apiUrl,
-        { machineLabel: identity.label, os: identity.os, cliVersion: CLI_VERSION },
+        { machineLabel: identity.label, os: identity.os, cliVersion: CLI_VERSION, codeChallenge },
         fetchImpl,
       );
 
@@ -121,6 +134,7 @@ export function createLoginCommand(deps: LoginCommandDeps = {}): Command {
           start.device_code,
           fetchImpl,
           identity.fingerprintHash,
+          codeVerifier, // PKCE proof-of-possession (dgxd) — sent on every poll
         );
         if (poll.status === "paired") {
           paired = poll;
@@ -157,7 +171,7 @@ export function createLoginCommand(deps: LoginCommandDeps = {}): Command {
         // so scripts can key off the last parseable line instead of only the exit code.
         ctx.io.result({ paired: false, reason: "timeout" });
         ctx.io.errline(
-          "Pairing timed out before you approved it. In the BirdyBeep app, tap “pair a machine”, scan the QR (or enter the code), then run `birdybeep login` again.",
+          "Pairing timed out before you approved it. In the BirdyBeep app, tap “pair a machine”, scan the QR (or enter the code), then run `birdybeep pair` again.",
         );
         return EXIT.ERROR;
       }
@@ -166,9 +180,14 @@ export function createLoginCommand(deps: LoginCommandDeps = {}): Command {
       await setToken(paired.machineToken, deps.tokenOptions ?? {});
       writeCliConfig({ apiUrl });
 
-      ctx.io.emit(`✓ Paired. Run \`birdybeep test\` to send a test Beep.`, {
+      // Surface the approving account (dgxd) when the server reports it, so a human notices a
+      // wrong-account approval before trusting the machine. Additive: absent from older servers.
+      const approvedBy = paired.approvedByEmail;
+      const humanSuffix = approvedBy !== undefined ? ` to ${approvedBy}` : "";
+      ctx.io.emit(`✓ Paired${humanSuffix}. Run \`birdybeep test\` to send a test Beep.`, {
         paired: true,
         machineId: paired.machineId,
+        ...(approvedBy !== undefined ? { approvedByEmail: approvedBy } : {}),
       });
       return EXIT.OK;
     },

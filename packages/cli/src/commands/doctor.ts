@@ -17,7 +17,7 @@ import { codexAdapter } from "@birdybeep/codex";
 import { opencodeAdapter } from "@birdybeep/opencode";
 
 import { resolveApiUrl } from "../config";
-import { isLoggedIn, localQueueDepth } from "../diagnostics";
+import { isPaired, localQueueDepth } from "../diagnostics";
 import { type Command, EXIT } from "../framework";
 
 const DEFAULT_ADAPTERS: AgentAdapter[] = [claudeCodeAdapter, codexAdapter, opencodeAdapter];
@@ -70,15 +70,15 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
       const apiUrl = resolveApiUrl();
 
       // 1. Machine token.
-      const loggedIn = await isLoggedIn(deps.tokenOptions ?? {});
+      const paired = await isPaired(deps.tokenOptions ?? {});
       checks.push(
-        loggedIn
+        paired
           ? { name: "Machine token", ok: true }
           : {
               name: "Machine token",
               ok: false,
               detail: "No machine token found.",
-              remedy: "Run `birdybeep login` to pair this machine.",
+              remedy: "Run `birdybeep pair` to pair this machine.",
             },
       );
 

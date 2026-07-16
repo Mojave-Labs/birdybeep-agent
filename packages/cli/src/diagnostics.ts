@@ -1,6 +1,6 @@
 /**
  * Shared status/queue plumbing used by `birdybeep status` and `birdybeep doctor`: gather
- * each adapter's integration status, the machine identity + login state, and local queue
+ * each adapter's integration status, the machine identity + pairing state, and local queue
  * depth. Read-only + privacy-safe — never prints token material or notification bodies.
  */
 import {
@@ -29,8 +29,8 @@ export async function gatherIntegrations(adapters: AgentAdapter[]): Promise<Inte
   );
 }
 
-/** Is a machine token present in the secure store? (login state — never prints the token.) */
-export async function isLoggedIn(tokenOptions: TokenStoreOptions = {}): Promise<boolean> {
+/** Is a machine token present in the secure store? (pairing state — never prints the token.) */
+export async function isPaired(tokenOptions: TokenStoreOptions = {}): Promise<boolean> {
   return (await getToken(tokenOptions)) !== null;
 }
 

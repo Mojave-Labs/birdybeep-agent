@@ -63,7 +63,7 @@ _PRD: §9.1-9.3, §10_
 _PRD: §9.4, §7.2, §7.3_
 
 - `P0` **CLI framework + global structure** (task, phase 3)
-- `P0` **birdybeep login (QR + manual)** (feature, phase 3)
+- `P0` **birdybeep pair (QR + manual)** (feature, phase 3)
 - `P1` **birdybeep logout** (feature, phase 3)
 - `P1` **birdybeep status** (feature, phase 3)
 - `P1` **birdybeep test** (feature, phase 3)
@@ -73,7 +73,7 @@ _PRD: §9.4, §7.2, §7.3_
 - `P0` **birdybeep hook claude|codex|opencode** (feature, phase 3)
 - `P1` **CLI reports integration status to backend** (feature, phase 3)
 - `P2` **birdybeep queue clear (debug)** (feature, phase 3)
-- `P0` **CLI end-to-end (login→install→hook→delivered)** (feature, phase 3)
+- `P0` **CLI end-to-end (pair→install→hook→delivered)** (feature, phase 3)
 - `P1` **Offline-queue drain + non-blocking E2E** (feature, phase 3)
 
 ### Claude Code adapter (highest priority)  ·  `epic:a-claude`  ·  7 tickets

@@ -1,7 +1,7 @@
 /**
- * `birdybeep logout` + `birdybeep queue clear` proof (hermetic temp HOME): logout removes
- * the machine token from the store (idempotent), and queue clear empties the local queue
- * and reports the count.
+ * `birdybeep logout` / `birdybeep unpair` + `birdybeep queue clear` proof (hermetic temp
+ * HOME): logout and its `unpair` twin both remove the machine token from the store
+ * (idempotent), and queue clear empties the local queue and reports the count.
  */
 import { randomUUID } from "node:crypto";
 
@@ -18,7 +18,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { runCli } from "../cli";
 import { EXIT } from "../framework";
 import { runHookCommand } from "./hook";
-import { createLogoutCommand } from "./logout";
+import { createLogoutCommand, createUnpairCommand } from "./logout";
 import { createQueueCommand } from "./queue";
 
 const TOKEN = `bbm_TESTONLY_${randomUUID()}`;
@@ -61,6 +61,86 @@ describe("birdybeep logout", () => {
       ensureConfig: false,
     });
     expect(code2).toBe(EXIT.OK);
+  });
+});
+
+describe("birdybeep unpair", () => {
+  /** A fetch that records its calls and returns a fixed status. */
+  function recordingFetch(status: number) {
+    const calls: { url: string; auth: string | null; method: string | undefined }[] = [];
+    const impl = ((url: string | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      calls.push({
+        url: String(url),
+        auth: headers.get("authorization"),
+        method: init?.method,
+      });
+      return Promise.resolve(new Response(JSON.stringify({ revoked: true }), { status }));
+    }) as unknown as typeof fetch;
+    return { impl, calls };
+  }
+
+  it("revokes the machine server-side with its token, THEN clears the local token", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const { impl, calls } = recordingFetch(200);
+
+    const cmd = createUnpairCommand({ tokenOptions: FILE_ONLY, fetchImpl: impl });
+    const out = capture();
+    const code = await runCli(["unpair", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+
+    expect(code).toBe(EXIT.OK);
+    expect(JSON.parse(out.text())).toEqual({ unpaired: true, serverRevoked: true });
+    // It called the self-revoke endpoint with the machine token as a bearer, BEFORE clearing it.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toMatch(/\/v1\/machine\/revoke-self$/);
+    expect(calls[0]!.method).toBe("POST");
+    expect(calls[0]!.auth).toBe(`Bearer ${TOKEN}`);
+    // Local token is gone afterward.
+    expect(await getToken(FILE_ONLY)).toBeNull();
+  });
+
+  it("still clears the local token (and reports it) when the server is unreachable", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const offline = (() => Promise.reject(new Error("offline"))) as unknown as typeof fetch;
+
+    const cmd = createUnpairCommand({ tokenOptions: FILE_ONLY, fetchImpl: offline });
+    const out = capture();
+    const code = await runCli(["unpair", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+
+    expect(code).toBe(EXIT.OK);
+    // Offline → serverRevoked:false so the human copy tells the user to revoke in the app.
+    expect(JSON.parse(out.text())).toEqual({ unpaired: true, serverRevoked: false });
+    expect(await getToken(FILE_ONLY)).toBeNull(); // token still cleared — unpair works offline
+  });
+
+  it("is idempotent — unpairing with no local token never calls the server and succeeds", async () => {
+    sandbox = createSandbox();
+    const { impl, calls } = recordingFetch(200);
+
+    const cmd = createUnpairCommand({ tokenOptions: FILE_ONLY, fetchImpl: impl });
+    const out = capture();
+    const code = await runCli(["unpair", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+
+    expect(code).toBe(EXIT.OK);
+    expect(JSON.parse(out.text())).toEqual({ unpaired: true, serverRevoked: false });
+    expect(calls).toHaveLength(0); // no token → nothing to revoke server-side
   });
 });
 

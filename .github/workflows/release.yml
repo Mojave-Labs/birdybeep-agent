@@ -44,7 +44,7 @@ jobs:
     name: release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           # Changesets needs full history to diff versions / write changelogs.
           fetch-depth: 0
@@ -78,9 +78,14 @@ jobs:
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      # SHA-pinned, not tag-pinned: this action receives NPM_TOKEN and the OIDC
+      # id-token, so a retargeted `v1` tag upstream would execute attacker code with
+      # publish credentials in scope on our next release, invisibly to review. Bump
+      # via Dependabot (.github/dependabot.yml), which rewrites the SHA + comment
+      # together. Enforced by packages/test-harness/src/workflow-pinning.test.ts.
       - name: Create Version PR or publish to npm
         id: changesets
-        uses: changesets/action@v1
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
         with:
           # Default `version` command (`changeset version`) applies the fixed-group
           # bump + changelogs for the Version PR. `publish` runs only once that PR
