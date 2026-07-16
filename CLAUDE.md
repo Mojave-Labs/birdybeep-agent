@@ -58,6 +58,8 @@ This package edits real config files in users' home directories and hooks into r
 **Notes:**
 - **Free-tier cap:** the ML workspace is on Linear's free plan (~250 issues). Creating issues *fails at the cap* — that's what surfaced as bd's "not returned in batch create response" (a cap symptom, not a beads bug). Push **active-only** (leave closed history in beads/Dolt); single-issue `bd linear push <id>` is the reliable path.
 - Tag new issues with the **`surface`** label (usually `agent`; also backend/web/mobile/cli) so the mirror's cross-surface views work.
+- **Do NOT run `bd repo sync` / `bd repo add`** (multi-repo hydration) — it imports the *sibling* repo's issues into this DB and the auto-export hooks would commit them, re-polluting. For cross-repo context, read the shared Linear project or peek with `bd -C /path/to/sibling <cmd>`.
+- **Beads vs git conflicts:** on a `.beads/issues.jsonl` conflict during `git pull --rebase`/merge, don't hand-merge it — the Dolt DB is the truth. Run the git op with hooks off (`git -c core.hooksPath=/tmp/nohooks …`), then `bd export` to regenerate the file, and verify `bd count` + `external_ref` links after (a plain checkout can silently re-import a stale JSONL into Dolt).
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:7510c1e2 -->
 ## Beads Issue Tracker
