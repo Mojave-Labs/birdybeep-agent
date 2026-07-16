@@ -46,19 +46,18 @@ This package edits real config files in users' home directories and hooks into r
 ## 🔁 The work loop (every ticket)
 `bd ready` → claim → read `bd show <id>` and its **Testing (mandatory)** section → write test/snapshot first → implement → **run the real install + fire real events in the sandbox** → inspect output → `bd close` → commit + push (Session Completion below; the hook re-verifies). File follow-ups with `bd create`; durable notes with `bd remember`.
 
-## 🔗 Linear sync (human source of truth)
+## 🔗 Linear mirror (beads is the source of truth)
 
-This repo's beads (`birdybeep-agent-*`) sync **into the same shared Birdybeep project** in Linear (team **Mojave Labs / ML**) as the product repo — Linear is the human source of truth; beads is the agent execution layer. Config: `.beads/config.yaml` (`linear.team_id`, `linear.project_id`, `id_mode: hash`) + `LINEAR_API_KEY` in env.
+**beads is the source of truth; Linear is a read-only human mirror.** This repo's beads (`birdybeep-agent-*`) push **into the same shared Birdybeep project** in Linear (team **Mojave Labs / ML**) as the product repo. Work originates in beads (`bd create` / `bd ready` / `bd close`); status is pushed up for the human to watch. Config: `.beads/config.yaml` (`linear.team_id`, `linear.project_id`, `id_mode: hash`) + `LINEAR_API_KEY` in env.
 
-**Cadence — one-way-dominant; never a bare bidirectional sync:**
-- Session start: `bd linear sync --pull` (scope new/changed tickets in).
-- Session close: `bd linear push <id> …` for tickets you created/closed (status up). Prefer Linear on conflicts: `--prefer-linear`.
-- **NEVER** run bare/unattended `bd linear sync` — bidirectional sync pulls the *whole* ML team (incl. the product repo's issues) into this repo's DB. Pull is team+project scoped only.
+**Sync is push-dominant:**
+- **Push status UP** (the main direction): `bd linear push <id>` for tickets you create/close — as you go or at session close. Pushes are additive and idempotent by `external_ref`.
+- **Pull is the exception**, only to capture tickets the human filed *in Linear*: `bd linear sync --pull` (scoped to the project by `project_id`). Otherwise Linear edits don't matter — a push overwrites them; use `--prefer-local` (beads wins) on any reconcile.
+- **NEVER** run bare/unattended `bd linear sync` — bidirectional sync pulls the *whole* ML team into this repo's DB.
 
-**Footguns:**
-- **Batch create is broken** for this workspace: pushing several *new* issues at once fails ("not returned in batch create response"). Push new issues **one ID at a time**, or create in Linear and link with `bd update <id> --external-ref <url>`.
-- **Active-only:** push open/active work; leave closed history in beads/Dolt (stays under Linear's plan issue cap).
-- Tag new issues with the **`surface`** label (usually `agent`; also backend/web/mobile/cli) so cross-surface views work.
+**Notes:**
+- **Free-tier cap:** the ML workspace is on Linear's free plan (~250 issues). Creating issues *fails at the cap* — that's what surfaced as bd's "not returned in batch create response" (a cap symptom, not a beads bug). Push **active-only** (leave closed history in beads/Dolt); single-issue `bd linear push <id>` is the reliable path.
+- Tag new issues with the **`surface`** label (usually `agent`; also backend/web/mobile/cli) so the mirror's cross-surface views work.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:7510c1e2 -->
 ## Beads Issue Tracker
