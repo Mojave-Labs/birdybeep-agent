@@ -13,6 +13,15 @@
     ],
     "SessionStart": [
       {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/cloud-dolt-bridge.sh\" || true"
+          }
+        ]
+      },
+      {
         "hooks": [
           {
             "command": "bd prime",

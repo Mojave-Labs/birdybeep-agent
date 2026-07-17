@@ -9,13 +9,13 @@ You are the **orchestrator**. You do not implement tickets yourself (except triv
 
 ## Iron rules (violating any of these has corrupted this project's state before)
 
-1. **You are the ONLY bd writer in this session.** Workers NEVER run `bd` — not even reads (worktrees have a tracked-but-DB-less `.beads/`; a bd call there risks DB pollution, and the embedded Dolt DB is single-writer file-locked). You pass workers everything they need in their prompt.
+1. **You are the ONLY bd writer in this session.** Workers NEVER run `bd` — not even reads (worktrees carry a tracked `.beads/` whose config can mislead bd; beads state is orchestrator-owned). You pass workers everything they need in their prompt.
 2. **Workers NEVER `git push` and never touch `main`.** They commit to their `bead/<id>` branch in their worktree. You merge serially and push from the main checkout.
 3. **Never `--no-verify`, never weaken/skip a test or snapshot, never bypass the pre-push gate.** Treat the local gate as the real enforcement.
 4. **Never bare `bd linear sync`, never `bd linear sync --pull`, never `bd repo sync`/`bd repo add`.** Mirror with single-issue `bd linear push <id>` only (see CLAUDE.md "Linear mirror").
 5. **Never dispatch epics, `[HUMAN]` tickets, or anything labeled `human-required`.** Surface those to the human in your report instead.
 6. **Respect claims:** anything `in_progress`/assigned to another actor is not yours. `bd ready` already excludes claimed work.
-7. If any `bd` command fails with **"database is locked"**, another process (human, git hook) is mid-write — wait 2–5 s and retry (up to 5×). Clean error, no corruption.
+7. If `bd` fails with **"Dolt server unreachable"** (or the circuit-breaker "failing fast" message), the shared server or the tunnel bridge is down — verify connectivity (`nc -z <host> 3307`, cloud: is the bridge process alive?), then retry. Do NOT fall back to embedded mode or JSONL imports.
 8. bd `--json` output may be preceded by a warning line — **parse from the first `[` or `{`**.
 9. **This repo is public.** Nothing secret in code, fixtures, commit messages, or ticket notes; tokens never in repo files (see CLAUDE.md invariants).
 
@@ -24,10 +24,8 @@ You are the **orchestrator**. You do not implement tickets yourself (except triv
 ### 0. Sync (start of every iteration — this is how the human's new tickets reach you)
 ```bash
 git pull --rebase                 # code; on a .beads/issues.jsonl conflict follow CLAUDE.md "Beads vs git conflicts"
-bd dolt commit                    # flush working set (no-op when clean) so pull can merge
-bd dolt pull                      # ingest beads pushed from other machines; on reported conflicts: bd doctor --fix, re-pull
 ```
-If this is a **fresh clone** (cloud session): run `bd bootstrap --yes` once first (clones full Dolt history from `refs/dolt/data` via the tracked `sync.remote`), and `export BEADS_ACTOR=orchestrator-<where>` for claim/audit identity.
+Beads live on the **shared Dolt server** (see CLAUDE.md "Beads on the shared Dolt server") — every bd read/write is instantly global across all machines and agents, so there is NO beads sync step. Requirements: `BEADS_DOLT_PASSWORD` in env and the port known (untracked `.beads/dolt-server.port` containing `3307`, or `BEADS_DOLT_SERVER_PORT=3307`). Cloud sessions additionally need the tunnel bridge up (`scripts/cloud-dolt-bridge.sh`, started by the SessionStart hook) and `BEADS_DOLT_SERVER_HOST=127.0.0.1` in the environment config. Set `export BEADS_ACTOR=orchestrator-<where>` for claim/audit identity.
 
 ### 1. Plan
 ```bash
@@ -38,10 +36,9 @@ For each candidate, get full context with `bd show <id> --json` — read `descri
 ### 2. Batch (parallel only when provably disjoint)
 Group tickets that may run concurrently — ALL must hold: no dependency path between them; different packages (`packages/{cli,agent-core,claude-code,codex,opencode,cursor}` are natural boundaries); no shared files. **Cap: 3 workers.** When unsure → serial. Priority order: p0 → p4, bugs before features at equal priority.
 
-### 3. Claim, then publish the claim
+### 3. Claim
 ```bash
-bd update <id> --claim            # atomic; nonzero exit = someone else's — skip it
-bd dolt push                      # publish claims immediately so other machines can't double-claim
+bd update <id> --claim            # atomic ACROSS ALL machines/agents (single shared DB); nonzero exit = someone else's — skip it
 ```
 
 ### 4. Dispatch workers
@@ -65,7 +62,6 @@ On green push:
 bd update <id> --append-notes "DONE + PROVEN: <commands run, exit codes, evidence inspected, AC met>"
 bd close <id> -r "<one-line proof summary>" --suggest-next
 bd linear push <id> || true                    # mirror; skips harmlessly if LINEAR_API_KEY unset
-bd dolt push                                   # publish the close
 git worktree remove ../wt-<id> && git branch -d bead/<id>
 ```
 `--suggest-next` output feeds the next batch. If the gate fails: fix forward if trivial; otherwise `git reset --hard origin/main` (merge unpushed), re-dispatch the ticket with the failure attached.
@@ -96,10 +92,10 @@ File discoveries: `bd create -t <bug|task|chore> -p <0-4> "<title>" -d "<desc>" 
 
 - A ticket that fails integration **twice**: `bd update <id> --defer +1d --append-notes "ORCHESTRATOR-BLOCKED: <what failed, evidence>"`, file a bug bead if a defect was uncovered, move on, and flag it in your report.
 - Anything needing credentials/accounts/publish access → human territory: note it, don't attempt.
-- Repeated "database is locked" beyond retries, `bd dolt pull` conflicts that `bd doctor --fix` doesn't clear, or a dirty main checkout you didn't cause → **stop and report**; don't improvise recovery.
+- A persistently unreachable Dolt server (after connectivity checks), data that looks wrong/missing on the server, or a dirty main checkout you didn't cause → **stop and report**; don't improvise recovery, don't re-init, don't import JSONL.
 
 ## How the human coexists with you
 
-- They create tickets anytime: locally `bd q "<title>"` (brief lock collisions with you are harmless — bd errors cleanly and their retry works). From another machine they run `bd q "<title>" && bd dolt push` — your step-0 `bd dolt pull` picks it up next iteration.
+- They create tickets anytime, from any machine: `bd q "<title>"` writes straight to the shared server and is visible to you at your next `bd ready` — no sync step, no lock contention (the server handles concurrency).
 - They see your progress in the Linear Birdybeep project (mirror) and via `bd list`.
-- **One orchestrator per repo at a time** — claims are atomic within a DB but not across machines; two orchestrators on different machines will eventually double-claim and conflict. (One orchestrator here + one in the product repo is fine — separate DBs.)
+- Claims are atomic across ALL machines now (single shared DB), so concurrent ad-hoc agents can safely self-serve with `bd update <id> --claim`. Still keep **one INTEGRATOR per repo at a time** — code merges into `main` must stay serial; that's a git constraint, not a beads one. (One integrator here + one in the product repo is fine — separate repos.)

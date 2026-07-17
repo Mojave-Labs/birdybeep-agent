@@ -59,7 +59,16 @@ This package edits real config files in users' home directories and hooks into r
 - **Free-tier cap:** the ML workspace is on Linear's free plan (~250 issues). Creating issues *fails at the cap* — that's what surfaced as bd's "not returned in batch create response" (a cap symptom, not a beads bug). Push **active-only** (leave closed history in beads/Dolt); single-issue `bd linear push <id>` is the reliable path.
 - Tag new issues with the **`surface`** label (usually `agent`; also backend/web/mobile/cli) so the mirror's cross-surface views work.
 - **Do NOT run `bd repo sync` / `bd repo add`** (multi-repo hydration) — it imports the *sibling* repo's issues into this DB and the auto-export hooks would commit them, re-polluting. For cross-repo context, read the shared Linear project or peek with `bd -C /path/to/sibling <cmd>`.
-- **Beads vs git conflicts:** on a `.beads/issues.jsonl` conflict during `git pull --rebase`/merge, don't hand-merge it — the Dolt DB is the truth. Run the git op with hooks off (`git -c core.hooksPath=/tmp/nohooks …`), then `bd export` to regenerate the file, and verify `bd count` + `external_ref` links after (a plain checkout can silently re-import a stale JSONL into Dolt).
+- **Beads vs git conflicts:** on a `.beads/issues.jsonl` conflict during `git pull --rebase`/merge, don't hand-merge it — the shared Dolt server is the truth. Resolve by regenerating the file (`bd export`) and verify `bd count` + `external_ref` links after.
+
+## 🗄️ Beads on the shared Dolt server
+
+Since 2026-07-16 this repo's beads live on a **shared network Dolt SQL server** (homelab `rebeccas-mac-mini:3307`, database `birdybeep_agent`) — there is NO local embedded DB. Every machine and agent reads/writes the same live database: no `bd dolt push/pull`, and `bd update --claim` is atomic across all machines.
+
+- **bd needs two things:** `BEADS_DOLT_PASSWORD` in env (on this machine exported by `~/.zshenv` from `~/.config/beads/credentials`) and the server port — untracked `.beads/dolt-server.port` containing `3307`, or `BEADS_DOLT_SERVER_PORT=3307`. Fresh clones must recreate one of those.
+- **Cloud sessions** cannot dial raw TCP. The SessionStart hook runs `scripts/cloud-dolt-bridge.sh`, which starts a Cloudflare-Access tunnel bridge on `127.0.0.1:3307` when `TUNNEL_SERVICE_TOKEN_ID/SECRET` are set; the cloud environment must also set `BEADS_DOLT_SERVER_HOST=127.0.0.1` and `BEADS_DOLT_PASSWORD`. Locally the script no-ops (direct tailnet access).
+- If bd reports **"Dolt server unreachable"** / circuit-breaker fast-fails: fix connectivity (server up? bridge up?). **Never** "fix" it with `bd init`, embedded mode, or `bd import` of `issues.jsonl`.
+- `.beads/issues.jsonl` stays a passive per-checkout export for git visibility — never a sync channel, never hand-edited.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:7510c1e2 -->
 ## Beads Issue Tracker

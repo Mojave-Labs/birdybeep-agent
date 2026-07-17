@@ -1,7 +1,9 @@
 {
   "database": "dolt",
   "backend": "dolt",
-  "dolt_mode": "embedded",
+  "dolt_mode": "server",
   "dolt_database": "birdybeep_agent",
-  "project_id": "82cef1ed-7c8a-4d21-be75-5a34998596e6"
+  "project_id": "cd2c6973-6094-4dbd-b592-be05b0bef7ad",
+  "dolt_server_host": "rebeccas-mac-mini",
+  "dolt_server_user": "beads"
 }
