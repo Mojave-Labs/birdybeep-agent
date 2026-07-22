@@ -15,7 +15,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { closeSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import {
   createSender as defaultCreateSender,
@@ -131,10 +131,10 @@ export const NOTIFY_STDIN_FILE_ENV = "BIRDYBEEP_CODEX_NOTIFY_STDIN_FILE";
  * The payload is delivered via a strict-perm (0o600) temp FILE handed to the worker as its
  * stdin fd — NOT a pipe this process holds. Two reasons: (1) the payload is fully written
  * before the spawn, so the worker always reads it complete even though we exit immediately;
- * (2) crucially, this process then holds NO pipe/stream to the child, so it returns instantly
- * on every POSIX platform. A held stdin pipe kept the notify process alive on macOS until the
- * child drained it — hanging the very fast-return the fix exists to guarantee. The worker
- * unlinks the temp file after reading it (via {@link NOTIFY_STDIN_FILE_ENV}).
+ * (2) this process then holds NO pipe/stream to the child, so its prompt exit is DETERMINISTIC
+ * on every platform — it never depends on when/whether a parent-held stdin pipe flushes and
+ * closes, which is exactly the fast-return codex needs. The worker unlinks the temp file after
+ * reading it (via {@link NOTIFY_STDIN_FILE_ENV}).
  *
  * Scoped to POSIX: on Windows a child is NOT killed when its parent exits (see agent-core
  * safe-spawn), so the exec-exit reap race does not arise there — we return false and the
@@ -153,18 +153,28 @@ export function detachCodexNotifyWorker(payload: string): boolean {
     const birdybeep = resolveOnPath("birdybeep");
     if (birdybeep === null) return false; // not on PATH → caller sends in-line as a fallback
 
-    file = join(tmpdir(), `birdybeep-notify-${randomBytes(16).toString("hex")}.json`);
-    writeFileSync(file, payload, { mode: 0o600 }); // fully written BEFORE spawn
-    fd = openSync(file, "r");
+    const tmpFile = join(tmpdir(), `birdybeep-notify-${randomBytes(16).toString("hex")}.json`);
+    file = tmpFile; // track for the synchronous catch cleanup path
+    writeFileSync(tmpFile, payload, { mode: 0o600 }); // fully written BEFORE spawn
+    fd = openSync(tmpFile, "r");
     const child = spawn(birdybeep, ["hook", "codex"], {
       cwd: dirname(birdybeep), // trusted dir, never the inherited/attacker cwd
       detached: true, // new session (setsid) → survives `codex exec` reaping the group
       stdio: [fd, "ignore", "ignore"], // stdin = the temp file; this process holds no pipe
-      env: { ...process.env, [NOTIFY_STDIN_FILE_ENV]: file }, // worker cleans it up post-read
+      env: { ...process.env, [NOTIFY_STDIN_FILE_ENV]: tmpFile }, // worker cleans it up post-read
       windowsHide: true,
     });
     child.on("error", () => {
-      /* the detached worker failed to launch — best-effort, never surface to the harness */
+      // `spawn` reports most launch failures (EMFILE/ENOMEM, or the binary vanishing after
+      // resolveOnPath) ASYNCHRONOUSLY via 'error', after we've already returned true. The worker
+      // never ran, so it can't delete its stdin temp file — clean it up here so we don't leak a
+      // 0o600 file per failed fire. The event itself is lost (we already returned; there's no
+      // retroactive in-line send), which is the accepted best-effort contract for detachment.
+      try {
+        rmSync(tmpFile, { force: true });
+      } catch {
+        /* the OS reclaims tmp eventually */
+      }
     });
     child.unref(); // don't keep the notify process alive waiting on the worker
     return true;
@@ -227,8 +237,15 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       // DETACHED reading the payload on stdin (see {@link detachCodexNotifyWorker}) and return
       // immediately, so it outlives the reap. Scoped to notify only — lifecycle hooks arrive on
       // stdin. If the worker can't be launched we fall through and send in-line (best-effort).
+      // An empty trailing arg is not a real notify payload — fall through so it's `skipped`
+      // in-line rather than spawning a worker just to read an empty file.
       const notifyPayload = ctx.args[1];
-      if (harness === "codex" && notifyPayload !== undefined && detachCodexNotify(notifyPayload)) {
+      if (
+        harness === "codex" &&
+        notifyPayload !== undefined &&
+        notifyPayload.length > 0 &&
+        detachCodexNotify(notifyPayload)
+      ) {
         ctx.io.result({ harness, outcome: "detached" });
         return EXIT.OK; // the detached worker delivers; the notify process must not block codex
       }
@@ -239,9 +256,15 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
 
       // If we ARE the detached notify worker (spawned by detachCodexNotifyWorker), the payload
       // was handed to us as a strict-perm temp file used for stdin — now that it's read, delete
-      // it. Best-effort: the OS reclaims tmp anyway, and a stale file is never a correctness bug.
+      // it. Guard the path (our own tmpdir prefix) before unlinking so a stray/injected env value
+      // can never make a hook fire force-delete an arbitrary file. Best-effort: the OS reclaims
+      // tmp anyway, and a stale file is never a correctness bug.
       const notifyStdinFile = process.env[NOTIFY_STDIN_FILE_ENV];
-      if (notifyStdinFile !== undefined) {
+      if (
+        notifyStdinFile !== undefined &&
+        dirname(notifyStdinFile) === tmpdir() &&
+        basename(notifyStdinFile).startsWith("birdybeep-notify-")
+      ) {
         try {
           rmSync(notifyStdinFile, { force: true });
         } catch {

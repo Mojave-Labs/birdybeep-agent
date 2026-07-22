@@ -13,7 +13,7 @@
  * temp file used as the worker's stdin, and the notify process returns immediately. The
  * detached worker is NOT in the group `codex exec` reaps, so it outlives the harness and
  * completes the send+queue. (The payload rides a temp file rather than a parent-held pipe so
- * the notify process holds no stream and exits instantly — a held pipe hung it on macOS.)
+ * the notify process holds no stream and its prompt exit is deterministic on every platform.)
  *
  * This script proves that against the REAL built `birdybeep` binary — no mocks — WITHOUT
  * needing the `codex` binary or an OpenRouter key (unlike live-e2e-codex.mjs), because it
@@ -21,13 +21,16 @@
  * OWN process group (exactly how codex launches notify) against a deliberately SLOW stub
  * ingest, then SIGKILLs that group (exactly how `codex exec` reaps notify on exit).
  *
- * Two assertions, each of which the pre-fix code fails:
- *   1. FAST RETURN — the notify process returns in well under the backend's response time
- *      (it hands off + returns instead of blocking on the send). Pre-fix it blocked for the
- *      whole slow-backend round-trip, so it would still be running when codex reaps it.
- *   2. DELIVERY SURVIVES THE REAP — after the notify group is SIGKILLed, the event still
- *      arrives at the ingest, correctly normalized (agent_completed, hashed cwd, Bearer
- *      token, no raw content). Pre-fix the send lived in the reaped group and was lost.
+ * Two assertions:
+ *   1. FAST RETURN — the discriminator the PRE-FIX code fails. The notify process returns in
+ *      well under the backend's response time: it hands the send off to the detached worker
+ *      instead of blocking on it. Pre-fix, notify sent in-line and blocked for the whole
+ *      slow-backend round-trip, so it was still running when codex reaped it (verified:
+ *      neutralizing the fix makes notify block ~the backend delay and this assertion fails).
+ *   2. DELIVERY SURVIVES THE REAP — after the notify process group is SIGKILLed, the event
+ *      still arrives at the ingest, correctly normalized (agent_completed, hashed cwd, Bearer
+ *      token, no raw content). This proves the worker runs in its OWN session (drop the detach
+ *      and the group reap would kill it) and that the full pipeline completes end to end.
  *
  * Requirements (SKIP with exit 2 when unmet, so it can sit in an always-on POSIX CI lane):
  *   - POSIX (process groups + kill(-pid)); skips on Windows
@@ -50,10 +53,14 @@ const TOKEN = "bbm_live_e2e_reap_token";
 
 // Backend response delay: wide enough that a pre-fix IN-LINE send would still be blocked here
 // when we reap, but the DETACHED worker (separate session) sails past the reap and completes.
-const SINK_RESPONSE_DELAY_MS = 2500;
+const SINK_RESPONSE_DELAY_MS = 4000;
 // The notify process MUST return well under the backend delay — proof it hands off, not blocks.
-const FAST_RETURN_MS = 1500;
-// Generous ceiling for the surviving worker's delivery to land at the ingest.
+// returnLatency is measured from before spawn, so it includes the notify process's own Node
+// cold-start; the 1500ms gap to the backend delay leaves ample room for that jitter on a loaded
+// CI runner while still being far below a pre-fix in-line block (~the backend delay).
+const FAST_RETURN_MS = 2500;
+// Generous ceiling for the surviving worker's delivery to land at the ingest (it is recorded on
+// request receipt, BEFORE the response delay, so this only needs to cover worker startup+send).
 const DELIVER_DEADLINE_MS = 12_000;
 
 const log = (msg) => console.log(`[live-e2e-codex-reap] ${msg}`);
@@ -144,18 +151,28 @@ const cleanup = () => {
 
 try {
   // ── seed the machine token into the strict-perm FILE store under the sandbox HOME ──
-  log("seed machine token (file store fallback)");
+  // Force the FILE store (unavailableKeychainBackend). CRUCIAL on macOS: the DEFAULT backend
+  // there writes to the Keychain via `security add-generic-password -w`, which PROMPTS for input
+  // and BLOCKS in a headless CI runner — that is exactly what hung this job on the macOS lane.
+  // The real worker only READS the token (a keychain miss fast-fails, then it reads the file
+  // fallback), so a file-store seed is sufficient and fully headless-safe on every platform.
+  // The 30s spawnSync timeout is belt-and-suspenders: any future seed hang fails fast, never
+  // hanging the CI job (spawnSync has NO default timeout).
+  log("seed machine token into the strict-perm FILE store (never the macOS keychain)");
   const seed = spawnSync(
     "node",
     [
       "--input-type=module",
       "-e",
-      `const { setToken } = await import(${JSON.stringify(pathToFileURL(AGENT_CORE_DIST).href)});
-       await setToken(${JSON.stringify(TOKEN)});`,
+      `const m = await import(${JSON.stringify(pathToFileURL(AGENT_CORE_DIST).href)});
+       await m.setToken(${JSON.stringify(TOKEN)}, { backend: m.unavailableKeychainBackend });`,
     ],
-    { cwd: work, env: baseEnv(), encoding: "utf8" },
+    { cwd: work, env: baseEnv(), encoding: "utf8", timeout: 30_000 },
   );
-  assert(seed.status === 0, `token seed failed: ${seed.stderr}`);
+  assert(
+    seed.status === 0,
+    `token seed failed (status ${seed.status}): ${seed.stderr || seed.error?.message || ""}`,
+  );
 
   // ── fire a real notify in its OWN process group, then reap the group ──────────
   const RAW_CWD = join(sandbox, "secret-codex-project");
@@ -190,7 +207,7 @@ try {
   // exactly what a held stdin pipe did on macOS) FAILS FAST here instead of hanging the CI job
   // for hours. The fix returns in ~100ms; a healthy in-line send would still finish within the
   // backend delay, so anything past a few × the backend delay is a genuine hang.
-  const EXIT_WAIT_MS = SINK_RESPONSE_DELAY_MS + 5500; // 8s: well past both fast-return + in-line
+  const EXIT_WAIT_MS = SINK_RESPONSE_DELAY_MS + 5500; // ~9.5s: well past both fast-return + in-line
   let exitTimer;
   const exited = once(notifyProc, "exit").then(([code]) => code);
   const timedOut = new Promise((r) => {
