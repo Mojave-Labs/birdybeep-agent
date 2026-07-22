@@ -14,6 +14,7 @@
 import {
   createSender as defaultCreateSender,
   type HookResult,
+  safeSpawn,
   type Sender,
 } from "@birdybeep/agent-core";
 import { runClaudeHook } from "@birdybeep/claude-code";
@@ -100,6 +101,45 @@ export async function readHookPayload(
   return args[1] ?? (await readStdin());
 }
 
+/**
+ * birdybeep-agent-fuf: `codex exec` (headless/one-shot) reaps the notify child's PROCESS
+ * GROUP when it exits. Codex fires `notify` at turn-complete — right before it exits — so on
+ * a cold/slow backend the in-line send is still in flight when the group is SIGKILLed, and
+ * the event is lost before delivery *or* the queue-write finishes (the interactive `codex`
+ * TUI stays alive, so it never hit this).
+ *
+ * The fix, scoped to the notify path only: instead of sending in-line, re-launch
+ * `birdybeep hook codex` DETACHED (`safeSpawn` → `setsid`/new session on POSIX, new process
+ * group on Windows) delivering the payload on STDIN, then return immediately. The detached
+ * worker is NOT in the group `codex exec` reaps, so it outlives the harness and completes the
+ * fast send+queue. Because the worker is invoked WITHOUT a trailing argv payload it reads
+ * stdin and runs the ordinary in-process path below — it is never itself re-detached, so this
+ * never recurses. Lifecycle `[[hooks.X]]` events are deliberately untouched: they arrive on
+ * stdin and fire mid-session, not at exit.
+ *
+ * Returns true when the detached worker was launched (the notify process then returns fast);
+ * false when `birdybeep` can't be resolved on PATH (`safeSpawn` returns null) or the spawn
+ * throws — the caller then falls back to an in-line send, since a possibly-truncated best-
+ * effort delivery still beats dropping the event outright.
+ */
+export function detachCodexNotifyWorker(payload: string): boolean {
+  try {
+    // SECURITY (sec-review-2026-07 H1): resolve `birdybeep` to an absolute path on PATH only
+    // (never cwd — the harness's cwd is the attacker-controllable repo), exactly as the
+    // OpenCode plugin does. `input` delivers the payload via a strict-perm temp file / stdin,
+    // reliable across POSIX and a Windows `.cmd` shim.
+    const child = safeSpawn("birdybeep", ["hook", "codex"], { input: payload, detached: true });
+    if (child === null) return false; // not on PATH → caller sends in-line as a fallback
+    child.on("error", () => {
+      /* the detached worker failed to launch — best-effort, never surface to the harness */
+    });
+    child.unref(); // don't keep the notify process alive waiting on the worker
+    return true;
+  } catch {
+    return false; // any spawn failure → in-line fallback (never throw into the harness)
+  }
+}
+
 export interface HookCommandDeps {
   /** Build the sender (default: agent-core `createSender` with the resolved API URL). */
   createSender?: (baseUrl: string) => Sender;
@@ -107,6 +147,13 @@ export interface HookCommandDeps {
   readStdin?: () => Promise<string>;
   /** Hard cap on the payload read (default {@link STDIN_READ_TIMEOUT_MS}); tests shrink it. */
   stdinTimeoutMs?: number;
+  /**
+   * Detach the Codex notify send into a process that survives `codex exec` reaping its group
+   * (birdybeep-agent-fuf). Default {@link detachCodexNotifyWorker}; returns whether the
+   * detached worker launched (true → the notify process returns fast; false → send in-line as
+   * a fallback). Injectable so tests drive the branch without spawning a real process.
+   */
+  detachCodexNotify?: (payload: string) => boolean;
 }
 
 /** Build the `hook` command. Pure stubs aside, this is the live event path. */
@@ -114,6 +161,7 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
   const makeSender = deps.createSender ?? ((baseUrl) => defaultCreateSender({ baseUrl }));
   const readStdin = deps.readStdin ?? readStdinDefault;
   const stdinTimeoutMs = deps.stdinTimeoutMs ?? STDIN_READ_TIMEOUT_MS;
+  const detachCodexNotify = deps.detachCodexNotify ?? detachCodexNotifyWorker;
 
   return {
     name: "hook",
@@ -124,6 +172,17 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       if (!isHarnessName(harness)) {
         ctx.io.errline(`birdybeep hook: expected one of ${HOOK_HARNESSES.join("|")}`);
         return EXIT.USAGE;
+      }
+
+      // birdybeep-agent-fuf: a Codex *notify* fire (payload delivered as the trailing argv
+      // arg) races `codex exec` exit, which reaps the notify process group. Re-launch the send
+      // DETACHED reading the payload on stdin (see {@link detachCodexNotifyWorker}) and return
+      // immediately, so it outlives the reap. Scoped to notify only — lifecycle hooks arrive on
+      // stdin. If the worker can't be launched we fall through and send in-line (best-effort).
+      const notifyPayload = ctx.args[1];
+      if (harness === "codex" && notifyPayload !== undefined && detachCodexNotify(notifyPayload)) {
+        ctx.io.result({ harness, outcome: "detached" });
+        return EXIT.OK; // the detached worker delivers; the notify process must not block codex
       }
 
       // Bounded read: the trailing argv payload resolves instantly; a hung/never-closing
