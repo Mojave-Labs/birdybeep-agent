@@ -40,6 +40,16 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: pnpm format:check
+      # birdybeep-agent-fuf: prove the codex notify send survives `codex exec` reaping its
+      # process group. Needs only the built CLI + POSIX process groups (no codex binary / API
+      # key), so it runs as an always-on gate on the POSIX runners. The race is a POSIX
+      # process-group SIGKILL, so it does not apply on Windows (the script skips there anyway).
+      # The script exits 2 to SKIP when a precondition is unmet (unreachable in this lane — it is
+      # POSIX-gated and always runs after `pnpm build`); tolerate 2 so a skip can never red the
+      # step, while a real assertion failure (exit 1) still fails the job.
+      - name: codex notify exec-exit reap (live-e2e, POSIX)
+        if: runner.os != 'Windows'
+        run: node scripts/live-e2e-codex-reap.mjs || [ "$?" -eq 2 ]
 
   # A PR that changes a publishable package must carry a changeset, so versions
   # never drift out of someone's head. Runs on PRs only (on main the changesets

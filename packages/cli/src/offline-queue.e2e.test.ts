@@ -86,7 +86,12 @@ describe("CLI-OFFLINE-QUEUE-E2E", () => {
     });
 
     // OFFLINE: backend unreachable → the hook must queue + return fast, never error the harness.
+    // detachCodexNotify:()=>false keeps the send IN-LINE so this test drives the injected offline
+    // sender directly: the codex-notify detach (birdybeep-agent-fuf) would otherwise hand off to a
+    // real subprocess that can't see this stub sender — and the detached worker runs this very
+    // same in-line queue path, so bypassing the hand-off tests it faithfully and deterministically.
     const offlineHook = createHookCommand({
+      detachCodexNotify: () => false,
       createSender: () =>
         createSender({
           baseUrl: "http://127.0.0.1:1",
@@ -141,6 +146,7 @@ describe("CLI-OFFLINE-QUEUE-E2E", () => {
       })) as unknown as typeof fetch;
 
     const hangHook = createHookCommand({
+      detachCodexNotify: () => false, // in-line send (see the offline test above) — bounded by timeout
       createSender: () =>
         createSender({
           baseUrl: "http://127.0.0.1:1",

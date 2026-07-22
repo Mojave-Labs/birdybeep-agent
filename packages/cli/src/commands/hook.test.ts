@@ -163,13 +163,49 @@ describe("hook command dispatch (full CLI path)", () => {
     expect(sink.received()).toHaveLength(1);
   });
 
-  it("delivers via the trailing argv payload (Codex notify shape)", async () => {
+  // birdybeep-agent-fuf: a Codex NOTIFY fire (payload as the trailing argv arg) now re-launches
+  // the send DETACHED so it outlives `codex exec` reaping the notify process group. The notify
+  // process itself returns fast with outcome "detached" and delivers NOTHING in-line — the
+  // detached worker (a separate `birdybeep hook codex` reading stdin) does the actual send.
+  it("codex notify (trailing argv) detaches the send and returns fast, delivering nothing in-line", async () => {
+    sink = await StubEventSink.start();
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const sinkUrl = sink.url;
+    const detached: string[] = [];
+    const cmd = createHookCommand({
+      createSender: () => createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY }),
+      detachCodexNotify: (payload) => {
+        detached.push(payload); // stand in for the real detached worker (no process spawned)
+        return true;
+      },
+    });
+    const notify = JSON.stringify({ type: "agent-turn-complete", "thread-id": "t1", cwd: RAW_CWD });
+    const out = capture();
+    const start = Date.now();
+    const code = await runCli(["hook", "codex", notify, "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.OK);
+    expect(JSON.parse(out.text())).toMatchObject({ harness: "codex", outcome: "detached" });
+    expect(detached).toEqual([notify]); // the exact notify payload was handed to the worker
+    expect(sink.received()).toHaveLength(0); // the notify process itself sends nothing in-line
+    expect(Date.now() - start).toBeLessThan(2000); // returns fast — never blocks `codex exec`
+  });
+
+  // Fallback: when the detached worker can't be launched (e.g. `birdybeep` not on PATH), the
+  // notify send happens IN-LINE — a possibly-truncated best-effort delivery beats dropping it.
+  it("codex notify falls back to an in-line send when the worker can't be detached", async () => {
     sink = await StubEventSink.start();
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
     const sinkUrl = sink.url;
     const cmd = createHookCommand({
       createSender: () => createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY }),
+      detachCodexNotify: () => false, // simulate an un-resolvable `birdybeep` → in-line fallback
     });
     const notify = JSON.stringify({ type: "agent-turn-complete", "thread-id": "t1", cwd: RAW_CWD });
     const out = capture();
@@ -181,6 +217,65 @@ describe("hook command dispatch (full CLI path)", () => {
     });
     expect(code).toBe(EXIT.OK);
     expect(JSON.parse(out.text())).toMatchObject({ harness: "codex", outcome: "delivered" });
+    expect(sink.received()).toHaveLength(1); // delivered in-line by the notify process itself
+  });
+
+  // Scope guard: only the codex NOTIFY (argv) path detaches. Codex lifecycle hooks arrive on
+  // STDIN (fire mid-session, not at exit) and must send in-line, never re-launching a worker.
+  it("codex lifecycle hook (stdin payload) sends in-line and never detaches", async () => {
+    sink = await StubEventSink.start();
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const sinkUrl = sink.url;
+    let detachCalls = 0;
+    const cmd = createHookCommand({
+      createSender: () => createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY }),
+      readStdin: () => Promise.resolve(JSON.stringify(PAYLOADS[1]!.payload)),
+      detachCodexNotify: () => {
+        detachCalls += 1;
+        return true;
+      },
+    });
+    const out = capture();
+    const code = await runCli(["hook", "codex", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.OK);
+    expect(detachCalls).toBe(0); // no trailing argv → not a notify → never detached
+    expect(JSON.parse(out.text())).toMatchObject({ harness: "codex", outcome: "delivered" });
+    expect(sink.received()).toHaveLength(1);
+  });
+
+  // Scope guard: detachment is codex-only. A non-codex harness with a trailing argv payload
+  // (an unusual invocation shape) must NOT be routed through the codex-notify detach path.
+  it("a non-codex harness with a trailing argv payload never detaches", async () => {
+    sink = await StubEventSink.start();
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const sinkUrl = sink.url;
+    let detachCalls = 0;
+    const cmd = createHookCommand({
+      createSender: () => createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY }),
+      detachCodexNotify: () => {
+        detachCalls += 1;
+        return true;
+      },
+    });
+    const payload = JSON.stringify(PAYLOADS[0]!.payload); // a claude PermissionRequest
+    const out = capture();
+    const code = await runCli(["hook", "claude", payload, "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.OK);
+    expect(detachCalls).toBe(0); // detach is scoped to codex notify only
+    expect(JSON.parse(out.text())).toMatchObject({ harness: "claude", outcome: "delivered" });
+    expect(sink.received()).toHaveLength(1);
   });
 
   it("unknown harness → USAGE", async () => {
