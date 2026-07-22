@@ -9,9 +9,11 @@
  * hit this — the fix is scoped to the notify path.
  *
  * The fix (packages/cli/src/commands/hook.ts): a Codex notify fire re-launches the send
- * DETACHED (`safeSpawn` → setsid / new session) reading the payload on stdin, and the notify
- * process returns immediately. The detached worker is NOT in the group `codex exec` reaps, so
- * it outlives the harness and completes the send+queue.
+ * DETACHED (`detached: true` → setsid / new session), reading the payload from a strict-perm
+ * temp file used as the worker's stdin, and the notify process returns immediately. The
+ * detached worker is NOT in the group `codex exec` reaps, so it outlives the harness and
+ * completes the send+queue. (The payload rides a temp file rather than a parent-held pipe so
+ * the notify process holds no stream and exits instantly — a held pipe hung it on macOS.)
  *
  * This script proves that against the REAL built `birdybeep` binary — no mocks — WITHOUT
  * needing the `codex` binary or an OpenRouter key (unlike live-e2e-codex.mjs), because it
@@ -184,8 +186,31 @@ try {
   notifyProc.stdout.on("data", (d) => (stdout += d));
   notifyProc.stderr.on("data", (d) => (stderr += d));
 
-  const [exitCode] = await once(notifyProc, "exit");
+  // Bound the wait so a REGRESSION (a notify that hangs instead of handing off + returning —
+  // exactly what a held stdin pipe did on macOS) FAILS FAST here instead of hanging the CI job
+  // for hours. The fix returns in ~100ms; a healthy in-line send would still finish within the
+  // backend delay, so anything past a few × the backend delay is a genuine hang.
+  const EXIT_WAIT_MS = SINK_RESPONSE_DELAY_MS + 5500; // 8s: well past both fast-return + in-line
+  let exitTimer;
+  const exited = once(notifyProc, "exit").then(([code]) => code);
+  const timedOut = new Promise((r) => {
+    exitTimer = setTimeout(() => r("timeout"), EXIT_WAIT_MS);
+  });
+  const exitCode = await Promise.race([exited, timedOut]);
+  clearTimeout(exitTimer);
   const returnLatency = Date.now() - t0;
+  if (exitCode === "timeout") {
+    try {
+      process.kill(-notifyPid, "SIGKILL"); // don't leave the hung process/group behind
+    } catch {
+      /* already gone */
+    }
+    fail(
+      `notify process did not return within ${EXIT_WAIT_MS}ms — the fast-return handoff HUNG ` +
+        `(regression: the notify process is being kept alive instead of detaching + returning). ` +
+        `stdout so far: ${stdout.trim()} | stderr: ${stderr.trim()}`,
+    );
+  }
   log(
     `notify process exited (code ${exitCode}) after ${returnLatency}ms — stdout: ${stdout.trim()}`,
   );

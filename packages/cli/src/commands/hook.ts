@@ -11,10 +11,16 @@
  * Built as a factory so the sender + stdin reader are injectable: tests drive the full
  * dispatch → command → pipeline → stub-sink path hermetically, exactly like the adapter E2Es.
  */
+import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { closeSync, openSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
 import {
   createSender as defaultCreateSender,
   type HookResult,
-  safeSpawn,
+  resolveOnPath,
   type Sender,
 } from "@birdybeep/agent-core";
 import { runClaudeHook } from "@birdybeep/claude-code";
@@ -102,6 +108,12 @@ export async function readHookPayload(
 }
 
 /**
+ * Env var carrying the temp-file path the detached notify worker deletes after reading it —
+ * see {@link detachCodexNotifyWorker}. Set only on the detached worker's environment.
+ */
+export const NOTIFY_STDIN_FILE_ENV = "BIRDYBEEP_CODEX_NOTIFY_STDIN_FILE";
+
+/**
  * birdybeep-agent-fuf: `codex exec` (headless/one-shot) reaps the notify child's PROCESS
  * GROUP when it exits. Codex fires `notify` at turn-complete — right before it exits — so on
  * a cold/slow backend the in-line send is still in flight when the group is SIGKILLed, and
@@ -109,34 +121,70 @@ export async function readHookPayload(
  * TUI stays alive, so it never hit this).
  *
  * The fix, scoped to the notify path only: instead of sending in-line, re-launch
- * `birdybeep hook codex` DETACHED (`safeSpawn` → `setsid`/new session on POSIX, new process
- * group on Windows) delivering the payload on STDIN, then return immediately. The detached
- * worker is NOT in the group `codex exec` reaps, so it outlives the harness and completes the
- * fast send+queue. Because the worker is invoked WITHOUT a trailing argv payload it reads
- * stdin and runs the ordinary in-process path below — it is never itself re-detached, so this
- * never recurses. Lifecycle `[[hooks.X]]` events are deliberately untouched: they arrive on
- * stdin and fire mid-session, not at exit.
+ * `birdybeep hook codex` DETACHED (`detached: true` → `setsid`/new session) reading the
+ * payload on stdin, then return immediately. The detached worker is NOT in the group
+ * `codex exec` reaps, so it outlives the harness and completes the fast send+queue. Because
+ * the worker is invoked WITHOUT a trailing argv payload it reads stdin and runs the ordinary
+ * in-process path below — it is never itself re-detached, so this never recurses. Lifecycle
+ * `[[hooks.X]]` events are deliberately untouched: they arrive on stdin and fire mid-session.
  *
- * Returns true when the detached worker was launched (the notify process then returns fast);
- * false when `birdybeep` can't be resolved on PATH (`safeSpawn` returns null) or the spawn
- * throws — the caller then falls back to an in-line send, since a possibly-truncated best-
- * effort delivery still beats dropping the event outright.
+ * The payload is delivered via a strict-perm (0o600) temp FILE handed to the worker as its
+ * stdin fd — NOT a pipe this process holds. Two reasons: (1) the payload is fully written
+ * before the spawn, so the worker always reads it complete even though we exit immediately;
+ * (2) crucially, this process then holds NO pipe/stream to the child, so it returns instantly
+ * on every POSIX platform. A held stdin pipe kept the notify process alive on macOS until the
+ * child drained it — hanging the very fast-return the fix exists to guarantee. The worker
+ * unlinks the temp file after reading it (via {@link NOTIFY_STDIN_FILE_ENV}).
+ *
+ * Scoped to POSIX: on Windows a child is NOT killed when its parent exits (see agent-core
+ * safe-spawn), so the exec-exit reap race does not arise there — we return false and the
+ * caller sends in-line. We also return false when `birdybeep` can't be resolved on PATH or the
+ * spawn throws; an in-line best-effort delivery still beats dropping the event outright.
  */
 export function detachCodexNotifyWorker(payload: string): boolean {
+  if (process.platform === "win32") return false; // no exec-exit reap race on Windows
+  let file: string | undefined;
+  let fd: number | undefined;
   try {
-    // SECURITY (sec-review-2026-07 H1): resolve `birdybeep` to an absolute path on PATH only
-    // (never cwd — the harness's cwd is the attacker-controllable repo), exactly as the
-    // OpenCode plugin does. `input` delivers the payload via a strict-perm temp file / stdin,
-    // reliable across POSIX and a Windows `.cmd` shim.
-    const child = safeSpawn("birdybeep", ["hook", "codex"], { input: payload, detached: true });
-    if (child === null) return false; // not on PATH → caller sends in-line as a fallback
+    // SECURITY (sec-review-2026-07 H1): resolve `birdybeep` to an absolute path on PATH ONLY
+    // (never cwd — the harness's cwd is the attacker-controllable repo), then spawn that
+    // absolute path with a trusted cwd. On POSIX `birdybeep` is a real executable (never a
+    // shell shim), so no shell is involved.
+    const birdybeep = resolveOnPath("birdybeep");
+    if (birdybeep === null) return false; // not on PATH → caller sends in-line as a fallback
+
+    file = join(tmpdir(), `birdybeep-notify-${randomBytes(16).toString("hex")}.json`);
+    writeFileSync(file, payload, { mode: 0o600 }); // fully written BEFORE spawn
+    fd = openSync(file, "r");
+    const child = spawn(birdybeep, ["hook", "codex"], {
+      cwd: dirname(birdybeep), // trusted dir, never the inherited/attacker cwd
+      detached: true, // new session (setsid) → survives `codex exec` reaping the group
+      stdio: [fd, "ignore", "ignore"], // stdin = the temp file; this process holds no pipe
+      env: { ...process.env, [NOTIFY_STDIN_FILE_ENV]: file }, // worker cleans it up post-read
+      windowsHide: true,
+    });
     child.on("error", () => {
       /* the detached worker failed to launch — best-effort, never surface to the harness */
     });
     child.unref(); // don't keep the notify process alive waiting on the worker
     return true;
   } catch {
-    return false; // any spawn failure → in-line fallback (never throw into the harness)
+    if (file !== undefined) {
+      try {
+        rmSync(file, { force: true }); // spawn failed before the worker could clean up
+      } catch {
+        /* the OS reclaims tmp eventually */
+      }
+    }
+    return false; // any failure → in-line fallback (never throw into the harness)
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd); // the child holds its own dup; this process keeps no fd
+      } catch {
+        /* already closed / never opened */
+      }
+    }
   }
 }
 
@@ -188,6 +236,19 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       // Bounded read: the trailing argv payload resolves instantly; a hung/never-closing
       // stdin falls back to "" after the timeout so the hook ALWAYS returns fast (§9.3).
       const raw = await withTimeout(readHookPayload(ctx.args, readStdin), stdinTimeoutMs, "");
+
+      // If we ARE the detached notify worker (spawned by detachCodexNotifyWorker), the payload
+      // was handed to us as a strict-perm temp file used for stdin — now that it's read, delete
+      // it. Best-effort: the OS reclaims tmp anyway, and a stale file is never a correctness bug.
+      const notifyStdinFile = process.env[NOTIFY_STDIN_FILE_ENV];
+      if (notifyStdinFile !== undefined) {
+        try {
+          rmSync(notifyStdinFile, { force: true });
+        } catch {
+          /* the OS reclaims tmp eventually */
+        }
+      }
+
       let payload: unknown;
       try {
         payload = JSON.parse(raw);
