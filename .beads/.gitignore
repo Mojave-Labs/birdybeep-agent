@@ -71,6 +71,12 @@ backup/
 *.db-shm
 db.sqlite
 bd.db
+# Ticket/interaction exports — shared Dolt server is the source of truth and
+# off-machine DR is handled by ~/.config/dolt-backup (verified scheduled backups).
+# Untracked to cut diff noise; regenerated locally by bd, never a sync channel.
+/issues.jsonl
+/interactions.jsonl
+
 # NOTE: Do NOT add negation patterns here.
 # They would override fork protection in .git/info/exclude.
 # Config files (metadata.json, config.yaml) are tracked by git by default
