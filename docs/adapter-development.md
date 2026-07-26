@@ -255,6 +255,32 @@ Pick the closest semantic type for each harness signal. Codex
 > same: read the harness's hook/notify docs and source, fire real events, and confirm what actually
 > arrives.
 
+Cursor ([`normalize.ts`](../packages/cursor/src/normalize.ts)) is the newest adapter and shows the
+same shape for a stdin-JSON harness keyed by `hook_event_name`:
+
+| Cursor hook event                                                | `event_type`                                                 | `status`               |
+| ---------------------------------------------------------------- | ------------------------------------------------------------ | ---------------------- |
+| `sessionStart`                                                   | `session_started`                                            | `starting`             |
+| `sessionEnd` `{final_status:"completed"}`                        | `agent_completed`                                            | `completed`            |
+| `sessionEnd` (any other final status)                            | `session_ended`                                              | `completed` (terminal) |
+| `stop`                                                           | `agent_completed`                                            | `completed`            |
+| `beforeShellExecution`                                           | `approval_required`                                          | `waiting_for_approval` |
+| `preToolUse` / `postToolUse`                                     | `tool_started` / `tool_finished`                             | `running`              |
+| `subagentStart` / `subagentStop`                                 | `subagent_started` / `subagent_completed`                    | `running`              |
+| `beforeSubmitPrompt`, `postToolUseFailure`, `afterAgentResponse` | _(throws `CursorMappingError` → the hook returns `skipped`)_ | —                      |
+
+Two Cursor-specific lessons worth copying:
+
+- **A harness may fire only a SUBSET of its documented events.** Headless `cursor-agent -p`
+  (verified `2026.07.09`) fires only `sessionStart` + `sessionEnd`; the IDE fires the rest. That is
+  why a _completed_ `sessionEnd` maps to `agent_completed` — for CLI users it is the only completion
+  signal that exists. Register the full documented set anyway so a later harness build needs no
+  re-install.
+- **Payloads carry PII you must drop.** Cursor sends `user_email` and `transcript_path`. Neither is
+  copied anywhere into the event; only `workspace_roots[0]` is passed as `cwd` so the shared
+  normalizer hashes it. Enumerate a new harness's payload fields and decide, field by field, what
+  never leaves the machine.
+
 A single mapper case looks like this — note that only **safe discriminators** are carried into
 `metadata`:
 

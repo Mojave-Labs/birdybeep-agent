@@ -108,7 +108,9 @@ describe("CLI-E2E: pair → install → hook → delivered", () => {
     const sb = sandbox;
 
     // 1. pair (manual-code device flow) mints + stores the token in the temp HOME.
-    const pairOk = await runCli(["pair"], {
+    // `--yes` is the documented headless escape hatch for the md60 confirm gate: this rig has
+    // no interactive stdin, and without it `pair` correctly refuses to trust the mint.
+    const pairOk = await runCli(["pair", "--yes"], {
       commands: [
         createPairCommand({
           fetchImpl: stubPairing(),

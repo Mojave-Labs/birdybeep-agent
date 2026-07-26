@@ -1,7 +1,7 @@
 # BirdyBeep
 
-**Mobile notifications for your AI coding agent.** When Claude Code, Codex, or OpenCode needs
-you — an approval, some input, a finished run, an idle session, a failure — BirdyBeep sends a
+**Mobile notifications for your AI coding agent.** When Claude Code, Codex, OpenCode, or Cursor
+needs you — an approval, some input, a finished run, an idle session, a failure — BirdyBeep sends a
 push to your phone so you can walk away from the terminal and still know the moment your agent
 is waiting on you.
 
@@ -37,9 +37,9 @@ harness.
 BirdyBeep is deliberately small-footprint and reversible. It only ever touches:
 
 - **Per-harness config in your home directory** — e.g. `~/.claude/settings.json`,
-  `~/.codex/config.toml`, `~/.config/opencode/opencode.json`. Installs are idempotent, back up
-  the original once, and add **only** BirdyBeep-managed entries. (See [Per-harness
-  details](#per-harness-details).)
+  `~/.codex/config.toml`, `~/.config/opencode/opencode.json`, `~/.cursor/hooks.json`. Installs are
+  idempotent, back up the original once, and add **only** BirdyBeep-managed entries. (See
+  [Per-harness details](#per-harness-details).)
 - **A local event queue** — best-effort, ~24h retention, strict file permissions. It exists
   only to retry events that couldn't be delivered immediately. It is **not** a durable audit
   log, and you can clear it any time.
@@ -54,8 +54,10 @@ Install the CLI, pair the machine, then wire up your agents.
 ```bash
 npm install -g @birdybeep/cli   # or pnpm add -g / yarn global add
 
-birdybeep pair                 # device-flow pairing: prints a short URL + code, polls until paired
-birdybeep agent install all     # detect installed agents and wire them up (or: claude | codex | opencode)
+birdybeep pair                  # device-flow pairing: prints a short URL + code, polls until paired,
+                                # then asks you to confirm the account that approved it
+birdybeep agent install all     # detect installed agents and wire them up
+                                # (or one of: claude | codex | opencode | cursor)
 birdybeep status                # confirm machine, pairing, and per-harness integration state
 ```
 
@@ -69,7 +71,7 @@ Some harnesses need one extra step after install — see [Per-harness details](#
 ## Uninstall (fully reversible)
 
 ```bash
-birdybeep agent uninstall all   # or: claude | codex | opencode
+birdybeep agent uninstall all   # or: claude | codex | opencode | cursor
 birdybeep logout                # remove the machine token (idempotent)
 ```
 
@@ -81,21 +83,21 @@ keychain and the file fallback.
 
 The CLI surface (run `birdybeep <command> --help` for per-command help):
 
-| Command                                                    | What it does                                                                                                                                                                          |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `birdybeep pair`                                           | Device-flow pairing — prints a short URL + code, polls until paired, stores the machine token in the secure store.                                                                    |
-| `birdybeep logout`                                         | Removes the machine token (keychain + file fallback). Idempotent. Same as `unpair`.                                                                                                   |
-| `birdybeep unpair`                                         | Unpairs this machine — removes the machine token (keychain + file fallback). Idempotent. Same as `logout`.                                                                            |
-| `birdybeep status`                                         | Machine + pairing state, per-harness integration status, and queue depth. Drains the queue opportunistically; exits non-zero if not paired.                                           |
-| `birdybeep test`                                           | Sends a test event through the real sender path and reports whether it was delivered or queued.                                                                                       |
-| `birdybeep doctor`                                         | Checks the token, each adapter (`needs_trust` / `needs_restart` / `error`), the queue, and backend reachability; prints a fix per failure; drains the queue; non-zero on any failure. |
-| `birdybeep agent install [all\|claude\|codex\|opencode]`   | Detect + install per harness (idempotent, backs up, managed entries only, no token).                                                                                                  |
-| `birdybeep agent uninstall [all\|claude\|codex\|opencode]` | Remove only managed entries and restore from backup (reversible).                                                                                                                     |
-| `birdybeep queue clear`                                    | Drop all locally-queued events (debug).                                                                                                                                               |
+| Command                                                            | What it does                                                                                                                                                                          |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `birdybeep pair`                                                   | Device-flow pairing — prints a short URL + code, polls until paired, confirms the approving account, then stores the machine token in the secure store.                               |
+| `birdybeep logout`                                                 | Removes the machine token (keychain + file fallback). Idempotent. Same as `unpair`.                                                                                                   |
+| `birdybeep unpair`                                                 | Unpairs this machine — removes the machine token (keychain + file fallback). Idempotent. Same as `logout`.                                                                            |
+| `birdybeep status`                                                 | Machine + pairing state, per-harness integration status, and queue depth. Drains the queue opportunistically; exits non-zero if not paired.                                           |
+| `birdybeep test`                                                   | Sends a test event through the real sender path and reports whether it was delivered or queued.                                                                                       |
+| `birdybeep doctor`                                                 | Checks the token, each adapter (`needs_trust` / `needs_restart` / `error`), the queue, and backend reachability; prints a fix per failure; drains the queue; non-zero on any failure. |
+| `birdybeep agent install [all\|claude\|codex\|opencode\|cursor]`   | Detect + install per harness (idempotent, backs up, managed entries only, no token).                                                                                                  |
+| `birdybeep agent uninstall [all\|claude\|codex\|opencode\|cursor]` | Remove only managed entries and restore from backup (reversible).                                                                                                                     |
+| `birdybeep queue clear`                                            | Drop all locally-queued events (debug).                                                                                                                                               |
 
 Two internal commands are invoked by BirdyBeep itself, not by you:
 
-- `birdybeep hook <claude\|codex\|opencode>` — the hook the installed harness config calls. It
+- `birdybeep hook <claude\|codex\|opencode\|cursor>` — the hook the installed harness config calls. It
   reads the event payload, normalizes and redacts it, sends with a short timeout, queues on
   failure, and **always returns fast and exits 0**.
 - `birdybeep report-status` — posts each adapter's pre-event integration status to the backend.
@@ -127,7 +129,33 @@ Available on the root command and per command:
 
 Exit codes: **`0`** ok · **`1`** error · **`2`** usage.
 
+`birdybeep pair` adds two of its own (run `birdybeep pair --help`):
+
+| Flag                    | Effect                                                                                  |
+| ----------------------- | --------------------------------------------------------------------------------------- |
+| `--yes`, `-y`           | Skip the approving-account confirmation (headless/CI).                                  |
+| `--expect-email <addr>` | Only trust the pairing if this account approved it — otherwise fail and store no token. |
+
+After the backend mints a machine token, `pair` shows the account that approved the machine and
+asks `Pair this machine to <email>? [y/N]` **before** storing anything. Decline and no token is
+written. The question is read from stdin when stdin is a terminal, and on macOS/Linux otherwise from
+the controlling terminal (`/dev/tty`) — so a pipe-backed shell still gets prompted; with neither
+available (a script, CI, `--non-interactive`, or any Windows shell without a real TTY) it fails
+closed instead of hanging. See
+[`docs/pairing.md`](./docs/pairing.md#confirming-the-approving-account).
+
 ## Per-harness details
+
+| Harness         | Target     | Status      | Config it patches                  | Extra step              |
+| --------------- | ---------- | ----------- | ---------------------------------- | ----------------------- |
+| **Claude Code** | `claude`   | **shipped** | `~/.claude/settings.json`          | none — live immediately |
+| **Codex**       | `codex`    | **shipped** | `~/.codex/config.toml`             | one-time `/hooks` trust |
+| **OpenCode**    | `opencode` | **shipped** | `~/.config/opencode/opencode.json` | restart OpenCode once   |
+| **Cursor**      | `cursor`   | **shipped** | `~/.cursor/hooks.json`             | none — live immediately |
+
+Harnesses we surveyed and did **not** ship an adapter for (and why), plus the bar a new one has to
+clear, are in [`docs/install.md`](./docs/install.md#harness-support--roadmap). The exact generated
+config for every harness is committed under [`examples/`](./examples/README.md).
 
 All installs are idempotent, back up the original once, add only BirdyBeep-managed entries, and
 write no token.
@@ -144,6 +172,13 @@ write no token.
   `~/.config/opencode/opencode.json` (honors `XDG_CONFIG_HOME`). OpenCode loads plugins only at
   startup, so **restart OpenCode**. Until the first event after restart, status shows
   **`needs_restart`**.
+- **Cursor** — patches `~/.cursor/hooks.json` (adding the `"version": 1` scaffold only if absent)
+  with an entry per consumed hook event — `sessionStart`, `sessionEnd`, `beforeShellExecution`,
+  `preToolUse`, `postToolUse`, `stop`, `subagentStart`, `subagentStop`, plus three registered for
+  forward-compatibility — each invoking `birdybeep hook cursor`. Cursor reads `hooks.json` live, so
+  it is **active immediately**. Headless `cursor-agent -p` fires only `sessionStart`/`sessionEnd`
+  today, so a completed `sessionEnd` is the CLI user's "finished" Beep. Cursor payloads carry
+  `user_email` and `transcript_path`; the adapter drops **both**.
 
 `birdybeep status` and `birdybeep doctor` surface these states and tell you exactly what to do.
 
@@ -158,7 +193,8 @@ scrubbed first. Before any event is sent, the local hook:
 - **Truncates** long fields (title 200, body 2000, metadata-value 500 chars) under a 16 KB cap.
 - **Drops raw user/assistant content by design** — Codex drops input messages, the last
   assistant message, and tool input; OpenCode drops tool args, permission titles, and error
-  messages. Only safe discriminators (tool name, status) ever flow.
+  messages; Cursor drops `user_email` and `transcript_path` outright. Only safe discriminators
+  (tool name, status) ever flow.
 
 The canonical event carries an event id and type, timestamp, harness, session id, machine label
 
@@ -205,6 +241,7 @@ earns trust by being **open and auditable**:
 | `@birdybeep/claude-code` | Claude Code adapter + hook templates.                                                           |
 | `@birdybeep/codex`       | Codex adapter + config templates.                                                               |
 | `@birdybeep/opencode`    | OpenCode plugin/adapter.                                                                        |
+| `@birdybeep/cursor`      | Cursor adapter + hooks.json templates.                                                          |
 
 ## Develop
 

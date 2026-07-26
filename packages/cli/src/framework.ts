@@ -66,6 +66,17 @@ export interface CommandContext {
   io: Io;
 }
 
+/** A per-command flag: its accepted spellings, optional value placeholder, and help text. */
+export interface CommandOption {
+  /** Primary flag token, e.g. `"--expect-email"`. */
+  flag: string;
+  /** Extra accepted spellings, e.g. `["-y"]`. */
+  aliases?: readonly string[];
+  /** Value placeholder shown in help (e.g. `"<addr>"`); omit for boolean flags. */
+  value?: string;
+  summary: string;
+}
+
 export interface Command {
   name: string;
   summary: string;
@@ -73,6 +84,13 @@ export interface Command {
   usage?: string;
   /** Nested subcommands (e.g. `agent install` / `agent uninstall`). */
   subcommands?: Command[];
+  /**
+   * Flags this command accepts IN ADDITION to the global ones. Without this allowlist the
+   * dispatcher rejects every non-global flag as an unknown option, so a command that owns
+   * flags must declare them here — and declaring them also documents them in `--help`.
+   * Both `--flag value` and `--flag=value` are accepted; parsing stays the command's job.
+   */
+  options?: readonly CommandOption[];
   /** Command logic; returns the intended exit code. Absent for pure command groups. */
   run?(ctx: CommandContext): Promise<number> | number;
 }
@@ -132,9 +150,22 @@ export function parseGlobalFlags(argv: string[]): { flags: GlobalFlags; rest: st
   return { flags, rest };
 }
 
-/** Is `token` an unknown long/short flag (after global flags were stripped)? */
-function isUnknownFlag(token: string): boolean {
-  return token.startsWith("-") && !GLOBAL_FLAG_TOKENS.has(token);
+/**
+ * Is `token` an unknown long/short flag (after global flags were stripped)? `allowed` carries
+ * the resolved command's own {@link Command.options}.
+ *
+ * The GLOBAL check is EXACT, deliberately: {@link parseGlobalFlags} consumes global flags by
+ * exact token, so `--json=true` is NOT a global flag — it stays in the command's args. If this
+ * guard split on `=` before the global lookup, `--json=true` / `--non-interactive=1` / `-v=2`
+ * would sail past it, never be consumed, and silently run the command in the WRONG MODE with
+ * the token landing in the positional args. They must be rejected as usage errors instead.
+ * Only a COMMAND's own options accept the `--flag=value` spelling (see {@link Command.options}).
+ */
+function isUnknownFlag(token: string, allowed: ReadonlySet<string>): boolean {
+  if (!token.startsWith("-")) return false;
+  if (GLOBAL_FLAG_TOKENS.has(token)) return false; // exact match only — mirrors parseGlobalFlags
+  const eq = token.indexOf("=");
+  return !allowed.has(eq >= 0 ? token.slice(0, eq) : token);
 }
 
 function renderRootHelp(version: string, commands: Command[]): string {
@@ -157,6 +188,22 @@ function renderRootHelp(version: string, commands: Command[]): string {
   ].join("\n");
 }
 
+/**
+ * Every flag token (primary + aliases) the resolved command accepts beyond the global ones.
+ * A subcommand inherits its PARENT group's options too (`...commands` unions them in), so a
+ * flag declared once on a group works on every leaf under it rather than being rejected there.
+ */
+function commandFlagTokens(...commands: (Command | undefined)[]): ReadonlySet<string> {
+  const tokens = new Set<string>();
+  for (const command of commands) {
+    for (const option of command?.options ?? []) {
+      tokens.add(option.flag);
+      for (const alias of option.aliases ?? []) tokens.add(alias);
+    }
+  }
+  return tokens;
+}
+
 function renderCommandHelp(path: string, command: Command): string {
   const lines = [
     `birdybeep ${path} — ${command.summary}`,
@@ -164,6 +211,17 @@ function renderCommandHelp(path: string, command: Command): string {
     "Usage:",
     `  ${command.usage ?? `birdybeep ${path} [options]`}`,
   ];
+  if (command.options && command.options.length > 0) {
+    const labels = command.options.map(
+      (o) => `${[o.flag, ...(o.aliases ?? [])].join(", ")}${o.value ? ` ${o.value}` : ""}`,
+    );
+    const width = Math.max(...labels.map((l) => l.length));
+    lines.push(
+      "",
+      "Options:",
+      ...command.options.map((o, i) => `  ${labels[i]?.padEnd(width)}  ${o.summary}`),
+    );
+  }
   if (command.subcommands && command.subcommands.length > 0) {
     const width = Math.max(...command.subcommands.map((c) => c.name.length));
     lines.push(
@@ -215,6 +273,8 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
 
   // Resolve the command path (supports one level of nested subcommands).
   let command: Command | undefined = deps.commands.find((c) => c.name === rest[0]);
+  /** The group a resolved subcommand sits under (undefined for a top-level command). */
+  let parent: Command | undefined;
   const pathParts: string[] = [];
   let argsStart = 1;
   if (command) {
@@ -222,6 +282,7 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
     if (command.subcommands && command.subcommands.length > 0) {
       const sub = command.subcommands.find((c) => c.name === rest[1]);
       if (sub) {
+        parent = command;
         command = sub;
         pathParts.push(sub.name);
         argsStart = 2;
@@ -248,6 +309,7 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
       name: path,
       summary: command.summary,
       usage: command.usage,
+      options: command.options,
       subcommands: command.subcommands?.map((c) => ({ name: c.name, summary: c.summary })),
     });
     return EXIT.OK;
@@ -260,7 +322,8 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
   }
 
   const args = rest.slice(argsStart);
-  const unknown = args.find(isUnknownFlag);
+  const allowed = commandFlagTokens(command, parent);
+  const unknown = args.find((token) => isUnknownFlag(token, allowed));
   if (unknown !== undefined) {
     io.errline(`birdybeep ${path}: unknown option "${unknown}".`);
     return EXIT.USAGE;

@@ -5,8 +5,9 @@ copy of exactly what each installer writes. An auditor (or you) can read these b
 anything and see the complete footprint BirdyBeep adds to a coding harness.
 
 These are not hand-written approximations — each file is the same artifact the adapter's snapshot
-tests assert against, so it stays in lockstep with the real generated output and CI catches any
-drift.
+tests assert against, and a drift guard (`packages/cli/src/examples.test.ts`) re-runs the real
+`birdybeep agent install <harness>` into a temp HOME on every CI run and fails if the committed file
+differs by so much as a byte.
 
 ## Index
 
@@ -15,6 +16,7 @@ drift.
 | [Claude Code](./claude-code/README.md) | [`settings.json`](./claude-code/settings.json) | `~/.claude/settings.json`                                     |
 | [Codex](./codex/README.md)             | [`config.toml`](./codex/config.toml)           | `~/.codex/config.toml` (or `$CODEX_HOME`)                     |
 | [OpenCode](./opencode/README.md)       | [`opencode.json`](./opencode/opencode.json)    | `~/.config/opencode/opencode.json` (honors `XDG_CONFIG_HOME`) |
+| [Cursor](./cursor/README.md)           | [`hooks.json`](./cursor/hooks.json)            | `~/.cursor/hooks.json`                                        |
 
 Each example shows the **from-scratch** case — a brand-new config containing nothing but BirdyBeep's
 managed entries — so the managed footprint is unmistakable. On an existing config, the installer
@@ -35,6 +37,9 @@ merges these entries in and leaves everything else untouched. Per-harness README
 - **Codex** reports `needs_trust` until you open Codex and run `/hooks` to trust the hooks.
 - **OpenCode** reports `needs_restart` until you restart OpenCode so the plugin loads.
 - **Claude Code** takes effect immediately — it reads `settings.json` live, no restart or trust step.
+- **Cursor** takes effect immediately too — it reads `hooks.json` live. Its payloads carry
+  `user_email` and `transcript_path`, both of which the adapter drops outright (see the
+  [Cursor example](./cursor/README.md#privacy-note-specific-to-cursor)).
 
 ## Learn more
 

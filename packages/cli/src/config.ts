@@ -16,6 +16,12 @@ export const CONFIG_FILE = "config.json";
 export interface CliConfig {
   /** Backend base URL (set by `pair`); never holds a token. */
   apiUrl?: string;
+  /**
+   * Optional identity pin for `birdybeep pair` (birdybeep-md60): the account that must have
+   * approved a pairing before its token is trusted. Same effect as `--expect-email` (which
+   * overrides it), for fleets/CI images that want the check baked in. Non-secret.
+   */
+  expectEmail?: string;
 }
 
 export function cliConfigPath(): string {
@@ -42,6 +48,8 @@ export function writeCliConfig(patch: CliConfig): void {
   const merged: CliConfig = {};
   const apiUrl = patch.apiUrl ?? current.apiUrl;
   if (apiUrl !== undefined) merged.apiUrl = apiUrl;
+  const expectEmail = patch.expectEmail ?? current.expectEmail;
+  if (expectEmail !== undefined) merged.expectEmail = expectEmail;
   mkdirSync(birdyBeepConfigDir(), { recursive: true, mode: 0o700 });
   writeFileSync(cliConfigPath(), `${JSON.stringify(merged, null, 2)}\n`, { mode: 0o600 });
 }

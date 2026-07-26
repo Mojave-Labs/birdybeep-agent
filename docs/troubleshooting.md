@@ -37,7 +37,7 @@ followed by an indented `→` fix:
 ```
 ✓  Machine token
 ✓  Claude Code: Claude Code installed
-✗  Codex: Codex hooks trusted — BirdyBeep hooks are installed but Codex has not sent an event yet.
+✗  Codex: Codex hooks trusted — BirdyBeep hooks are installed but Codex has not fired a trusted lifecycle hook yet. Until they are trusted, Codex silently skips them — so approval beeps will NOT arrive (turn-complete beeps still work: they come from `notify`, which needs no trust).
      → Open Codex and run /hooks to trust the BirdyBeep hooks.
 ✓  Local queue — 0 queued → 0 delivered, 0 remaining
 ✓  Backend reachable
@@ -79,6 +79,9 @@ The equivalent for the other harnesses:
 
 ✗  OpenCode: OpenCode installed — OpenCode was not found on this machine.
      → Install OpenCode, then re-run `birdybeep agent install opencode`.
+
+✗  Cursor: Cursor installed — Cursor was not found on this machine.
+     → Install Cursor, then re-run `birdybeep agent install cursor`.
 ```
 
 **Fix** — BirdyBeep could not detect the harness binary. Install (or fix the `PATH` for) the harness,
@@ -153,6 +156,9 @@ to `installed`:
 
 ✗  OpenCode: BirdyBeep plugin configured — The `@birdybeep/opencode` plugin is not in opencode.json.
      → Run `birdybeep agent install opencode` to add the plugin.
+
+✗  Cursor: BirdyBeep hooks installed — BirdyBeep hooks are not installed.
+     → Run `birdybeep agent install cursor` to (re)install the hooks.
 ```
 
 **Fix** — the harness is detected, but BirdyBeep's managed entries are not present. Run the matching
@@ -200,6 +206,41 @@ repairs it.
 
 (Codex and OpenCode print the analogous `config.toml writable` / `opencode.json writable` checks.) Fix
 the file/directory permissions so BirdyBeep can update — and later cleanly uninstall — the config.
+
+---
+
+### `pair` refuses with "no terminal to ask on" (Git Bash / CI)
+
+**Symptom** — `birdybeep pair` gets as far as the approval, then refuses:
+
+```
+Pairing needs confirmation (approved by you@example.com), but there is no terminal to ask on, so the
+machine token was NOT stored. Re-run with `--expect-email <addr>` to pin the approving account
+(recommended for CI), or `--yes` to accept whichever account approved it.
+```
+
+**Why** — before it trusts a freshly minted token, `pair` asks you to confirm the account that
+approved the machine. It reads that answer from stdin when stdin is a terminal, and on macOS/Linux
+otherwise from the controlling terminal (`/dev/tty`). When neither exists — a script, a CI job, a
+detached session — it fails closed rather than hang or silently trust. **Windows has no controlling-
+terminal fallback at all**: `CONIN$` opens even with no console attached and then blocks forever on
+read, so using it would hang instead of refusing.
+
+**Fix** — pick the one that matches where you are:
+
+- **CI / scripts:** `birdybeep pair --expect-email you@example.com` (still catches a wrong-account
+  approval), or `birdybeep pair --yes` to skip the check entirely.
+- **Windows Git Bash / MSYS / mintty:** these can hand programs pipe-backed stdio, and there is no
+  console fallback on Windows (see above), so run:
+
+  ```bash
+  winpty birdybeep pair
+  ```
+
+  which attaches a real console — stdin becomes a TTY and the prompt appears normally. PowerShell,
+  `cmd`, Windows Terminal, and the VS Code terminal all provide a real TTY and never hit this.
+
+- Note that `--non-interactive` always takes this branch by design, whatever terminal is attached.
 
 ---
 
@@ -337,4 +378,5 @@ birdybeep test
 3. Re-run the relevant `birdybeep agent install <harness>` — it is idempotent and non-destructive.
 4. For Codex, remember it stays `needs_trust` until the **first event after** you run `/hooks`; for
    OpenCode, `needs_restart` until the **first event after** a restart. Trigger one event in the harness
-   and re-check.
+   and re-check. Claude Code and Cursor have no such gate — they read their config live, so they report
+   `installed` as soon as the install finishes.

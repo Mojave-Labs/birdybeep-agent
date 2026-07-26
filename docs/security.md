@@ -143,6 +143,14 @@ Token storage lives in
   token.
 - **Revoke & rotate.** Tokens can be revoked and rotated from the mobile app. Locally, `birdybeep
 logout` clears the token from **both** the keychain and the file fallback (idempotent).
+- **Minting ≠ trusting (the pairing confirm gate).** A freshly minted token is held in memory until
+  the account that approved the pairing is confirmed. `birdybeep pair` prints
+  `Pair this machine to <email>? [y/N]` — the identity the backend reports as having approved it —
+  and stores nothing (not even the non-secret API URL) unless you accept. This is the human-layer
+  defense against a code approved from the wrong account: an unnoticed wrong approval never becomes
+  a working machine. Headless runs pin the identity with `--expect-email <addr>` (mismatch and
+  unverifiable both hard-fail) or bypass with `--yes`; a non-interactive run with neither **fails
+  closed**. Details in [Pairing](./pairing.md#confirming-the-approving-account).
 
 ## What the backend stores
 

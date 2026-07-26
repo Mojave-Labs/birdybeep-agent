@@ -28,22 +28,22 @@
  * call at all, so this runs anywhere the repo is built (unlike the harness live-e2e
  * scripts, which need a real agent binary + OpenRouter key).
  *
+ * CROSS-PLATFORM (birdybeep-agent-n02): the retention defect is not POSIX-specific and
+ * the CLI ships on Windows, so this runs on all three OSes. Everything that used to
+ * assume POSIX is gone: no `sh` PATH shim (it was dead weight — every child here is
+ * spawned as `<node> <CLI_BIN>`, so nothing ever resolves `birdybeep` from PATH), no
+ * `:`-joined PATH, `process.execPath` instead of a bare `node`, and the sandbox
+ * redirects the Windows profile vars (USERPROFILE / LOCALAPPDATA / APPDATA / TEMP)
+ * alongside HOME/XDG_*, because that is what `birdyBeepDataDir()` reads there.
+ *
  * Run:  node scripts/live-e2e-queue-retention.mjs
  */
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, parse as parsePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -78,24 +78,42 @@ if (!existsSync(AGENT_CORE_DIST)) skip(`agent-core not built (${AGENT_CORE_DIST}
 const sandbox = mkdtempSync(join(tmpdir(), "birdybeep-live-retention-"));
 const home = join(sandbox, "home");
 const work = join(sandbox, "work");
-const bin = join(sandbox, "bin");
-for (const d of [home, work, bin, join(home, ".claude")]) mkdirSync(d, { recursive: true });
-writeFileSync(join(bin, "birdybeep"), `#!/bin/sh\nexec node "${CLI_BIN}" "$@"\n`);
-chmodSync(join(bin, "birdybeep"), 0o755);
+const temp = join(sandbox, "tmp");
+for (const d of [home, work, temp, join(home, ".claude")]) mkdirSync(d, { recursive: true });
+/** Filesystem root of the sandbox home ("C:" on win32, "" on POSIX) — see HOMEDRIVE below. */
+const HOME_ROOT = parsePath(home).root.replace(/[\\/]$/, "");
 
 let sinkUrl = "";
+/**
+ * Redirect EVERY "where does my profile/config/data/temp live" variable into the sandbox,
+ * on every OS — `birdyBeepDataDir()` reads `%LOCALAPPDATA%` on Windows, `$HOME` on macOS,
+ * and `$XDG_DATA_HOME` on Linux, so a partial list would silently let one platform write
+ * the queue into the REAL user profile.
+ */
 const makeBaseEnv = () => ({
   ...process.env,
-  HOME: home,
+  HOME: home, // macOS / Linux
+  USERPROFILE: home, // Windows (os.homedir reads this)
+  // HOMEDRIVE + HOMEPATH are a PAIR — legacy Windows resolvers concatenate them. Setting only
+  // HOMEPATH (drive-qualified, as it was) while HOMEDRIVE stayed inherited from the runner
+  // produced a nonsense path like `C:C:\Users\...\home`; split them properly instead.
+  HOMEDRIVE: HOME_ROOT,
+  HOMEPATH: home.slice(HOME_ROOT.length),
   XDG_CONFIG_HOME: join(home, ".config"),
   XDG_DATA_HOME: join(home, ".local", "share"),
   XDG_STATE_HOME: join(home, ".local", "state"),
-  PATH: `${bin}:${process.env.PATH}`,
+  XDG_CACHE_HOME: join(home, ".cache"),
+  APPDATA: join(home, "AppData", "Roaming"),
+  LOCALAPPDATA: join(home, "AppData", "Local"), // ← the Windows queue/token base
+  TMPDIR: temp,
+  TMP: temp,
+  TEMP: temp,
   BIRDYBEEP_API_URL: sinkUrl,
 });
 
 function birdybeep(args) {
-  return spawnSync("node", [CLI_BIN, ...args, "--json"], {
+  // process.execPath, not a bare "node": no PATH lookup, and no `.exe`/shell quirks on win32.
+  return spawnSync(process.execPath, [CLI_BIN, ...args, "--json"], {
     cwd: work,
     env: makeBaseEnv(),
     encoding: "utf8",
@@ -109,7 +127,7 @@ function birdybeep(args) {
  * drains the queue.
  */
 async function birdybeepAsync(args) {
-  const child = spawn("node", [CLI_BIN, ...args, "--json"], {
+  const child = spawn(process.execPath, [CLI_BIN, ...args, "--json"], {
     cwd: work,
     env: makeBaseEnv(),
     stdio: ["ignore", "pipe", "pipe"],
@@ -129,7 +147,7 @@ async function birdybeepAsync(args) {
  * as its own process and pipe the JSON payload on stdin. Async so the sink stays live.
  */
 async function fireHook(payload) {
-  const child = spawn("node", [CLI_BIN, "hook", "claude", "--json"], {
+  const child = spawn(process.execPath, [CLI_BIN, "hook", "claude", "--json"], {
     cwd: work,
     env: makeBaseEnv(),
     stdio: ["pipe", "pipe", "pipe"],
@@ -148,7 +166,7 @@ async function fireHook(payload) {
 
 /** Evaluate an expression inside a child process that sees the sandbox HOME. */
 function inSandbox(body) {
-  const res = spawnSync("node", ["--input-type=module", "-e", body], {
+  const res = spawnSync(process.execPath, ["--input-type=module", "-e", body], {
     env: makeBaseEnv(),
     encoding: "utf8",
   });
@@ -194,7 +212,8 @@ const cleanup = () => {
     log(`BIRDYBEEP_E2E_KEEP set — leaving sandbox at ${sandbox}`);
     return;
   }
-  rmSync(sandbox, { recursive: true, force: true });
+  // maxRetries: on Windows a just-exited child can still hold a handle for a beat (EBUSY).
+  rmSync(sandbox, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 };
 
 const hookPayload = (i) => ({
@@ -318,7 +337,13 @@ try {
     !bodies.includes("seed"),
     "an EXPIRED event was delivered — retention must drop, not send",
   );
-  assert(!bodies.includes(sandbox), "raw sandbox path leaked into a delivered event body");
+  // `bodies` is JSON, so a Windows path appears with its backslashes DOUBLED — checking only
+  // the raw form would make this leak assertion silently vacuous on win32.
+  const sandboxInJson = JSON.stringify(sandbox).slice(1, -1);
+  assert(
+    !bodies.includes(sandbox) && !bodies.includes(sandboxInJson),
+    "raw sandbox path leaked into a delivered event body",
+  );
   assert(!bodies.includes(TOKEN), "machine token leaked into an event body");
 
   log("");
