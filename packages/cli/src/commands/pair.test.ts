@@ -8,7 +8,8 @@
  * pairing contract.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { getOS, getToken, unavailableKeychainBackend } from "@birdybeep/agent-core";
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
@@ -643,11 +644,20 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
       // Measured on a windows-latest runner with fully piped stdio: `CONIN$` OPENS and then
       // reading it never returns, so the "fallback" turned fail-closed into a 60s hang. The
       // probe therefore refuses on win32 outright, whatever path it is handed.
+      //
+      // The path MUST be one that really opens. An earlier version of this test passed a file
+      // that did not exist, so `openSync` threw ENOENT and the probe returned false on every
+      // platform — deleting the win32 short-circuit left the test green. The control assertion
+      // below is what makes the win32 assertion mean something.
+      sandbox = createSandbox();
+      const openable = join(sandbox.home, "definitely-openable");
+      writeFileSync(openable, "x");
+      expect(canOpenControllingTerminal(openable)).toBe(true); // control: it really does open
+
       const original = process.platform;
       try {
         Object.defineProperty(process, "platform", { value: "win32", configurable: true });
-        // Even pointed at a path that definitely opens, the probe must say no on Windows.
-        expect(canOpenControllingTerminal(cliConfigPath())).toBe(false);
+        expect(canOpenControllingTerminal(openable)).toBe(false); // …but never on Windows
       } finally {
         Object.defineProperty(process, "platform", { value: original, configurable: true });
       }

@@ -5,10 +5,10 @@
  * needs the private product repo and a pty, so it cannot run on a Windows runner).
  *
  * Why this exists: the confirm gate made `birdybeep pair` depend on the shape of its stdio, and
- * that is exactly where platforms differ. Windows has no /dev/tty — the controlling-terminal
- * fallback goes through the `CONIN$` console device, which behaves differently again under a
- * service-style CI runner (no console at all) than under a real terminal. Asserting those
- * branches only on Linux would ship the platform-specific half unverified.
+ * that is exactly where platforms differ. The controlling-terminal fallback is POSIX-only
+ * (`/dev/tty`); Windows has no usable equivalent, so every non-interactive invocation there
+ * must take the fail-closed branch. Asserting these branches only on Linux would ship the
+ * platform-specific half unverified.
  *
  * Real: the built `birdybeep` binary in its own process, a hermetic temp HOME per case, real
  * pipe stdio, and a real HTTP server speaking the device-code contract. Stubbed: only the
@@ -26,8 +26,8 @@
  * must hold however the CLI gets there. Which branch delivers it is environment-dependent, so the
  * rig probes (with a child spawned exactly like the CLI) and asserts the matching message: the
  * fail-closed error where no controlling terminal exists (POSIX `detached`), or prompt-then-
- * decline-on-EOF where one is reachable — which, measured, includes the windows-latest runner,
- * where `CONIN$` opens even with no console attached.
+ * fail-closed error where no controlling terminal exists (POSIX `detached`, and ALWAYS on
+ * Windows), or prompt-then-decline-on-EOF where /dev/tty is reachable.
  *
  * Run:  node scripts/live-e2e-pair-headless.mjs
  */
@@ -271,10 +271,11 @@ try {
   // the environment, so the branch-specific message is asserted conditionally:
   //   - no controlling terminal (POSIX `detached`, a console-less runner) → the fail-closed
   //     error, naming both escape hatches (+ the winpty hint on win32);
-  //   - a terminal IS reachable (a dev box, and — measured — the windows-latest runner, where
-  //     `CONIN$` opens) → the CLI correctly PROMPTS, reads EOF from it, and declines.
+  //   - /dev/tty IS reachable (a dev box running this from a terminal) → the CLI correctly
+  //     PROMPTS on it, reads EOF, and declines.
   // Skipping this case when a terminal happened to be reachable would have left the branch
-  // unasserted on exactly the platform the review asked about.
+  // unasserted on exactly the platform the review asked about. On Windows the probe is always
+  // false (the CLI never falls back there), so the fail-closed arm is the one that runs.
   {
     approvedByEmail = APPROVER;
     const { env } = newHome();

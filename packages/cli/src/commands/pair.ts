@@ -112,11 +112,11 @@ export interface PairConfirmInput {
   /** Whether stdin can carry an answer (a real terminal), i.e. prompting won't hang. */
   stdinIsTTY: boolean;
   /**
-   * Whether the process can still reach its CONTROLLING TERMINAL even though stdin isn't one
-   * (`/dev/tty`, or `CONIN$` on Windows). This is the difference between "a human is sitting
-   * here but their shell hands us pipe-backed stdio" — MSYS/mintty Git Bash without ConPTY is
-   * the common case — and "nobody is there at all" (a script, a CI job). Only the latter may
-   * fail closed; the former gets prompted on the terminal it actually has.
+   * Whether the process can still reach its CONTROLLING TERMINAL (`/dev/tty`) even though stdin
+   * isn't one. This is the difference between "a human is sitting here but their shell hands us
+   * pipe-backed stdio" and "nobody is there at all" (a script, a CI job): only the latter may
+   * fail closed, the former gets prompted on the terminal it actually has. Always false on
+   * Windows — see {@link canOpenControllingTerminal}.
    */
   controllingTerminalAvailable: boolean;
   /** Platform, for platform-specific remediation in the reject text. Default `process.platform`. */
@@ -130,8 +130,8 @@ export type PairConfirmDecision =
   | { action: "approve"; reason: "expected_email_match" | "yes_flag" }
   /**
    * Ask the human. `question` is the exact prompt to write; `on` says WHERE to read the answer
-   * — "stdin" when stdin is a terminal, "controlling-terminal" when it isn't but /dev/tty (or
-   * CONIN$) is reachable.
+   * — "stdin" when stdin is a terminal, "controlling-terminal" when it isn't but /dev/tty is
+   * reachable (POSIX only).
    */
   | { action: "prompt"; question: string; on: "stdin" | "controlling-terminal" }
   /** Refuse: the token must NOT be persisted, and `message` says why + how to proceed. */
@@ -298,19 +298,35 @@ export function canOpenControllingTerminal(path: string = controllingTerminalPat
  * `--json` output stays a clean NDJSON stream. EOF/close resolves to "" (a decline) so the CLI
  * can never hang waiting for an answer that will never come.
  *
- * `on: "controlling-terminal"` reads from /dev/tty (CONIN$) instead of stdin — the case where a
- * human IS present but the shell gave us pipe-backed stdio.
+ * `on: "controlling-terminal"` reads from /dev/tty instead of stdin — a human IS present but the
+ * shell gave us pipe-backed stdio.
+ *
+ * WHY tty.ReadStream over an explicit fd, and not `createReadStream("/dev/tty")`:
+ * a plain fs read stream services reads on the libuv THREADPOOL. Once a read is issued it cannot
+ * be cancelled — `destroy()` returns, but the `FSReqCallback` stays pending, and because `bin.ts`
+ * sets `process.exitCode` (rather than calling `process.exit`) the event loop never drains. The
+ * observable bug: after answering the prompt the CLI printed "✓ Paired …" and then HUNG until a
+ * keypress or Ctrl-C — flatly contradicting the "never hangs" guarantee this gate is built on.
+ * Measured: answer read at +9ms, process still alive at 20s with
+ * `process._getActiveRequests() === ['FSReqCallback']`. A `tty.ReadStream` uses a poll-backed
+ * handle instead, so closing the fd deterministically here ends the read and the process exits
+ * (~0.06s). The fd is ours (we opened it), so we close it exactly once, on every path.
  */
 async function promptForAnswer(
   question: string,
   on: "stdin" | "controlling-terminal",
 ): Promise<string> {
   const { createInterface } = await import("node:readline/promises");
-  const { createReadStream } = await import("node:fs");
-  const input =
-    on === "stdin"
-      ? process.stdin
-      : createReadStream(controllingTerminalPath(), { autoClose: true });
+
+  let ttyFd: number | undefined;
+  let input: NodeJS.ReadableStream;
+  if (on === "stdin") {
+    input = process.stdin;
+  } else {
+    const { ReadStream } = await import("node:tty");
+    ttyFd = openSync(controllingTerminalPath(), "r");
+    input = new ReadStream(ttyFd);
+  }
 
   return new Promise<string>((resolve) => {
     const rl = createInterface({ input, output: process.stderr });
@@ -323,7 +339,22 @@ async function promptForAnswer(
         // The interface resumed stdin; unref so a lingering TTY handle can't hold the process open.
         process.stdin.unref?.();
       } else {
-        (input as { destroy?: () => void }).destroy?.(); // release the /dev/tty handle
+        // Order matters: unref + destroy the handle, THEN close the fd. Both are wrapped because
+        // destroying a tty stream may already have closed it — a double close must never throw
+        // out of the prompt (that would turn a successful answer into a crash).
+        try {
+          (input as { unref?: () => void }).unref?.();
+          (input as { destroy?: () => void }).destroy?.();
+        } catch {
+          /* stream already torn down */
+        }
+        if (ttyFd !== undefined) {
+          try {
+            closeSync(ttyFd);
+          } catch {
+            /* already closed by the stream */
+          }
+        }
       }
       resolve(value);
     };
@@ -353,8 +384,8 @@ export interface PairCommandDeps {
   isStdinTTY?: boolean;
   /**
    * Whether the controlling terminal is reachable when stdin is NOT a TTY (default: probe
-   * /dev/tty — CONIN$ on Windows). Injected in tests so both branches are exercised without
-   * needing a real terminal.
+   * /dev/tty; always false on Windows). Injected in tests so both branches are exercised
+   * without needing a real terminal.
    */
   hasControllingTerminal?: () => boolean;
   /** Ask a question and read one line (default {@link promptForAnswer}); injected in tests. */

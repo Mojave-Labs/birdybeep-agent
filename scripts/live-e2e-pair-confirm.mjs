@@ -23,8 +23,10 @@
  *   5. --expect-email MISMATCH — refuses and stores NO token (the wrong-account case,
  *      driven by a second real account approving the session).
  *   6. headless, no flags — fails CLOSED fast (never hangs a script), naming both hatches.
- *   7. PIPED stdin under a controlling terminal — the non-ConPTY Git Bash shape: the prompt
- *      must still engage, read from /dev/tty rather than fail closed.
+ *   7. PIPED stdin under a controlling terminal — the pipe-backed-shell shape: the prompt must
+ *      still engage and read from /dev/tty rather than fail closed, for BOTH answers, and the
+ *      process must exit promptly afterwards (an exact exit code + a time bound, because a
+ *      SIGKILLed hang also produces a non-zero "code").
  * Plus, on every case: nothing token-SHAPED ever appears in the CLI's own output (stdout AND
  * stderr), which is the check that actually covers the reject paths — they store no token, so a
  * stored-value comparison alone would inspect zero bytes on exactly the paths that hold a live
@@ -338,23 +340,34 @@ try {
    * output, even though those are the paths holding a minted-but-discarded live credential.
    * The stored-value check stays as a second, narrower net.
    */
-  const MACHINE_TOKEN_SHAPE = /mt_[0-9a-f]{64}/;
+  // Deliberately loose: `{8,}` rather than the exact `{64}`, so a TRUNCATED print (a debug line
+  // showing the first N chars of the token) is caught too — a prefix is still credential material.
+  // Sanity-checked against the legitimate output of every case below: emails, machine ids
+  // (`mac_…`), user codes and the QR block contain no `mt_<hex>` run.
+  const MACHINE_TOKEN_SHAPE = /mt_[0-9a-f]{8,}/;
   const assertNoTokenLeak = (label, r) => {
-    check(`${label}: no machine token in CLI output`, !MACHINE_TOKEN_SHAPE.test(r.out));
+    check(
+      `${label}: no machine token in CLI output`,
+      !MACHINE_TOKEN_SHAPE.test(r.out),
+      r.out.slice(-200),
+    );
     if (r.token !== null) {
       check(`${label}: the stored token specifically never appears`, !r.out.includes(r.token));
     }
   };
+  /** Every case that drives /v1/pair/approve must prove the approval actually happened. */
+  const assertApproved = (label, r) =>
+    check(
+      `${label}: session was really approved server-side`,
+      r.approveStatus > 0 && r.approveStatus < 300,
+      `status ${r.approveStatus}`,
+    );
 
   // ── case 1: interactive DECLINE ───────────────────────────────────────────
   {
     const approver = await makeAccount("decline");
     const r = await pairCase({ approver, mode: "tty", answer: "n" });
-    check(
-      "decline: session was really approved server-side (202/200)",
-      r.approveStatus < 300,
-      `status ${r.approveStatus}`,
-    );
+    assertApproved("decline", r);
     check(
       "decline: the prompt named the approving account",
       r.out.includes(approver.email) && /\[y\/N\]/.test(r.out),
@@ -373,6 +386,7 @@ try {
   {
     const approver = await makeAccount("accept");
     const r = await pairCase({ approver, mode: "tty", answer: "y" });
+    assertApproved("accept", r);
     check("accept: CLI exits 0", r.code === 0, `code ${r.code} out=${r.out.slice(-500)}`);
     check(
       "accept: a real machine token was stored (mt_…)",
@@ -387,6 +401,7 @@ try {
   {
     const approver = await makeAccount("yesflag");
     const r = await pairCase({ approver, args: ["--yes"] });
+    assertApproved("--yes", r);
     check(
       "--yes: CLI exits 0 with no tty",
       r.code === 0,
@@ -401,6 +416,7 @@ try {
   {
     const approver = await makeAccount("pinmatch");
     const r = await pairCase({ approver, args: ["--expect-email", approver.email] });
+    assertApproved("--expect-email match", r);
     check(
       "--expect-email match: CLI exits 0",
       r.code === 0,
@@ -419,6 +435,7 @@ try {
     const approver = await makeAccount("attacker");
     const expected = await makeAccount("expected");
     const r = await pairCase({ approver, args: ["--expect-email", expected.email] });
+    assertApproved("--expect-email mismatch", r);
     check("--expect-email mismatch: CLI exits non-zero", r.code !== 0, `code ${r.code}`);
     check("--expect-email mismatch: NO token stored", r.token === null, `token=${r.token}`);
     check(
@@ -433,6 +450,7 @@ try {
   {
     const approver = await makeAccount("headless");
     const r = await pairCase({ approver });
+    assertApproved("headless", r);
     check("headless: CLI exits non-zero", r.code !== 0, `code ${r.code}`);
     check("headless: NO token stored", r.token === null, `token=${r.token}`);
     check(
@@ -449,29 +467,44 @@ try {
   }
 
   // ── case 7: PIPED stdin but a controlling terminal exists (the Git Bash shape) ──
-  // stdin is a real pipe, so `process.stdin.isTTY` is false — yet a terminal IS attached, so
-  // the gate must prompt on /dev/tty rather than fail closed. The "n" below is written to the
-  // pty master, so it can only reach the CLI if it genuinely opened the controlling terminal.
-  {
+  // stdin is a real pipe, so `process.stdin.isTTY` is false — yet a terminal IS attached, so the
+  // gate must prompt on /dev/tty rather than fail closed. The answer is written to the pty master,
+  // so it can only reach the CLI if it genuinely opened the controlling terminal.
+  //
+  // BOTH answers are exercised, and the assertions are built to SEE A HANG. `r.code !== 0` alone
+  // cannot: pairCase SIGKILLs at 60s and `code` is then `null`, which is `!== 0` — so a one-minute
+  // hang scored PASS. Each arm now pins an EXACT exit code (null therefore fails) AND a time bound
+  // measured from the approval, which is what catches the process staying alive after the answer
+  // has been read — exactly the fs-read-stream defect this rig surfaced.
+  for (const { answer, label, wantCode, wantToken } of [
+    { answer: "n", label: "/dev/tty decline", wantCode: 1, wantToken: false },
+    { answer: "y", label: "/dev/tty accept", wantCode: 0, wantToken: true },
+  ]) {
     const approver = await makeAccount("devtty");
-    const r = await pairCase({ approver, mode: "piped-stdin-tty", answer: "n" });
+    const r = await pairCase({ approver, mode: "piped-stdin-tty", answer });
+    assertApproved(label, r);
     check(
-      "/dev/tty fallback: the prompt engaged despite piped stdin",
+      `${label}: the prompt engaged despite piped stdin`,
       /\[y\/N\]/.test(r.out) && r.out.includes(approver.email),
       r.out.slice(-500),
     );
     check(
-      "/dev/tty fallback: the decline was read from the terminal",
-      r.code !== 0,
+      `${label}: exits ${wantCode} (a null code would mean it was killed mid-hang)`,
+      r.code === wantCode,
       `code ${r.code}`,
     );
-    check("/dev/tty fallback: NO token stored", r.token === null, `token=${r.token}`);
     check(
-      "/dev/tty fallback: did not fail closed",
-      !/no terminal to ask on/.test(r.out),
-      r.out.slice(-300),
+      `${label}: the process exits promptly after the answer (<15s)`,
+      r.elapsedAfterApprove < 15_000,
+      `${r.elapsedAfterApprove}ms after approval`,
     );
-    assertNoTokenLeak("/dev/tty fallback", r);
+    check(
+      `${label}: token ${wantToken ? "stored" : "NOT stored"}`,
+      wantToken ? typeof r.token === "string" && r.token.startsWith("mt_") : r.token === null,
+      `token=${r.token}`,
+    );
+    check(`${label}: did not fail closed`, !/no terminal to ask on/.test(r.out), r.out.slice(-300));
+    assertNoTokenLeak(label, r);
   }
 
   // ── server-side: a declined pairing still minted a machine row (revoke advice) ──

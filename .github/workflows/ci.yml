@@ -62,9 +62,9 @@ jobs:
       - name: no-token queue retention (live-e2e)
         run: node scripts/live-e2e-queue-retention.mjs || [ "$?" -eq 2 ]
       # birdybeep-md60: the pairing confirm gate made `pair` depend on the SHAPE of its stdio,
-      # and that is where platforms diverge (no /dev/tty on Windows — the fallback goes through
-      # CONIN$, which behaves differently again under a console-less CI runner). This lane drives
-      # the real binary with real pipe stdio and asserts the non-interactive branches on ALL
+      # and that is where platforms diverge — the controlling-terminal fallback is POSIX-only
+      # (`/dev/tty`), so on Windows every non-interactive invocation must take the fail-closed
+      # branch. This lane drives the real binary with real pipe stdio and asserts those branches
       # THREE OSes; the full live rig (live-e2e-pair-confirm.mjs) needs the private product repo
       # + a pty, so it cannot run here. Tolerate exit 2 (SKIP) exactly as above.
       - name: pairing confirm gate — headless branches (live-e2e)
