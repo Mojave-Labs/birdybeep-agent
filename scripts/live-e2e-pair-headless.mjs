@@ -33,9 +33,9 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, parse as parsePath } from "node:path";
+import { delimiter, dirname, join, parse as parsePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -96,6 +96,61 @@ const baseUrl = `http://127.0.0.1:${server.address().port}`;
 log(`stub pairing backend at ${baseUrl}`);
 
 const sandbox = mkdtempSync(join(tmpdir(), "bb-pair-headless-"));
+
+/**
+ * macOS keychain shim (same approach as the product repo's xrepo rigs).
+ *
+ * On darwin the token store spawns the real `security` binary. On a headless macOS CI runner
+ * `security add-generic-password` blocks on the locked login keychain and never returns — the
+ * first windows/macos run of this lane died exactly there (`code null` after the kill timeout,
+ * two orphaned `security` processes). That is an environment property, not a product bug (a real
+ * user's login keychain is unlocked), so the rig puts a file-backed `security` FIRST on PATH.
+ *
+ * The CLI's real keychain code path still runs end to end — it spawns `security`, feeds the
+ * secret twice over STDIN (never argv), and does its read-back verification — but against this
+ * sandbox file instead of the runner's keychain. No-op on Linux/Windows, which never shell out.
+ */
+const shimDir = join(sandbox, "bin");
+mkdirSync(shimDir, { recursive: true });
+if (process.platform === "darwin") {
+  // Keyed on BIRDYBEEP_FAKE_KEYCHAIN, set per case below: a SHARED store would let one case's
+  // token satisfy the next case's "NO token stored" assertion, making it vacuous.
+  const shim = `#!/usr/bin/env bash
+set -euo pipefail
+store="\${BIRDYBEEP_FAKE_KEYCHAIN:?}"
+mkdir -p "$store"
+cmd="\${1:-}"; shift || true
+service=""; account=""; secret=""; wflag=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -s) service="\${2:-}"; shift 2 ;;
+    -a) account="\${2:-}"; shift 2 ;;
+    -w) wflag=1; shift ;;
+    *) shift ;;
+  esac
+done
+file="$store/\${service}__\${account}"
+case "$cmd" in
+  add-generic-password)
+    # The real binary prompts twice and reads both from stdin; a mismatch silently stores an
+    # EMPTY password and still exits 0, so reproduce that faithfully.
+    if [ "$wflag" -eq 1 ]; then
+      IFS= read -r pw1 || pw1=""
+      IFS= read -r pw2 || pw2=""
+      if [ "$pw1" = "$pw2" ]; then secret="$pw1"; else secret=""; fi
+    fi
+    printf '%s' "$secret" > "$file"
+    ;;
+  find-generic-password) if [ -f "$file" ]; then cat "$file"; echo; else exit 44; fi ;;
+  delete-generic-password) rm -f "$file" ;;
+  *) exit 1 ;;
+esac
+`;
+  writeFileSync(join(shimDir, "security"), shim, { mode: 0o755 });
+  chmodSync(join(shimDir, "security"), 0o755);
+  log(`macOS: shimming \`security\` on PATH (${shimDir}) — the runner's keychain is locked`);
+}
+
 let caseNo = 0;
 /** A fresh hermetic HOME per case — every profile/config/data var redirected, on every OS. */
 function newHome() {
@@ -121,6 +176,10 @@ function newHome() {
       TEMP: join(home, "tmp"),
       BIRDYBEEP_API_URL: baseUrl,
       NO_UPDATE_NOTIFIER: "1",
+      // shimDir first: on darwin this is the file-backed `security` (see above), and the
+      // store is scoped to THIS case's home so nothing leaks between cases.
+      PATH: `${shimDir}${delimiter}${process.env.PATH ?? ""}`,
+      BIRDYBEEP_FAKE_KEYCHAIN: join(home, "fake-keychain"),
     },
   };
 }
