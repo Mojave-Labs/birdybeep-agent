@@ -66,6 +66,17 @@ export interface CommandContext {
   io: Io;
 }
 
+/** A per-command flag: its accepted spellings, optional value placeholder, and help text. */
+export interface CommandOption {
+  /** Primary flag token, e.g. `"--expect-email"`. */
+  flag: string;
+  /** Extra accepted spellings, e.g. `["-y"]`. */
+  aliases?: readonly string[];
+  /** Value placeholder shown in help (e.g. `"<addr>"`); omit for boolean flags. */
+  value?: string;
+  summary: string;
+}
+
 export interface Command {
   name: string;
   summary: string;
@@ -73,6 +84,13 @@ export interface Command {
   usage?: string;
   /** Nested subcommands (e.g. `agent install` / `agent uninstall`). */
   subcommands?: Command[];
+  /**
+   * Flags this command accepts IN ADDITION to the global ones. Without this allowlist the
+   * dispatcher rejects every non-global flag as an unknown option, so a command that owns
+   * flags must declare them here — and declaring them also documents them in `--help`.
+   * Both `--flag value` and `--flag=value` are accepted; parsing stays the command's job.
+   */
+  options?: readonly CommandOption[];
   /** Command logic; returns the intended exit code. Absent for pure command groups. */
   run?(ctx: CommandContext): Promise<number> | number;
 }
@@ -132,9 +150,16 @@ export function parseGlobalFlags(argv: string[]): { flags: GlobalFlags; rest: st
   return { flags, rest };
 }
 
-/** Is `token` an unknown long/short flag (after global flags were stripped)? */
-function isUnknownFlag(token: string): boolean {
-  return token.startsWith("-") && !GLOBAL_FLAG_TOKENS.has(token);
+/**
+ * Is `token` an unknown long/short flag (after global flags were stripped)? `allowed` carries
+ * the resolved command's own {@link Command.options}; a `--flag=value` token is matched on the
+ * name before the `=` so value flags work in both spellings.
+ */
+function isUnknownFlag(token: string, allowed: ReadonlySet<string>): boolean {
+  if (!token.startsWith("-")) return false;
+  const eq = token.indexOf("=");
+  const name = eq >= 0 ? token.slice(0, eq) : token;
+  return !GLOBAL_FLAG_TOKENS.has(name) && !allowed.has(name);
 }
 
 function renderRootHelp(version: string, commands: Command[]): string {
@@ -157,6 +182,16 @@ function renderRootHelp(version: string, commands: Command[]): string {
   ].join("\n");
 }
 
+/** Every flag token (primary + aliases) the command accepts beyond the global ones. */
+function commandFlagTokens(command: Command): ReadonlySet<string> {
+  const tokens = new Set<string>();
+  for (const option of command.options ?? []) {
+    tokens.add(option.flag);
+    for (const alias of option.aliases ?? []) tokens.add(alias);
+  }
+  return tokens;
+}
+
 function renderCommandHelp(path: string, command: Command): string {
   const lines = [
     `birdybeep ${path} — ${command.summary}`,
@@ -164,6 +199,17 @@ function renderCommandHelp(path: string, command: Command): string {
     "Usage:",
     `  ${command.usage ?? `birdybeep ${path} [options]`}`,
   ];
+  if (command.options && command.options.length > 0) {
+    const labels = command.options.map(
+      (o) => `${[o.flag, ...(o.aliases ?? [])].join(", ")}${o.value ? ` ${o.value}` : ""}`,
+    );
+    const width = Math.max(...labels.map((l) => l.length));
+    lines.push(
+      "",
+      "Options:",
+      ...command.options.map((o, i) => `  ${labels[i]?.padEnd(width)}  ${o.summary}`),
+    );
+  }
   if (command.subcommands && command.subcommands.length > 0) {
     const width = Math.max(...command.subcommands.map((c) => c.name.length));
     lines.push(
@@ -248,6 +294,7 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
       name: path,
       summary: command.summary,
       usage: command.usage,
+      options: command.options,
       subcommands: command.subcommands?.map((c) => ({ name: c.name, summary: c.summary })),
     });
     return EXIT.OK;
@@ -260,7 +307,8 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
   }
 
   const args = rest.slice(argsStart);
-  const unknown = args.find(isUnknownFlag);
+  const allowed = commandFlagTokens(command);
+  const unknown = args.find((token) => isUnknownFlag(token, allowed));
   if (unknown !== undefined) {
     io.errline(`birdybeep ${path}: unknown option "${unknown}".`);
     return EXIT.USAGE;

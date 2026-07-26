@@ -28,7 +28,7 @@ import {
 // vendor, and a floating range would defeat the small-auditable-supply-chain goal (§16.4).
 import { renderUnicodeCompact } from "uqr";
 
-import { resolveApiUrl, writeCliConfig } from "../config";
+import { readCliConfig, resolveApiUrl, writeCliConfig } from "../config";
 import { type Command, EXIT } from "../framework";
 import { pairStart, pairTokenPoll, type PairTokenResult } from "../pairing";
 import { CLI_VERSION } from "../version";
@@ -52,6 +52,165 @@ export function renderQrMatrix(qrPayload: string): string {
   return renderUnicodeCompact(qrPayload, { border: 2 });
 }
 
+/** What the caller asked for on the command line (beyond the global flags). */
+export interface PairFlags {
+  /** `--yes` / `-y`: skip the interactive confirm (CI/headless escape hatch). */
+  yes: boolean;
+  /** `--expect-email <addr>`: pin the identity that must have approved this pairing. */
+  expectEmail?: string;
+  /** A usage problem (unknown value, stray argument) — the command exits EXIT.USAGE. */
+  error?: string;
+}
+
+/**
+ * Parse `pair`'s own flags out of the post-global argv. Accepts `--expect-email addr` and
+ * `--expect-email=addr`; any stray positional is a usage error (pair takes none), so a
+ * fat-fingered `birdybeep pair becs@example.com` can never be silently ignored while the
+ * confirm gate falls back to prompting.
+ */
+export function parsePairFlags(args: string[]): PairFlags {
+  const flags: PairFlags = { yes: false };
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i] ?? "";
+    if (token === "--yes" || token === "-y") {
+      flags.yes = true;
+    } else if (token === "--expect-email" || token.startsWith("--expect-email=")) {
+      const inline = token.startsWith("--expect-email=")
+        ? token.slice("--expect-email=".length)
+        : undefined;
+      const value = inline ?? args[++i];
+      if (value === undefined || value.length === 0 || value.startsWith("-")) {
+        return { ...flags, error: "--expect-email requires an email address" };
+      }
+      flags.expectEmail = value;
+    } else {
+      return { ...flags, error: `unexpected argument "${token}"` };
+    }
+  }
+  return flags;
+}
+
+/**
+ * The confirm gate's inputs (birdybeep-md60). `approvedByEmail` is what the server said
+ * approved this pairing; everything else is how the operator invoked the CLI.
+ */
+export interface PairConfirmInput {
+  /** `approved_by_email` from `/v1/pair/token` — absent on older servers. */
+  approvedByEmail?: string;
+  /** The pinned identity (`--expect-email`, else the `expectEmail` config key). */
+  expectEmail?: string;
+  yes: boolean;
+  nonInteractive: boolean;
+  /** Whether stdin can carry an answer (a real terminal), i.e. prompting won't hang. */
+  stdinIsTTY: boolean;
+}
+
+export type PairConfirmDecision =
+  /** Trust the token without asking (a pin matched, or the operator passed `--yes`). */
+  | { action: "approve"; reason: "expected_email_match" | "yes_flag" }
+  /** Ask the human; `question` is the exact prompt to write. */
+  | { action: "prompt"; question: string }
+  /** Refuse: the token must NOT be persisted, and `message` says why + how to proceed. */
+  | {
+      action: "reject";
+      reason: "expected_email_mismatch" | "expected_email_unverifiable" | "non_interactive";
+      message: string;
+    };
+
+/** Case/whitespace-insensitive comparison of two email addresses. */
+function sameEmail(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+/**
+ * Decide whether a freshly minted token may be trusted — the whole of the md60 gate, kept
+ * pure so every branch is unit-testable and the command body stays a thin wrapper.
+ *
+ * Order matters:
+ *   1. A pinned identity (`--expect-email`) is the strongest signal: it auto-approves on an
+ *      exact match and HARD-FAILS on a mismatch — a `--yes` alongside it must not override a
+ *      wrong account (that would turn the pin into a no-op).
+ *      A pin with no `approved_by_email` to check against also fails: unverifiable ≠ fine.
+ *   2. `--yes` is the blunt escape hatch for CI: trust without asking.
+ *   3. Otherwise ask — and when we CANNOT ask (`--non-interactive`, or stdin isn't a
+ *      terminal, e.g. a script or a CI job), fail closed rather than hang or auto-trust.
+ */
+export function decidePairConfirmation(input: PairConfirmInput): PairConfirmDecision {
+  const { approvedByEmail, expectEmail } = input;
+
+  if (expectEmail !== undefined) {
+    if (approvedByEmail === undefined) {
+      return {
+        action: "reject",
+        reason: "expected_email_unverifiable",
+        message:
+          `Pairing refused: --expect-email ${expectEmail} was pinned, but the server did not report ` +
+          "which account approved this machine, so the pin could not be verified. The machine token " +
+          "was NOT stored. Re-run without --expect-email (and confirm interactively) if that is expected.",
+      };
+    }
+    if (sameEmail(approvedByEmail, expectEmail)) {
+      return { action: "approve", reason: "expected_email_match" };
+    }
+    return {
+      action: "reject",
+      reason: "expected_email_mismatch",
+      message:
+        `Pairing refused: this machine was approved by ${approvedByEmail}, but ${expectEmail} was ` +
+        "expected. The machine token was NOT stored. If you did not expect that account to approve " +
+        "it, open BirdyBeep and revoke the machine, then re-run `birdybeep pair`.",
+    };
+  }
+
+  if (input.yes) return { action: "approve", reason: "yes_flag" };
+
+  const question =
+    approvedByEmail !== undefined
+      ? `Pair this machine to ${approvedByEmail}? [y/N] `
+      : "The server did not report which account approved this machine. Pair anyway? [y/N] ";
+
+  if (input.nonInteractive || !input.stdinIsTTY) {
+    const who = approvedByEmail !== undefined ? ` (approved by ${approvedByEmail})` : "";
+    return {
+      action: "reject",
+      reason: "non_interactive",
+      message:
+        `Pairing needs confirmation${who}, but this is not an interactive terminal, so the machine ` +
+        "token was NOT stored. Re-run with `--expect-email <addr>` to pin the approving account " +
+        "(recommended for CI), or `--yes` to accept whichever account approved it.",
+    };
+  }
+  return { action: "prompt", question };
+}
+
+/** Is a prompt answer an explicit yes? Anything else (incl. empty/EOF) means no. */
+export function isAffirmative(answer: string): boolean {
+  return /^(y|yes)$/i.test(answer.trim());
+}
+
+/**
+ * Ask on stderr, read one line from stdin. stderr (not stdout) so `--json` output stays a
+ * clean NDJSON stream. EOF/close resolves to "" (a decline) so the CLI can never hang
+ * waiting for an answer that will never come.
+ */
+async function promptOnStdin(question: string): Promise<string> {
+  const { createInterface } = await import("node:readline/promises");
+  return new Promise<string>((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    let settled = false;
+    const done = (value: string): void => {
+      if (settled) return;
+      settled = true;
+      rl.close();
+      // The interface resumed stdin; unref so a lingering TTY handle can't hold the process open.
+      process.stdin.unref?.();
+      resolve(value);
+    };
+    rl.question(question).then(done, () => done(""));
+    rl.once("close", () => done(""));
+  });
+}
+
 export interface PairCommandDeps {
   fetchImpl?: typeof fetch;
   tokenOptions?: TokenStoreOptions;
@@ -65,6 +224,15 @@ export interface PairCommandDeps {
    * matrix renders only on a TTY — piped output stays plain text. */
   isTTY?: boolean;
   pollIntervalMs?: number;
+  /**
+   * Whether stdin can answer a prompt (default process.stdin.isTTY). Drives the md60 confirm
+   * gate's fail-closed branch — a piped/CI stdin never gets prompted.
+   */
+  isStdinTTY?: boolean;
+  /** Ask a question and read one line (default {@link promptOnStdin}); injected in tests. */
+  promptLine?: (question: string) => Promise<string>;
+  /** The pinned identity from config (default: the `expectEmail` key of the CLI config). */
+  configuredExpectEmail?: () => string | undefined;
 }
 
 export function createPairCommand(deps: PairCommandDeps = {}): Command {
@@ -73,12 +241,38 @@ export function createPairCommand(deps: PairCommandDeps = {}): Command {
   const clock = deps.now ?? (() => Date.now());
   const renderQr = deps.renderQr ?? renderQrMatrix;
   const intervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+  const promptLine = deps.promptLine ?? promptOnStdin;
+  // Tolerant read: the config file is user-editable, so a non-string/empty pin is treated as
+  // "no pin" rather than crashing `pair` (or, worse, comparing against garbage).
+  const configuredExpectEmail =
+    deps.configuredExpectEmail ??
+    ((): string | undefined => {
+      const pinned: unknown = readCliConfig().expectEmail;
+      return typeof pinned === "string" && pinned.trim().length > 0 ? pinned : undefined;
+    });
 
   return {
     name: "pair",
     summary: "Pair this machine with your BirdyBeep account (QR or manual)",
-    usage: "birdybeep pair [--json]",
+    usage: "birdybeep pair [--yes] [--expect-email <addr>] [--json]",
+    options: [
+      {
+        flag: "--yes",
+        aliases: ["-y"],
+        summary: "Skip the approving-account confirmation (headless/CI)",
+      },
+      {
+        flag: "--expect-email",
+        value: "<addr>",
+        summary: "Only trust the pairing if this account approved it (else fail)",
+      },
+    ],
     run: async (ctx) => {
+      const pairFlags = parsePairFlags(ctx.args);
+      if (pairFlags.error !== undefined) {
+        ctx.io.errline(`birdybeep pair: ${pairFlags.error}.`);
+        return EXIT.USAGE;
+      }
       const apiUrl = resolveApiUrl();
       const identity = getMachineIdentity(); // { label, os, fingerprintHash }
       // PKCE (dgxd): commit to a fresh random verifier by sending only its S256 challenge on
@@ -176,13 +370,43 @@ export function createPairCommand(deps: PairCommandDeps = {}): Command {
         return EXIT.ERROR;
       }
 
-      // Durable token → secure store ONLY. Non-secret apiUrl → config. Never the reverse.
+      // ── md60: the confirm gate ────────────────────────────────────────────────────
+      // The token is minted but NOT yet trusted. Before it is persisted, the human (or a
+      // pinned identity) must confirm the account that approved this machine — so a
+      // wrong-account or hijacked approval is caught at trust time, before any event flows.
+      // Nothing below this point runs unless the gate approves: no token, no config write.
+      const approvedBy = paired.approvedByEmail;
+      // The flag wins over the config pin, so a one-off `pair` can override a fleet default.
+      const expectEmail = pairFlags.expectEmail ?? configuredExpectEmail();
+      const decision = decidePairConfirmation({
+        ...(approvedBy !== undefined ? { approvedByEmail: approvedBy } : {}),
+        ...(expectEmail !== undefined ? { expectEmail } : {}),
+        yes: pairFlags.yes,
+        nonInteractive: ctx.flags.nonInteractive,
+        stdinIsTTY: deps.isStdinTTY ?? process.stdin.isTTY === true,
+      });
+
+      if (decision.action === "reject") {
+        ctx.io.result({ paired: false, reason: decision.reason });
+        ctx.io.errline(decision.message);
+        return EXIT.ERROR;
+      }
+      if (decision.action === "prompt" && !isAffirmative(await promptLine(decision.question))) {
+        ctx.io.result({ paired: false, reason: "declined" });
+        ctx.io.errline(
+          "Pairing declined — the machine token was NOT stored, and this machine will send no " +
+            "events. The machine may still appear in the BirdyBeep app; revoke it there if you " +
+            "did not intend to pair it.",
+        );
+        return EXIT.ERROR;
+      }
+
+      // Confirmed. Durable token → secure store ONLY. Non-secret apiUrl → config. Never the reverse.
       await setToken(paired.machineToken, deps.tokenOptions ?? {});
       writeCliConfig({ apiUrl });
 
-      // Surface the approving account (dgxd) when the server reports it, so a human notices a
-      // wrong-account approval before trusting the machine. Additive: absent from older servers.
-      const approvedBy = paired.approvedByEmail;
+      // Surface the approving account (dgxd) when the server reports it, so the trusted
+      // identity is on the record. Additive: absent from older servers.
       const humanSuffix = approvedBy !== undefined ? ` to ${approvedBy}` : "";
       ctx.io.emit(`✓ Paired${humanSuffix}. Run \`birdybeep test\` to send a test Beep.`, {
         paired: true,

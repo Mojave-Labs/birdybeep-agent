@@ -15,13 +15,26 @@ import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { runCli } from "../cli";
-import { cliConfigPath } from "../config";
+import { cliConfigPath, writeCliConfig } from "../config";
 import { EXIT } from "../framework";
 import { CLI_VERSION } from "../version";
-import { createPairCommand, renderQrMatrix } from "./pair";
+import {
+  createPairCommand,
+  decidePairConfirmation,
+  isAffirmative,
+  parsePairFlags,
+  renderQrMatrix,
+} from "./pair";
 
 const MACHINE_TOKEN = `bbm_TESTONLY_${randomUUID()}`;
 const FILE_ONLY = { backend: unavailableKeychainBackend };
+/**
+ * The md60 confirm gate stands between the mint and the token store, so every test that
+ * expects a SUCCESSFUL pairing has to clear it. These deps are the human path: an
+ * interactive stdin that answers "y". The gate's own branches are covered in the
+ * "approving-account confirm gate" describe below.
+ */
+const CONFIRM_YES = { isStdinTTY: true, promptLine: () => Promise.resolve("y") };
 // The canonical qr_payload shape the backend mints (https link carrying ONLY the short code).
 const QR_PAYLOAD = "https://birdybeep.com/pair?code=AB-1234";
 
@@ -34,6 +47,14 @@ afterEach(() => {
 function capture(): { writer: { write: (s: string) => void }; text: () => string } {
   const chunks: string[] = [];
   return { writer: { write: (s) => chunks.push(s) }, text: () => chunks.join("") };
+}
+
+/** Discard both streams for a case whose assertions are about state, not output. */
+function quietWriters(): {
+  stdout: { write: (s: string) => void };
+  stderr: { write: (s: string) => void };
+} {
+  return { stdout: capture().writer, stderr: capture().writer };
 }
 
 /** Stub device-code backend. `/pair/start` opens a session; `/pair/token` is 400 then 201. */
@@ -132,6 +153,7 @@ describe("birdybeep pair", () => {
       fetchImpl: stubPairing(),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
+      ...CONFIRM_YES,
     });
     const out = capture();
     const code = await runCli(["pair"], {
@@ -159,6 +181,7 @@ describe("birdybeep pair", () => {
       fetchImpl: stubPairing(),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
+      ...CONFIRM_YES,
       isTTY: true, // interactive terminal → the matrix must print
     });
     const out = capture();
@@ -185,6 +208,7 @@ describe("birdybeep pair", () => {
       fetchImpl: stubPairing(),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
+      ...CONFIRM_YES,
       isTTY: false,
     });
     const out = capture();
@@ -212,6 +236,7 @@ describe("birdybeep pair", () => {
       fetchImpl: stubPairing({ onStartBody: (b) => (startBody = b as Record<string, unknown>) }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
+      ...CONFIRM_YES,
     });
     const out = capture();
     const code = await runCli(["pair"], {
@@ -239,6 +264,7 @@ describe("birdybeep pair", () => {
       fetchImpl: stubPairing(),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
+      ...CONFIRM_YES,
     });
     const out = capture();
     await runCli(["pair", "--json"], {
@@ -276,6 +302,7 @@ describe("birdybeep pair", () => {
       fetchImpl: stubPairing({ expiresAt: new Date(1_000_000).toISOString(), alwaysPending: true }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
+      ...CONFIRM_YES,
       now: () => {
         t += 600_000;
         return t;
@@ -312,6 +339,7 @@ describe("birdybeep pair", () => {
       }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
+      ...CONFIRM_YES,
     });
     const out = capture();
     const err = capture();
@@ -333,6 +361,7 @@ describe("birdybeep pair", () => {
       fetchImpl: stubPairing({ terminalError: "quota_exceeded" }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
+      ...CONFIRM_YES,
     });
     const out = capture();
     const err = capture();
@@ -361,6 +390,7 @@ describe("birdybeep pair", () => {
       fetchImpl: stubPairing({ expiresAt: new Date(10_000_000_000_000).toISOString() }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
+      ...CONFIRM_YES,
       now: () => {
         const v = c;
         c += 16_000; // > HEARTBEAT_MS (15s) so a beat fires each idle poll
@@ -397,6 +427,7 @@ describe("birdybeep pair", () => {
       }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
+      ...CONFIRM_YES,
     });
     const out = capture();
     const code = await runCli(["pair"], {
@@ -432,6 +463,7 @@ describe("birdybeep pair", () => {
       fetchImpl: stubPairing({ tokenResponseExtra: { approved_by_email: "becs@example.com" } }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
+      ...CONFIRM_YES,
     });
     const out = capture();
     const code = await runCli(["pair"], {
@@ -454,6 +486,7 @@ describe("birdybeep pair", () => {
       fetchImpl: stubPairing({ expiresAt: new Date(1_000_000).toISOString(), alwaysPending: true }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
+      ...CONFIRM_YES,
       now: () => {
         t += 600_000;
         return t;
@@ -469,5 +502,365 @@ describe("birdybeep pair", () => {
     expect(code).toBe(EXIT.ERROR);
     expect(out.text()).toMatch(/timed out/);
     expect(await getToken(FILE_ONLY)).toBeNull(); // no token on failure
+  });
+});
+
+/**
+ * md60 — defense-in-depth: the server already REPORTS which account approved a pairing
+ * (`approved_by_email`), but a passive notice is easy to miss. These prove the CLI turns it
+ * into a blocking gate between the mint and the token store: nothing is persisted or trusted
+ * until a human confirms (or a pinned identity matches), and the headless paths fail CLOSED
+ * instead of hanging or silently trusting a wrong-account approval.
+ */
+describe("birdybeep pair — approving-account confirm gate (md60)", () => {
+  const APPROVER = "becs@example.com";
+
+  describe("decidePairConfirmation (the decision logic)", () => {
+    const base = { yes: false, nonInteractive: false, stdinIsTTY: true };
+
+    it("prompts with the approving account when there is nothing pinned", () => {
+      const d = decidePairConfirmation({ ...base, approvedByEmail: APPROVER });
+      expect(d.action).toBe("prompt");
+      // The human must SEE the identity they're being asked about — that is the whole gate.
+      expect(d.action === "prompt" && d.question).toContain(APPROVER);
+      expect(d.action === "prompt" && d.question).toMatch(/\[y\/N\]/);
+    });
+
+    it("still prompts (not auto-trusts) when the server reports no approving account", () => {
+      const d = decidePairConfirmation({ ...base });
+      expect(d.action).toBe("prompt");
+      expect(d.action === "prompt" && d.question).toMatch(/did not report/i);
+    });
+
+    it("auto-approves when --expect-email matches (case/space-insensitively)", () => {
+      for (const pin of [APPROVER, ` ${APPROVER.toUpperCase()} `]) {
+        expect(
+          decidePairConfirmation({ ...base, approvedByEmail: APPROVER, expectEmail: pin }),
+        ).toEqual({ action: "approve", reason: "expected_email_match" });
+      }
+    });
+
+    it("hard-fails on an --expect-email mismatch, naming both accounts", () => {
+      const d = decidePairConfirmation({
+        ...base,
+        approvedByEmail: "attacker@evil.test",
+        expectEmail: APPROVER,
+      });
+      expect(d.action).toBe("reject");
+      expect(d.action === "reject" && d.reason).toBe("expected_email_mismatch");
+      expect(d.action === "reject" && d.message).toContain("attacker@evil.test");
+      expect(d.action === "reject" && d.message).toContain(APPROVER);
+    });
+
+    it("hard-fails when a pin cannot be verified (server reported no account)", () => {
+      // Unverifiable is NOT the same as fine: an older/blinded server must not silently
+      // satisfy an identity pin.
+      const d = decidePairConfirmation({ ...base, expectEmail: APPROVER });
+      expect(d.action).toBe("reject");
+      expect(d.action === "reject" && d.reason).toBe("expected_email_unverifiable");
+    });
+
+    it("lets a pin mismatch beat --yes (a pin must never degrade to a no-op)", () => {
+      const d = decidePairConfirmation({
+        ...base,
+        yes: true,
+        approvedByEmail: "attacker@evil.test",
+        expectEmail: APPROVER,
+      });
+      expect(d.action).toBe("reject");
+    });
+
+    it("approves on --yes when nothing is pinned, even with no TTY", () => {
+      expect(
+        decidePairConfirmation({
+          ...base,
+          yes: true,
+          stdinIsTTY: false,
+          approvedByEmail: APPROVER,
+        }),
+      ).toEqual({ action: "approve", reason: "yes_flag" });
+    });
+
+    it("fails closed (never hangs) on a non-TTY stdin or --non-interactive", () => {
+      for (const input of [
+        { ...base, stdinIsTTY: false, approvedByEmail: APPROVER },
+        { ...base, nonInteractive: true, approvedByEmail: APPROVER },
+      ]) {
+        const d = decidePairConfirmation(input);
+        expect(d.action).toBe("reject");
+        expect(d.action === "reject" && d.reason).toBe("non_interactive");
+        // The error has to teach the escape hatches, or a scripted user is just stuck.
+        expect(d.action === "reject" && d.message).toContain("--expect-email");
+        expect(d.action === "reject" && d.message).toContain("--yes");
+      }
+    });
+  });
+
+  describe("parsePairFlags / isAffirmative", () => {
+    it("parses --yes/-y and both --expect-email spellings", () => {
+      expect(parsePairFlags([])).toEqual({ yes: false });
+      expect(parsePairFlags(["--yes"])).toEqual({ yes: true });
+      expect(parsePairFlags(["-y"]).yes).toBe(true);
+      expect(parsePairFlags(["--expect-email", APPROVER]).expectEmail).toBe(APPROVER);
+      expect(parsePairFlags([`--expect-email=${APPROVER}`]).expectEmail).toBe(APPROVER);
+      expect(parsePairFlags(["--yes", "--expect-email", APPROVER])).toMatchObject({
+        yes: true,
+        expectEmail: APPROVER,
+      });
+    });
+
+    it("reports a usage error for a missing value or a stray argument", () => {
+      expect(parsePairFlags(["--expect-email"]).error).toBeDefined();
+      expect(parsePairFlags(["--expect-email", "--yes"]).error).toBeDefined();
+      expect(parsePairFlags(["becs@example.com"]).error).toBeDefined();
+    });
+
+    it("treats only y/yes as consent", () => {
+      for (const yes of ["y", "Y", "yes", " YES "]) expect(isAffirmative(yes)).toBe(true);
+      for (const no of ["", "n", "no", "sure", "yep", "\n"]) expect(isAffirmative(no)).toBe(false);
+    });
+  });
+
+  describe("through the real `pair` command", () => {
+    /** Build a pair command whose backend reports `approved_by_email`. */
+    function pairCmd(
+      deps: Parameters<typeof createPairCommand>[0] = {},
+      approvedByEmail: string | undefined = APPROVER,
+    ): ReturnType<typeof createPairCommand> {
+      return createPairCommand({
+        fetchImpl: stubPairing({
+          ...(approvedByEmail !== undefined
+            ? { tokenResponseExtra: { approved_by_email: approvedByEmail } }
+            : {}),
+        }),
+        tokenOptions: FILE_ONLY,
+        sleep: () => Promise.resolve(),
+        ...deps,
+      });
+    }
+
+    it("DECLINE: shows the account, stores no token, writes no config, exits non-zero", async () => {
+      sandbox = createSandbox();
+      const asked: string[] = [];
+      const cmd = pairCmd({
+        isStdinTTY: true,
+        promptLine: (q) => {
+          asked.push(q);
+          return Promise.resolve("n");
+        },
+      });
+      const out = capture();
+      const err = capture();
+      const code = await runCli(["pair"], {
+        commands: [cmd],
+        stdout: out.writer,
+        stderr: err.writer,
+        ensureConfig: false,
+      });
+
+      expect(code).toBe(EXIT.ERROR);
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toContain(APPROVER); // the human was shown WHO approved it
+      expect(await getToken(FILE_ONLY)).toBeNull(); // ← the point: nothing persisted
+      expect(() => readFileSync(cliConfigPath(), "utf8")).toThrow(); // not even the apiUrl
+      expect(err.text()).toMatch(/declined/i);
+      expect(err.text()).toMatch(/revoke/i); // tells the user how to clean up server-side
+      expect(out.text()).not.toContain(MACHINE_TOKEN);
+    });
+
+    it("ACCEPT: an interactive `y` stores the token and reports the account", async () => {
+      sandbox = createSandbox();
+      const cmd = pairCmd({ isStdinTTY: true, promptLine: () => Promise.resolve("y") });
+      const out = capture();
+      const code = await runCli(["pair"], {
+        commands: [cmd],
+        stdout: out.writer,
+        stderr: capture().writer,
+        ensureConfig: false,
+      });
+
+      expect(code).toBe(EXIT.OK);
+      expect(await getToken(FILE_ONLY)).toBe(MACHINE_TOKEN);
+      expect(out.text()).toContain(APPROVER);
+    });
+
+    it("--yes pairs without prompting, even with no interactive stdin (CI path)", async () => {
+      sandbox = createSandbox();
+      let prompted = 0;
+      const cmd = pairCmd({
+        isStdinTTY: false,
+        promptLine: () => {
+          prompted += 1;
+          return Promise.resolve("n");
+        },
+      });
+      const code = await runCli(["pair", "--yes"], {
+        commands: [cmd],
+        ...quietWriters(),
+        ensureConfig: false,
+      });
+
+      expect(code).toBe(EXIT.OK);
+      expect(prompted).toBe(0);
+      expect(await getToken(FILE_ONLY)).toBe(MACHINE_TOKEN);
+    });
+
+    it("--expect-email pairs unattended on a match", async () => {
+      sandbox = createSandbox();
+      let prompted = 0;
+      const cmd = pairCmd({
+        isStdinTTY: false,
+        promptLine: () => {
+          prompted += 1;
+          return Promise.resolve("n");
+        },
+      });
+      const code = await runCli(["pair", "--expect-email", APPROVER], {
+        commands: [cmd],
+        ...quietWriters(),
+        ensureConfig: false,
+      });
+
+      expect(code).toBe(EXIT.OK);
+      expect(prompted).toBe(0);
+      expect(await getToken(FILE_ONLY)).toBe(MACHINE_TOKEN);
+    });
+
+    it("--expect-email MISMATCH refuses the token (the hijacked-approval case)", async () => {
+      sandbox = createSandbox();
+      const cmd = pairCmd({ isStdinTTY: false }, "attacker@evil.test");
+      const err = capture();
+      const code = await runCli(["pair", "--expect-email", APPROVER], {
+        commands: [cmd],
+        stdout: capture().writer,
+        stderr: err.writer,
+        ensureConfig: false,
+      });
+
+      expect(code).toBe(EXIT.ERROR);
+      expect(await getToken(FILE_ONLY)).toBeNull();
+      expect(err.text()).toContain("attacker@evil.test");
+    });
+
+    it("a non-TTY stdin without --yes/--expect-email fails closed with a helpful error", async () => {
+      sandbox = createSandbox();
+      let prompted = 0;
+      const cmd = pairCmd({
+        isStdinTTY: false,
+        promptLine: () => {
+          prompted += 1;
+          return new Promise<string>(() => undefined); // would HANG if ever called
+        },
+      });
+      const err = capture();
+      const code = await runCli(["pair"], {
+        commands: [cmd],
+        stdout: capture().writer,
+        stderr: err.writer,
+        ensureConfig: false,
+      });
+
+      expect(code).toBe(EXIT.ERROR);
+      expect(prompted).toBe(0); // never prompts a script → never hangs one
+      expect(await getToken(FILE_ONLY)).toBeNull();
+      expect(err.text()).toContain("--expect-email");
+      expect(err.text()).toContain("--yes");
+    });
+
+    it("--non-interactive fails closed even on a real terminal", async () => {
+      sandbox = createSandbox();
+      const cmd = pairCmd({ isStdinTTY: true, promptLine: () => Promise.resolve("y") });
+      const code = await runCli(["pair", "--non-interactive"], {
+        commands: [cmd],
+        ...quietWriters(),
+        ensureConfig: false,
+      });
+      expect(code).toBe(EXIT.ERROR);
+      expect(await getToken(FILE_ONLY)).toBeNull();
+    });
+
+    it("honors an `expectEmail` pin from the CLI config (and the flag overrides it)", async () => {
+      sandbox = createSandbox();
+      // Config pins the WRONG account → the pairing must be refused…
+      writeCliConfig({ expectEmail: "someone-else@example.com" });
+      const refused = await runCli(["pair"], {
+        commands: [pairCmd({ isStdinTTY: false })],
+        ...quietWriters(),
+        ensureConfig: false,
+      });
+      expect(refused).toBe(EXIT.ERROR);
+      expect(await getToken(FILE_ONLY)).toBeNull();
+
+      // …until the flag overrides the pin with the account that really approved it.
+      const ok = await runCli(["pair", "--expect-email", APPROVER], {
+        commands: [pairCmd({ isStdinTTY: false })],
+        ...quietWriters(),
+        ensureConfig: false,
+      });
+      expect(ok).toBe(EXIT.OK);
+      expect(await getToken(FILE_ONLY)).toBe(MACHINE_TOKEN);
+    });
+
+    it("--json keeps the NDJSON contract on a decline (last line carries the reason)", async () => {
+      sandbox = createSandbox();
+      const cmd = pairCmd({ isStdinTTY: true, promptLine: () => Promise.resolve("n") });
+      const out = capture();
+      const code = await runCli(["pair", "--json"], {
+        commands: [cmd],
+        stdout: out.writer,
+        stderr: capture().writer,
+        ensureConfig: false,
+      });
+      expect(code).toBe(EXIT.ERROR);
+      const lines = out
+        .text()
+        .split("\n")
+        .filter((l) => l.trim().length > 0)
+        .map((l) => JSON.parse(l) as Record<string, unknown>);
+      expect(lines[0]).toMatchObject({ status: "pairing_started" });
+      expect(lines[lines.length - 1]).toMatchObject({ paired: false, reason: "declined" });
+      expect(await getToken(FILE_ONLY)).toBeNull();
+    });
+
+    it("rejects a malformed invocation before it ever contacts the backend", async () => {
+      sandbox = createSandbox();
+      let calls = 0;
+      const cmd = createPairCommand({
+        fetchImpl: (() => {
+          calls += 1;
+          return Promise.reject(new Error("must not be called"));
+        }) as unknown as typeof fetch,
+        tokenOptions: FILE_ONLY,
+        sleep: () => Promise.resolve(),
+      });
+      const err = capture();
+      // A value-less pin is a usage error, and an unknown flag is caught by the dispatcher.
+      for (const argv of [
+        ["pair", "--expect-email"],
+        ["pair", "--bogus"],
+      ]) {
+        expect(
+          await runCli(argv, {
+            commands: [cmd],
+            stdout: capture().writer,
+            stderr: err.writer,
+            ensureConfig: false,
+          }),
+        ).toBe(EXIT.USAGE);
+      }
+      expect(calls).toBe(0);
+    });
+
+    it("documents both flags in `birdybeep pair --help`", async () => {
+      const out = capture();
+      await runCli(["pair", "--help"], {
+        commands: [createPairCommand()],
+        stdout: out.writer,
+        stderr: capture().writer,
+        ensureConfig: false,
+      });
+      expect(out.text()).toContain("--yes");
+      expect(out.text()).toContain("--expect-email <addr>");
+    });
   });
 });

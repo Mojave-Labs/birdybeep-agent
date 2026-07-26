@@ -13,8 +13,9 @@ CLI once, and stored locally in your OS keychain (or a strict-permission file). 
 > **Wire contract.** The pairing endpoints (`POST /v1/pair/start`, `POST /v1/pair/token`) are a
 > cross-repo contract owned by the BirdyBeep product backend; the request/response schemas are
 > mirrored field-for-field in `agent-core` (kept in lockstep with the product's `packages/schemas`).
-> The CLI reads responses tolerantly. The live `birdybeep pair` pass against the product backend
-> is a deferred follow-up.
+> The CLI reads responses tolerantly. The handshake is exercised live against the real product
+> worker by [`scripts/live-e2e-pair-confirm.mjs`](../scripts/live-e2e-pair-confirm.mjs) (real CLI
+> binary, real `/v1/pair/start` → `/v1/pair/approve` → `/v1/pair/token`).
 
 ---
 
@@ -25,16 +26,22 @@ birdybeep pair
 ```
 
 You'll see a QR code, a link, and a short code. Scan the QR (or open the link / type the code),
-confirm in the BirdyBeep app, and wait for the CLI to report success:
+approve in the BirdyBeep app, then **confirm the account it was approved by** — the CLI asks
+before it trusts anything:
 
 ```text
-To pair this machine, scan the code or open the link, then confirm in the app:
+To pair this machine, open the BirdyBeep app, tap “pair a machine”, and scan this QR (or enter the code):
    ▄▄▄▄▄▄▄ ▄  ▄▄ ▄▄▄▄▄▄▄        (a scannable QR matrix renders here on a TTY)
-   Scan or open:  https://birdybeep.com/pair?code=WXYZ-1234
+   Scan or open:  https://birdybeep.com/pair#code=WXYZ-1234
    Code:  WXYZ-1234
-Waiting for confirmation…
-✓ Paired. Run `birdybeep test` to send a test Beep.
+Waiting for you to approve this machine in the app…
+Pair this machine to you@example.com? [y/N] y
+✓ Paired to you@example.com. Run `birdybeep test` to send a test Beep.
 ```
+
+Answer `n` (or anything that isn't `y`/`yes`) and **no token is stored** — see
+[Confirming the approving account](#confirming-the-approving-account) below, including the
+`--yes` / `--expect-email` flags for headless machines.
 
 `birdybeep pair` derives this machine's label from your hostname/OS and sends it when it opens
 the session (editable later in the app). Once paired, run [`birdybeep test`](./install.md) to send
@@ -54,16 +61,20 @@ a test Beep, or `birdybeep status` to check integration state.
    non-reversible machine fingerprint). Until you approve, the backend replies with a
    `validation_failed`/4xx, which the CLI treats as "not yet — keep polling".
 4. **Mint.** When you approve, the backend mints a **machine token** server-side and the next poll
-   returns `201 { machine_token, machine_id }`.
-5. **Store.** The CLI writes the machine token to the secure token store (keychain, else a
-   strict-permission file) and saves the non-secret API URL to its config. The token is **never**
-   written into a repo file or any harness config.
+   returns `201 { machine_token, machine_id, approved_by_email }`.
+5. **Confirm.** The CLI shows you the account that approved the machine and asks
+   `Pair this machine to <email>? [y/N]`. Nothing is stored until you answer — see
+   [Confirming the approving account](#confirming-the-approving-account).
+6. **Store.** Once confirmed, the CLI writes the machine token to the secure token store
+   (keychain, else a strict-permission file) and saves the non-secret API URL to its config. The
+   token is **never** written into a repo file or any harness config.
 
 If you don't confirm before the pairing session expires, the CLI stops polling and tells you to
 retry:
 
 ```text
-Pairing timed out before it was confirmed. Run `birdybeep pair` to retry.
+Pairing timed out before you approved it. In the BirdyBeep app, tap “pair a machine”, scan the QR
+(or enter the code), then run `birdybeep pair` again.
 ```
 
 The pairing session is short-lived (the backend sets `expires_at` — a ~10-minute window), the user
@@ -112,12 +123,78 @@ line. The first line is emitted as soon as the pairing session opens, carrying t
 script/agent needs to surface for approval; the last line is the success result:
 
 ```json
-{ "status": "pairing_started", "user_code": "WXYZ-1234", "qr_payload": "https://birdybeep.com/pair?code=WXYZ-1234", "expires_at": "2026-07-01T12:34:56.000Z" }
-{ "paired": true, "machineId": "mac_123" }
+{ "status": "pairing_started", "user_code": "WXYZ-1234", "qr_payload": "https://birdybeep.com/pair#code=WXYZ-1234", "expires_at": "2026-07-01T12:34:56.000Z" }
+{ "paired": true, "machineId": "mac_123", "approvedByEmail": "you@example.com" }
+```
+
+A non-interactive run still has to clear the confirmation gate, so pass `--expect-email <addr>`
+(preferred) or `--yes` — without one of them the run **fails closed** rather than hanging:
+
+```bash
+birdybeep pair --json --expect-email you@example.com
 ```
 
 On timeout the terminal line is `{ "paired": false, "reason": "timeout" }` (exit code 1). Scripts
 should read the **last** parseable line for the outcome and the **first** for the pairing code.
+Every non-success exit emits a terminal line with a `reason`: `timeout`, `declined`,
+`non_interactive`, `expected_email_mismatch`, `expected_email_unverifiable`, or the backend's own
+error code (e.g. `quota_exceeded`).
+
+---
+
+## Confirming the approving account
+
+The backend tells the CLI **which account approved** a pairing (`approved_by_email`), and the CLI
+turns that into a blocking question before it trusts the minted token:
+
+```text
+Pair this machine to you@example.com? [y/N]
+```
+
+This is deliberate defense-in-depth for the social/human layer. Approval happens on your phone, and
+a code typed into the wrong account — or into someone else's — would otherwise silently produce a
+working machine token. The confirm step puts a human between the mint and the trust:
+
+- The gate runs **after** the token is minted but **before** anything is stored. Decline and the
+  CLI writes **no token and no config**, and exits non-zero.
+- Only `y` / `yes` (any case) is consent. Empty input, `n`, EOF, or `Ctrl-D` all decline.
+- Declining does not remove the machine server-side — the approval already happened. The CLI tells
+  you so; revoke the machine in the BirdyBeep app if the approval wasn't yours.
+
+### Headless machines, CI, and fleets
+
+| Flag / setting                       | Effect                                                                                        |
+| ------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `--expect-email <addr>`              | Pin the expected account: pairs unattended on an exact match, **hard-fails** on a mismatch.   |
+| `--yes` (`-y`)                       | Accept whichever account approved it, without asking. The blunt hatch.                        |
+| `expectEmail` in `config.json`       | Same as `--expect-email`, baked into the machine's CLI config. The flag overrides it.         |
+| _(none, and stdin isn't a terminal)_ | **Fails closed** with an error naming both hatches — a script is never prompted, never hangs. |
+
+`--expect-email` is the one to reach for in CI: it is the only option that still catches a
+wrong-account approval.
+
+```bash
+birdybeep pair --expect-email you@example.com        # unattended, still checked
+birdybeep pair --yes                                  # unattended, unchecked
+```
+
+```text
+$ birdybeep pair --expect-email you@example.com
+…
+Pairing refused: this machine was approved by someone@else.example, but you@example.com was
+expected. The machine token was NOT stored. If you did not expect that account to approve it,
+open BirdyBeep and revoke the machine, then re-run `birdybeep pair`.
+```
+
+A pin that **cannot be checked** — the server reported no approving account (an older backend) —
+is also refused, rather than quietly treated as a pass. `--yes` cannot override a mismatched pin.
+
+The config pin is a plain non-secret key in the CLI config file (see
+[Where the token is stored](#where-the-token-is-stored) for the config location):
+
+```json
+{ "apiUrl": "https://api.birdybeep.com", "expectEmail": "you@example.com" }
+```
 
 ---
 
@@ -134,6 +211,9 @@ This is the core of the trust story:
 - **Token minted server-side, shown once.** The machine token is created by the backend and handed
   to the CLI exactly once during pairing. The server stores only a **hash** of it, never the token
   itself.
+- **Trusted only after you confirm.** Minting is not trusting: the CLI names the approving account
+  and refuses to store the token until you (or an `--expect-email` pin) accept it. A pairing
+  approved by the wrong account never becomes a working machine.
 - **Revocable from the app.** You can revoke (and rotate) a machine's token from the BirdyBeep
   mobile app at any time. Revoking immediately stops that machine from sending Beeps.
 
@@ -205,6 +285,13 @@ revoking invalidates the server-side token hash even if a copy of the token stil
 - **Pairing timed out.** You didn't confirm before the window closed. Run `birdybeep pair` again
   for a fresh code.
 - **"Code already used."** The user code is single-use. Start over with `birdybeep pair`.
+- **"Pairing needs confirmation … not an interactive terminal."** You ran `pair` from a script, CI
+  job, or piped shell. Add `--expect-email <addr>` (preferred) or `--yes`.
+- **"Pairing refused: … but `<addr>` was expected."** A different account approved the machine than
+  the one you pinned. Nothing was stored. Check who approved it in the app, revoke the machine if
+  it wasn't you, then re-run.
+- **Paired to the wrong account by mistake.** Run `birdybeep unpair` to revoke the machine and drop
+  the local token, then pair again with `--expect-email` set.
 - **Not receiving Beeps after pairing.** Confirm the machine is still authorized in the app (it may
   have been revoked) and run `birdybeep doctor` to check the token, adapters, and backend
   reachability.

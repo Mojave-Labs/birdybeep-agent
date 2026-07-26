@@ -54,7 +54,8 @@ Install the CLI, pair the machine, then wire up your agents.
 ```bash
 npm install -g @birdybeep/cli   # or pnpm add -g / yarn global add
 
-birdybeep pair                 # device-flow pairing: prints a short URL + code, polls until paired
+birdybeep pair                  # device-flow pairing: prints a short URL + code, polls until paired,
+                                # then asks you to confirm the account that approved it
 birdybeep agent install all     # detect installed agents and wire them up (or: claude | codex | opencode)
 birdybeep status                # confirm machine, pairing, and per-harness integration state
 ```
@@ -83,7 +84,7 @@ The CLI surface (run `birdybeep <command> --help` for per-command help):
 
 | Command                                                    | What it does                                                                                                                                                                          |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `birdybeep pair`                                           | Device-flow pairing — prints a short URL + code, polls until paired, stores the machine token in the secure store.                                                                    |
+| `birdybeep pair`                                           | Device-flow pairing — prints a short URL + code, polls until paired, confirms the approving account, then stores the machine token in the secure store.                               |
 | `birdybeep logout`                                         | Removes the machine token (keychain + file fallback). Idempotent. Same as `unpair`.                                                                                                   |
 | `birdybeep unpair`                                         | Unpairs this machine — removes the machine token (keychain + file fallback). Idempotent. Same as `logout`.                                                                            |
 | `birdybeep status`                                         | Machine + pairing state, per-harness integration status, and queue depth. Drains the queue opportunistically; exits non-zero if not paired.                                           |
@@ -126,6 +127,18 @@ Available on the root command and per command:
 | `-v`, `--version`   | Show the CLI version.                         |
 
 Exit codes: **`0`** ok · **`1`** error · **`2`** usage.
+
+`birdybeep pair` adds two of its own (run `birdybeep pair --help`):
+
+| Flag                    | Effect                                                                                  |
+| ----------------------- | --------------------------------------------------------------------------------------- |
+| `--yes`, `-y`           | Skip the approving-account confirmation (headless/CI).                                  |
+| `--expect-email <addr>` | Only trust the pairing if this account approved it — otherwise fail and store no token. |
+
+After the backend mints a machine token, `pair` shows the account that approved the machine and
+asks `Pair this machine to <email>? [y/N]` **before** storing anything. Decline and no token is
+written. A non-interactive run (piped stdin, CI, `--non-interactive`) with neither flag fails
+closed instead of hanging. See [`docs/pairing.md`](./docs/pairing.md#confirming-the-approving-account).
 
 ## Per-harness details
 
