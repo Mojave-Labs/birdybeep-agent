@@ -195,23 +195,26 @@ The prompt is written to **stderr**, so `--json` output stays a clean NDJSON str
 answer is read from your terminal:
 
 1. from **stdin**, when stdin is a terminal (the normal case); otherwise
-2. from the **controlling terminal** — `/dev/tty`, or the `CONIN$` console device on Windows.
+2. **on macOS/Linux only**, from the **controlling terminal** (`/dev/tty`).
 
-Step 2 is what keeps pairing usable in shells that hand programs pipe-backed stdio even though a
-human is right there. The common case is **Git Bash / MSYS / mintty on Windows without ConPTY**:
-`process.stdin.isTTY` is false, yet the prompt still appears and your answer is read from the
-console. (PowerShell, `cmd`, Windows Terminal, and the VS Code terminal all report a real TTY and
-use step 1.)
+Step 2 keeps pairing usable in shells that hand programs pipe-backed stdio even though a human is
+right there — `process.stdin.isTTY` is false, yet the prompt appears and your answer is read from
+the terminal you are sitting at.
 
-Only when **neither** is available — a script, a CI job, a detached session — does `pair` fail
-closed. If you land there on Windows unexpectedly, the error says so and points at:
+**Windows has no equivalent step 2.** The obvious analogue is the `CONIN$` console device, and we
+measured it on a Windows runner with piped stdio: it _opens_ and then _reading it never returns_.
+Using it would trade a fast, honest refusal for an indefinite hang, so `pair` does not. On Windows
+you therefore get either a real TTY on stdin (PowerShell, `cmd`, Windows Terminal, VS Code — all
+fine), or the fail-closed refusal. If a **Git Bash / MSYS / mintty** shell lands you in the latter,
+the error points at:
 
 ```bash
 winpty birdybeep pair
 ```
 
-which attaches a real console so the prompt can appear. `--non-interactive` always skips straight to
-the fail-closed branch, whatever terminal is attached.
+`winpty` attaches a real console, which makes stdin itself a TTY — so the ordinary prompt appears,
+no fallback needed. `--non-interactive` always skips straight to the fail-closed branch, whatever
+terminal is attached.
 
 The config pin is a plain non-secret key in the CLI config file (see
 [Where the token is stored](#where-the-token-is-stored) for the config location):

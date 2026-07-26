@@ -232,9 +232,14 @@ function runPair(args, env) {
   });
 }
 
-/** Would a child spawned the same way be able to open a controlling terminal? */
+/**
+ * Would a child spawned the same way reach a controlling terminal the CLI will actually USE?
+ * Windows is always false: `CONIN$` opens on a windows-latest runner but reading it blocks
+ * forever, so the CLI deliberately never falls back there (see canOpenControllingTerminal).
+ */
 function childCanReachTerminal() {
-  const path = process.platform === "win32" ? "\\\\.\\CONIN$" : "/dev/tty";
+  if (process.platform === "win32") return false;
+  const path = "/dev/tty";
   const res = spawnSync(
     process.execPath,
     [

@@ -220,23 +220,25 @@ machine token was NOT stored. Re-run with `--expect-email <addr>` to pin the app
 ```
 
 **Why** — before it trusts a freshly minted token, `pair` asks you to confirm the account that
-approved the machine. It reads that answer from stdin when stdin is a terminal, and otherwise from
-the controlling terminal (`/dev/tty`, or `CONIN$` on Windows). When neither exists — a script, a CI
-job, a detached session — it fails closed rather than hang or silently trust.
+approved the machine. It reads that answer from stdin when stdin is a terminal, and on macOS/Linux
+otherwise from the controlling terminal (`/dev/tty`). When neither exists — a script, a CI job, a
+detached session — it fails closed rather than hang or silently trust. **Windows has no controlling-
+terminal fallback at all**: `CONIN$` opens even with no console attached and then blocks forever on
+read, so using it would hang instead of refusing.
 
 **Fix** — pick the one that matches where you are:
 
 - **CI / scripts:** `birdybeep pair --expect-email you@example.com` (still catches a wrong-account
   approval), or `birdybeep pair --yes` to skip the check entirely.
-- **Windows Git Bash / MSYS / mintty:** these can hand programs pipe-backed stdio. Normally the
-  `CONIN$` fallback means you still get the prompt, but if the console isn't reachable, run:
+- **Windows Git Bash / MSYS / mintty:** these can hand programs pipe-backed stdio, and there is no
+  console fallback on Windows (see above), so run:
 
   ```bash
   winpty birdybeep pair
   ```
 
-  PowerShell, `cmd`, Windows Terminal, and the VS Code terminal all provide a real TTY and never hit
-  this.
+  which attaches a real console — stdin becomes a TTY and the prompt appears normally. PowerShell,
+  `cmd`, Windows Terminal, and the VS Code terminal all provide a real TTY and never hit this.
 
 - Note that `--non-interactive` always takes this branch by design, whatever terminal is attached.
 

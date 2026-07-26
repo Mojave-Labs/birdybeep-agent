@@ -217,8 +217,10 @@ export function decidePairConfirmation(input: PairConfirmInput): PairConfirmDeci
       : "The server did not report which account approved this machine. Pair anyway? [y/N] ";
 
   // `--non-interactive` is an explicit "never prompt me", so it outranks any terminal we could
-  // reach. Otherwise stdin wins when it's a terminal; failing that we ask on the controlling
-  // terminal, which is what makes pipe-backed shells (Git Bash without ConPTY) usable.
+  // reach. Otherwise stdin wins when it's a terminal; failing that we ask on the POSIX
+  // controlling terminal, which is what makes pipe-backed shells usable. On Windows there is no
+  // usable equivalent — see {@link canOpenControllingTerminal} — so it falls through to the
+  // refusal below, which is fast and honest rather than a hang.
   if (!input.nonInteractive) {
     if (input.stdinIsTTY) return { action: "prompt", question, on: "stdin" };
     if (input.controllingTerminalAvailable) {
@@ -227,8 +229,9 @@ export function decidePairConfirmation(input: PairConfirmInput): PairConfirmDeci
   }
 
   const who = approvedByEmail !== undefined ? ` (approved by ${approvedByEmail})` : "";
-  // On Windows the usual cause is a non-ConPTY MSYS/mintty shell handing us pipe-backed stdio;
-  // `winpty` gives the CLI a real console, so name it rather than leaving the user stuck.
+  // On Windows the usual cause is a non-ConPTY MSYS/mintty shell handing us pipe-backed stdio.
+  // `winpty` attaches a real console — which makes stdin itself a TTY, so the ordinary prompt
+  // path engages. Name it rather than leaving the user stuck.
   const winptyHint =
     platform === "win32" && !input.nonInteractive
       ? " In Git Bash / MSYS, `winpty birdybeep pair` attaches a real console so the prompt can appear."
@@ -250,17 +253,29 @@ export function isAffirmative(answer: string): boolean {
 }
 
 /**
- * The device that reaches this process's CONTROLLING TERMINAL, regardless of what stdin is
- * wired to: `/dev/tty` on POSIX, the `CONIN$` console input device on Windows. Opening it
- * succeeds only when a terminal really is attached — in a CI job, a daemon, or a detached
- * session (`setsid`) it fails, which is exactly the signal the gate needs.
+ * The device that reaches this process's CONTROLLING TERMINAL regardless of what stdin is wired
+ * to. POSIX only — see {@link canOpenControllingTerminal} for why Windows is excluded.
  */
-export function controllingTerminalPath(platform: string = process.platform): string {
-  return platform === "win32" ? "\\\\.\\CONIN$" : "/dev/tty";
+export function controllingTerminalPath(): string {
+  return "/dev/tty";
 }
 
-/** Can we open the controlling terminal for reading? Probe only — never throws, opens nothing durable. */
+/**
+ * Can we open the controlling terminal for reading? Probe only — never throws, opens nothing
+ * durable. Opening `/dev/tty` succeeds exactly when a terminal really is attached: in a CI job,
+ * a daemon, or a detached session (`setsid`) it fails, which is the signal the gate needs.
+ *
+ * WINDOWS IS DELIBERATELY EXCLUDED. The obvious analogue is the `CONIN$` console device, and an
+ * earlier revision used it — but measured on a windows-latest runner with fully piped stdio,
+ * `CONIN$` OPENS and then READING it blocks forever. That turns the gate's "fail closed, fast"
+ * guarantee into a 60s hang (caught by scripts/live-e2e-pair-headless.mjs before release), which
+ * is strictly worse than the refusal it was meant to avoid: a script gets neither an answer nor
+ * an error. Since opening it proves nothing on Windows, we don't. Windows users whose shell hands
+ * the CLI pipe-backed stdio (MSYS/mintty Git Bash) run `winpty birdybeep pair`, which attaches a
+ * real console — stdin then IS a TTY and the ordinary stdin path handles it, no fallback needed.
+ */
 export function canOpenControllingTerminal(path: string = controllingTerminalPath()): boolean {
+  if (process.platform === "win32") return false;
   let fd: number | undefined;
   try {
     fd = openSync(path, "r");

@@ -22,11 +22,13 @@ noticed too late, if at all. The mint is now separated from the trust:
   set once per machine as the non-secret `expectEmail` key in the CLI config (`--expect-email`
   overrides it).
 - **`--yes` / `-y`** — the blunt headless hatch: trust whichever account approved it, no prompt.
-- **Asks on whatever terminal exists.** The answer is read from stdin when stdin is a TTY, and
-  otherwise from the **controlling terminal** (`/dev/tty`, or the `CONIN$` console device on
-  Windows). That second path is what keeps pairing usable in shells that hand programs pipe-backed
-  stdio while a human is right there — non-ConPTY MSYS/mintty **Git Bash** is the real-world case
-  (PowerShell, `cmd`, Windows Terminal and VS Code all report a real TTY and use stdin).
+- **Asks on whatever terminal exists.** The answer is read from stdin when stdin is a TTY, and on
+  macOS/Linux otherwise from the **controlling terminal** (`/dev/tty`) — which keeps pairing usable
+  in shells that hand programs pipe-backed stdio while a human is right there. Windows has no such
+  fallback on purpose: `CONIN$` opens even with no console attached and then blocks forever on read
+  (measured on a windows-latest runner), so using it would turn a fast refusal into a hang. Windows
+  shells that report a real TTY (PowerShell, `cmd`, Windows Terminal, VS Code) prompt normally, and
+  Git Bash / MSYS users are pointed at `winpty birdybeep pair`, which makes stdin a TTY.
 - **Fails closed, never hangs.** Only when neither is available (a script, CI, a detached session,
   or an explicit `--non-interactive`) does `pair` refuse, printing an error that names both escape
   hatches — plus `winpty birdybeep pair` on Windows. `--json` keeps its NDJSON contract: the

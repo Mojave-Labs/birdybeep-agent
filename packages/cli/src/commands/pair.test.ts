@@ -19,6 +19,7 @@ import { cliConfigPath, writeCliConfig } from "../config";
 import { EXIT } from "../framework";
 import { CLI_VERSION } from "../version";
 import {
+  canOpenControllingTerminal,
   createPairCommand,
   decidePairConfirmation,
   isAffirmative,
@@ -636,6 +637,20 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
         approvedByEmail: APPROVER,
       });
       expect(d.action === "prompt" && d.on).toBe("stdin");
+    });
+
+    it("never probes a controlling terminal on win32 (CONIN$ opens but blocks forever)", () => {
+      // Measured on a windows-latest runner with fully piped stdio: `CONIN$` OPENS and then
+      // reading it never returns, so the "fallback" turned fail-closed into a 60s hang. The
+      // probe therefore refuses on win32 outright, whatever path it is handed.
+      const original = process.platform;
+      try {
+        Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+        // Even pointed at a path that definitely opens, the probe must say no on Windows.
+        expect(canOpenControllingTerminal(cliConfigPath())).toBe(false);
+      } finally {
+        Object.defineProperty(process, "platform", { value: original, configurable: true });
+      }
     });
 
     it("names `winpty` in the win32 reject text (the Git Bash remedy)", () => {
