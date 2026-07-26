@@ -73,8 +73,6 @@ interface Attempt {
   decision?: string | undefined;
 }
 
-const EMPTY_DRAIN: DrainResult = { delivered: 0, dropped: 0, kept: 0, pruned: 0 };
-
 /** Decide whether a non-2xx response is worth retrying (queue) or terminal (drop). */
 function classify(status: number, code: ErrorCode | undefined): "retry" | "drop" {
   if (code === "rate_limited" || code === "internal_error") return "retry";
@@ -157,7 +155,10 @@ export function createSender(config: SenderConfig): Sender {
       const token = await getToken(config.tokenOptions);
       if (token === null) {
         queue.enqueue(event); // not paired yet → retry after `birdybeep pair`
-        return { outcome: "queued" };
+        // Retention still applies on the path that can never drain (87n): without this
+        // an unpaired machine accumulates one file per hook fire forever. Surfaced as
+        // `drained` (was undefined here) so doctor/status can see the depth it leaves.
+        return { outcome: "queued", drained: queue.prune() };
       }
       const a = await attempt(event, token, Math.min(timeoutMs, totalBudgetMs));
       let outcome: SendOutcome;
@@ -179,7 +180,7 @@ export function createSender(config: SenderConfig): Sender {
 
     async drainNow(): Promise<DrainResult> {
       const token = await getToken(config.tokenOptions);
-      if (token === null) return EMPTY_DRAIN;
+      if (token === null) return queue.prune(); // can't send, but retention applies (87n)
       return drainQueue(token, clock() + totalBudgetMs);
     },
   };

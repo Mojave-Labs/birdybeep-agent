@@ -186,6 +186,28 @@ export class LocalEventQueue {
   }
 
   /**
+   * Apply retention WITHOUT sending anything, reporting what was dropped and what
+   * remains (`kept` is the on-disk depth after the pass; nothing is delivered).
+   *
+   * Exists for the no-token path (87n): that path enqueues but can never drain, and
+   * pruning lives only inside {@link #readFresh} — reachable via drain/size alone. So
+   * an unpaired machine grew one file per hook fire forever and the documented 24h
+   * retention was silently defeated (observed in the field: 457 entries, the oldest two
+   * weeks past the window). No network, same readdir+parse pass as a drain. Never throws.
+   */
+  prune(): DrainResult {
+    const result: DrainResult = { delivered: 0, dropped: 0, kept: 0, pruned: 0 };
+    try {
+      const read = this.#readFresh();
+      result.kept = read.fresh.length;
+      result.pruned = read.pruned;
+    } catch {
+      /* best-effort, like every other method here — never throw into the hook */
+    }
+    return result;
+  }
+
+  /**
    * Drain up to `max` fresh entries through `send`. Each entry is CLAIMED via an
    * atomic rename before sending, so two concurrent drains never double-send the
    * same event. delivered/drop remove the entry; retry keeps it for next time.

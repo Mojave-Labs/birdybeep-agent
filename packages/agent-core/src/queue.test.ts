@@ -4,7 +4,7 @@
  * queue resolves its dir from the sandbox-redirected data dir, proving real path
  * resolution). The live wrangler-dev drain E2E is the deferred cross-repo gate.
  */
-import { chmodSync, readdirSync, statSync } from "node:fs";
+import { chmodSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
@@ -89,6 +89,37 @@ describe("24h retention (§15.3)", () => {
     const dir = sandbox.path("data", "q");
     new LocalEventQueue({ dir, now: () => 0 }).enqueue(makeEvent(1));
     expect(new LocalEventQueue({ dir, now: () => QUEUE_RETENTION_MS - 1 }).size()).toBe(1);
+  });
+});
+
+describe("prune(): retention without a send (87n)", () => {
+  it("drops expired entries, keeps fresh ones, and reports both", () => {
+    sandbox = createSandbox();
+    const dir = sandbox.path("data", "q");
+    let t = 0;
+    const q = new LocalEventQueue({ dir, now: () => t });
+    for (let i = 0; i < 3; i++) q.enqueue(makeEvent(i)); // enqueuedAt = 0 → will expire
+    t = QUEUE_RETENTION_MS + 1;
+    q.enqueue(makeEvent(99)); // inside the window → survives
+
+    const r = q.prune();
+    expect(r).toEqual({ delivered: 0, dropped: 0, kept: 1, pruned: 3 });
+    expect(readdirSync(dir).filter((n) => n.endsWith(".json"))).toHaveLength(1);
+  });
+
+  it("removes corrupt entries", () => {
+    sandbox = createSandbox();
+    const dir = sandbox.path("data", "q");
+    const q = new LocalEventQueue({ dir });
+    q.enqueue(makeEvent(0));
+    writeFileSync(join(dir, "9999999999999-garbage.json"), "{not json", { mode: 0o600 });
+    expect(q.prune()).toMatchObject({ kept: 1, pruned: 1 });
+  });
+
+  it("is a no-op on an absent queue dir and never throws", () => {
+    sandbox = createSandbox();
+    const q = new LocalEventQueue({ dir: sandbox.path("data", "never-created") });
+    expect(q.prune()).toEqual({ delivered: 0, dropped: 0, kept: 0, pruned: 0 });
   });
 });
 

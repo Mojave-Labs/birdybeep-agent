@@ -50,6 +50,15 @@ jobs:
       - name: codex notify exec-exit reap (live-e2e, POSIX)
         if: runner.os != 'Windows'
         run: node scripts/live-e2e-codex-reap.mjs || [ "$?" -eq 2 ]
+      # birdybeep-agent-87n: prove the no-token (unpaired) hook path applies the 24h
+      # retention instead of growing one queue file per fire forever. Like the reap lane
+      # it needs only the built CLI (the no-token path makes NO network call), so it is an
+      # always-on gate rather than a credentialed one. POSIX-gated only because the sandbox
+      # uses an `sh` PATH shim; the defect itself is cross-platform (see birdybeep-agent-n02
+      # to extend this lane to Windows). Tolerate exit 2 (SKIP) exactly as above.
+      - name: no-token queue retention (live-e2e, POSIX)
+        if: runner.os != 'Windows'
+        run: node scripts/live-e2e-queue-retention.mjs || [ "$?" -eq 2 ]
 
   # A PR that changes a publishable package must carry a changeset, so versions
   # never drift out of someone's head. Runs on PRs only (on main the changesets
