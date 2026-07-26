@@ -22,11 +22,12 @@
  *   4. --expect-email MISMATCH → refuses, no token, names both accounts
  * Plus, on every case: nothing token-shaped in stdout or stderr.
  *
- * Case 1 is only meaningful when the CLI genuinely CANNOT reach a controlling terminal. On
- * POSIX that is forced with `detached: true` (a new session). On Windows it depends on whether
- * the runner has a console, so the rig PROBES first — spawned exactly like the CLI — and, if a
- * console turns out to be reachable, reports case 1 as a skip instead of hanging on a prompt
- * nobody can answer. In CI (no console) the probe fails and the assertion runs for real.
+ * Case 1 asserts the INVARIANT unconditionally — no token, non-zero exit, no hang — because that
+ * must hold however the CLI gets there. Which branch delivers it is environment-dependent, so the
+ * rig probes (with a child spawned exactly like the CLI) and asserts the matching message: the
+ * fail-closed error where no controlling terminal exists (POSIX `detached`), or prompt-then-
+ * decline-on-EOF where one is reachable — which, measured, includes the windows-latest runner,
+ * where `CONIN$` opens even with no console attached.
  *
  * Run:  node scripts/live-e2e-pair-headless.mjs
  */
@@ -56,10 +57,6 @@ function check(name, ok, detail = "") {
   results.push({ name, ok: !!ok });
   console.log(`${ok ? "✓ PASS" : "✗ FAIL"}  ${name}${!ok && detail ? `  — ${detail}` : ""}`);
 }
-function note(name, msg) {
-  console.log(`• SKIP  ${name}  — ${msg}`);
-}
-
 if (!existsSync(CLI_BIN)) skipRun(`CLI not built (${CLI_BIN}); run pnpm build`);
 if (!existsSync(AGENT_CORE_DIST))
   skipRun(`agent-core not built (${AGENT_CORE_DIST}); run pnpm build`);
@@ -204,40 +201,51 @@ try {
     `platform=${process.platform}; controlling terminal reachable by a child: ${childCanReachTerminal()}`,
   );
 
-  // ── case 1: no flags, no terminal → fail CLOSED ───────────────────────────
+  // ── case 1: no flags, no answer available ────────────────────────────────
+  // The INVARIANT is asserted unconditionally on every platform: piped stdio with nobody to
+  // answer must never store a token and must never hang. Which branch delivers that depends on
+  // the environment, so the branch-specific message is asserted conditionally:
+  //   - no controlling terminal (POSIX `detached`, a console-less runner) → the fail-closed
+  //     error, naming both escape hatches (+ the winpty hint on win32);
+  //   - a terminal IS reachable (a dev box, and — measured — the windows-latest runner, where
+  //     `CONIN$` opens) → the CLI correctly PROMPTS, reads EOF from it, and declines.
+  // Skipping this case when a terminal happened to be reachable would have left the branch
+  // unasserted on exactly the platform the review asked about.
   {
     approvedByEmail = APPROVER;
     const { env } = newHome();
-    if (childCanReachTerminal()) {
-      // A real console is attached (a dev running this locally), so the CLI would correctly
-      // PROMPT — and nothing here could answer it. Skip rather than hang; CI has no console.
-      note(
-        "headless: fails closed with no terminal",
-        "a controlling terminal is reachable here, so the CLI would prompt (expected on a dev box; CI has no console)",
+    const terminalReachable = childCanReachTerminal();
+    const r = await runPair([], env);
+
+    check("headless: CLI exits non-zero", r.code !== 0, `code ${r.code}`);
+    check("headless: NO token stored", storedToken(env) === null);
+    check(
+      "headless: never hangs waiting for an answer nobody can give (<30s)",
+      r.elapsed < 30_000,
+      `${r.elapsed}ms`,
+    );
+
+    if (terminalReachable) {
+      check(
+        "headless (terminal reachable): prompted, then declined on EOF",
+        /\[y\/N\]/.test(r.out) && /declined/i.test(r.out),
+        r.out.slice(-400),
       );
     } else {
-      const r = await runPair([], env);
-      check("headless: CLI exits non-zero", r.code !== 0, `code ${r.code}`);
-      check("headless: NO token stored", storedToken(env) === null);
       check(
-        "headless: error names both escape hatches",
+        "headless (no terminal): error names both escape hatches",
         r.out.includes("--expect-email") && r.out.includes("--yes"),
         r.out.slice(-400),
       );
-      check(
-        "headless: fails fast rather than hanging (<20s)",
-        r.elapsed < 20_000,
-        `${r.elapsed}ms`,
-      );
       if (process.platform === "win32") {
         check(
-          "headless (win32): points at `winpty birdybeep pair`",
+          "headless (win32, no terminal): points at `winpty birdybeep pair`",
           r.out.includes("winpty birdybeep pair"),
           r.out.slice(-400),
         );
       }
-      assertNoLeak("headless", r);
     }
+    assertNoLeak("headless", r);
   }
 
   // ── case 2: --yes ─────────────────────────────────────────────────────────
