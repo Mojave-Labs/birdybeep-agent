@@ -652,15 +652,14 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
       sandbox = createSandbox();
       const openable = join(sandbox.home, "definitely-openable");
       writeFileSync(openable, "x");
-      expect(canOpenControllingTerminal(openable)).toBe(true); // control: it really does open
 
-      const original = process.platform;
-      try {
-        Object.defineProperty(process, "platform", { value: "win32", configurable: true });
-        expect(canOpenControllingTerminal(openable)).toBe(false); // …but never on Windows
-      } finally {
-        Object.defineProperty(process, "platform", { value: original, configurable: true });
-      }
+      // Control: on a POSIX platform the probe really does open this path…
+      expect(canOpenControllingTerminal(openable, "linux")).toBe(true);
+      expect(canOpenControllingTerminal(openable, "darwin")).toBe(true);
+      // …and on win32 it refuses the very same path. Passing the platform explicitly (rather
+      // than patching process.platform) keeps BOTH arms meaningful on every host, including a
+      // Windows dev box where the control arm would otherwise hit the short-circuit itself.
+      expect(canOpenControllingTerminal(openable, "win32")).toBe(false);
     });
 
     it("names `winpty` in the win32 reject text (the Git Bash remedy)", () => {

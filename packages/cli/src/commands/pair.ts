@@ -274,8 +274,12 @@ export function controllingTerminalPath(): string {
  * the CLI pipe-backed stdio (MSYS/mintty Git Bash) run `winpty birdybeep pair`, which attaches a
  * real console — stdin then IS a TTY and the ordinary stdin path handles it, no fallback needed.
  */
-export function canOpenControllingTerminal(path: string = controllingTerminalPath()): boolean {
-  if (process.platform === "win32") return false;
+export function canOpenControllingTerminal(
+  path: string = controllingTerminalPath(),
+  /** Explicit so tests can pin BOTH branches on any host, without patching process.platform. */
+  platform: string = process.platform,
+): boolean {
+  if (platform === "win32") return false;
   let fd: number | undefined;
   try {
     fd = openSync(path, "r");
