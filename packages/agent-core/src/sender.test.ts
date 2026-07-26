@@ -7,6 +7,7 @@
  * wrangler-dev delivered-event check is the deferred cross-repo gate.
  */
 import { randomUUID } from "node:crypto";
+import { readdirSync } from "node:fs";
 
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,7 +15,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ErrorCode } from "./api";
 import { type BirdyBeepAgentEvent } from "./event";
 import { normalizeEvent } from "./normalize";
-import { LocalEventQueue } from "./queue";
+import { LocalEventQueue, QUEUE_RETENTION_MS } from "./queue";
 import { createSender } from "./sender";
 import { type KeychainBackend } from "./token-store";
 
@@ -147,6 +148,57 @@ describe("no token", () => {
     expect(r.outcome).toBe("queued");
     expect(queue.size()).toBe(1);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 87n: the no-token path enqueues but can never drain, and pruning used to live ONLY
+   * inside the drain/size read pass — so an unpaired machine grew one file per hook fire
+   * forever (observed: 457 entries, oldest two weeks past a 24h retention window).
+   */
+  it("applies retention instead of growing forever (87n)", async () => {
+    sandbox = createSandbox();
+    let clock = 1_000_000;
+    const queue = new LocalEventQueue({ dir: sandbox.path("data", "q"), now: () => clock });
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 202 })));
+    const sender = createSender({
+      baseUrl: "http://api.test",
+      queue,
+      fetchImpl: fetchSpy,
+      tokenOptions: { backend: tokenBackend(null), filePath: sandbox.path("data", "token") },
+      now: () => clock,
+    });
+    const depth = () => readdirSync(queue.dir).filter((n) => n.endsWith(".json")).length;
+
+    // A fortnight of hook fires on an unpaired machine, one per day — each one lands
+    // outside the previous one's 24h window.
+    const depths: number[] = [];
+    for (let day = 0; day < 14; day++) {
+      const r = await sender.send(event(day));
+      expect(r.outcome).toBe("queued");
+      expect(r.drained).toBeDefined(); // doctor/status can see the prune (was undefined)
+      depths.push(depth());
+      clock += QUEUE_RETENTION_MS + 1;
+    }
+
+    expect(fetchSpy).not.toHaveBeenCalled(); // still no network without a token
+    expect(depths).toEqual(Array<number>(14).fill(1)); // bounded, NOT 1..14
+    expect(depth()).toBe(1);
+  });
+
+  it("prunes on drainNow() even though it cannot send (87n)", async () => {
+    sandbox = createSandbox();
+    let clock = 0;
+    const queue = new LocalEventQueue({ dir: sandbox.path("data", "q"), now: () => clock });
+    const sender = createSender({
+      baseUrl: "http://api.test",
+      queue,
+      fetchImpl: () => Promise.reject(new Error("no network expected")),
+      tokenOptions: { backend: tokenBackend(null), filePath: sandbox.path("data", "token") },
+      now: () => clock,
+    });
+    for (let i = 0; i < 5; i++) queue.enqueue(event(i));
+    clock = QUEUE_RETENTION_MS + 1;
+    expect(await sender.drainNow()).toEqual({ delivered: 0, dropped: 0, kept: 0, pruned: 5 });
   });
 });
 
