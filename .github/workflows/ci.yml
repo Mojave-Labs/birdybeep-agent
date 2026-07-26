@@ -53,11 +53,13 @@ jobs:
       # birdybeep-agent-87n: prove the no-token (unpaired) hook path applies the 24h
       # retention instead of growing one queue file per fire forever. Like the reap lane
       # it needs only the built CLI (the no-token path makes NO network call), so it is an
-      # always-on gate rather than a credentialed one. POSIX-gated only because the sandbox
-      # uses an `sh` PATH shim; the defect itself is cross-platform (see birdybeep-agent-n02
-      # to extend this lane to Windows). Tolerate exit 2 (SKIP) exactly as above.
-      - name: no-token queue retention (live-e2e, POSIX)
-        if: runner.os != 'Windows'
+      # always-on gate rather than a credentialed one. Runs on ALL THREE OSes as of
+      # birdybeep-agent-n02: the defect is cross-platform and the CLI ships on Windows, and
+      # the only thing that had been POSIX about the rig was a dead `sh` PATH shim (nothing
+      # ever resolved `birdybeep` from PATH — every child is spawned as `<node> <CLI_BIN>`).
+      # The step runs under bash on Windows too (see `defaults.run.shell` above), so the
+      # exit-2 (SKIP) tolerance below works identically there.
+      - name: no-token queue retention (live-e2e)
         run: node scripts/live-e2e-queue-retention.mjs || [ "$?" -eq 2 ]
 
   # A PR that changes a publishable package must carry a changeset, so versions
