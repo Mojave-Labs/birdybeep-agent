@@ -166,7 +166,7 @@ export function createAgentCommand(deps: AgentCommandDeps = {}): Command {
     subcommands: [
       {
         name: "install",
-        summary: "Install adapters (all | claude | codex | opencode)",
+        summary: "Install adapters (all | claude | codex | opencode | cursor)",
         usage: "birdybeep agent install [all|claude|codex|opencode|cursor]",
         run: (ctx) => installSelected(adapters, ctx),
       },

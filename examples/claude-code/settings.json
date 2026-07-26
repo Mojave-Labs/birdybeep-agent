@@ -71,6 +71,18 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "birdybeep hook claude",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

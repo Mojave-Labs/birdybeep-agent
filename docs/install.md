@@ -14,6 +14,19 @@ you can read exactly what it does. The short version of the trust story:
   strict-permission file), never in harness config and never in a repo file. The hook reads it at
   runtime.
 
+## Supported harnesses
+
+| Harness         | Target     | Status      | Config it patches                                              | Extra step              |
+| --------------- | ---------- | ----------- | -------------------------------------------------------------- | ----------------------- |
+| **Claude Code** | `claude`   | **shipped** | `~/.claude/settings.json`                                      | none — live immediately |
+| **Codex**       | `codex`    | **shipped** | `~/.codex/config.toml` (honors `$CODEX_HOME`)                  | one-time `/hooks` trust |
+| **OpenCode**    | `opencode` | **shipped** | `~/.config/opencode/opencode.json` (honors `$XDG_CONFIG_HOME`) | restart OpenCode once   |
+| **Cursor**      | `cursor`   | **shipped** | `~/.cursor/hooks.json`                                         | none — live immediately |
+
+Anything not in that table is not supported today — see
+[Harness support & roadmap](#harness-support--roadmap) for what we looked at and why. Each harness's
+exact generated config is committed under [`examples/`](../examples/README.md).
+
 ---
 
 ## 1. Install the CLI
@@ -50,20 +63,28 @@ Pairing links this machine to your BirdyBeep account so events can be delivered 
 birdybeep pair
 ```
 
-This uses a device-flow pairing handshake. The CLI prints a short link and a code, then waits:
+This uses a device-flow pairing handshake. The CLI prints a scannable QR (on a terminal), a short
+link, and a code, then waits:
 
 ```text
-To pair this machine, open the link and confirm the code:
-   Scan or open:  https://birdybeep.com/pair?code=WXYZ-1234
+To pair this machine, open the BirdyBeep app, tap “pair a machine”, and scan this QR (or enter the code):
+   Scan or open:  https://birdybeep.com/pair#code=WXYZ-1234
    Code:  WXYZ-1234
-Waiting for confirmation…
+Waiting for you to approve this machine in the app…
 ```
 
-Open the link (or scan it from the mobile app), confirm the code, and the CLI finishes:
+Approve it in the app, and the CLI asks you to confirm the account that approved it before it
+trusts anything:
 
 ```text
-✓ Paired as MacBook Pro. Run `birdybeep test` to send a test Beep.
+Pair this machine to you@example.com? [y/N] y
+✓ Paired to you@example.com. Run `birdybeep test` to send a test Beep.
 ```
+
+Answer anything but `y`/`yes` and **no token is stored** (exit code 1). On a headless box or in CI,
+pass `--expect-email <addr>` to pin the account that must have approved it (recommended) or `--yes`
+to skip the question — without one of them a non-interactive `pair` fails closed instead of hanging.
+Full detail in [Pairing → Confirming the approving account](./pairing.md#confirming-the-approving-account).
 
 What this does with your token:
 
@@ -99,6 +120,7 @@ Or install one at a time:
 birdybeep agent install claude
 birdybeep agent install codex
 birdybeep agent install opencode
+birdybeep agent install cursor
 ```
 
 `all` is the default, so `birdybeep agent install` with no target is equivalent to
@@ -117,7 +139,11 @@ create config for a harness you don't use. Output looks like this:
      → BirdyBeep plugin added to OpenCode.
      → Restart OpenCode for the plugin to load.
      → After restart, OpenCode sessions on this machine will be tracked automatically.
+✓  Cursor: installed (/Users/you/.cursor/hooks.json)
 ```
+
+Re-run it and the idempotency shows in the output — the same statuses, with `(no changes)` in place
+of the paths.
 
 Use `--json` for machine-readable output (changed files, backups, required actions, and per-harness
 status).
@@ -131,8 +157,8 @@ change, adds only BirdyBeep-managed entries, and writes no token.
 
 - **File:** `~/.claude/settings.json`
 - **Change:** appends a BirdyBeep-managed entry to the relevant lifecycle hooks (`SessionStart`,
-  `Notification`, `PermissionRequest`, `Stop`, `StopFailure`, `SubagentStop`). Each entry runs
-  `birdybeep hook claude` with a short timeout. Your own hooks are preserved.
+  `Notification`, `PermissionRequest`, `Stop`, `StopFailure`, `SubagentStop`, `SessionEnd`). Each
+  entry runs `birdybeep hook claude` with a short timeout. Your own hooks are preserved.
 - **Status:** `installed`. Claude Code reads its settings live, so there's nothing else to do — no
   restart, no trust step.
 
@@ -167,12 +193,37 @@ A managed hook entry looks like this:
 }
 ```
 
+#### Cursor
+
+- **File:** `~/.cursor/hooks.json`
+- **Change:** ensures the `"version": 1` scaffold Cursor requires (only if absent — an existing
+  value is left alone) and appends a BirdyBeep-managed entry to each consumed hook event:
+  `sessionStart`, `sessionEnd`, `beforeShellExecution`, `preToolUse`, `postToolUse`, `stop`,
+  `subagentStart`, `subagentStop`, plus `beforeSubmitPrompt`, `postToolUseFailure`, and
+  `afterAgentResponse` (registered for forward-compatibility; they have no mapping today and the
+  hook returns `skipped`). Each entry runs `birdybeep hook cursor`. Your own hooks are preserved.
+- **Status:** `installed`. Cursor reads `hooks.json` live — no restart, no trust step.
+
+```json
+{
+  "command": "birdybeep hook cursor",
+  "timeout": 30
+}
+```
+
+Headless `cursor-agent -p` fires only `sessionStart`/`sessionEnd`, so on the CLI a completed
+`sessionEnd` is your "agent finished" Beep; the IDE additionally fires `stop`, the tool events, and
+the `beforeShellExecution` approval gate. Cursor's payloads include `user_email` and
+`transcript_path` — the adapter drops **both** outright and hashes the workspace root like every
+other path.
+
 ---
 
 ## 4. Per-harness gotchas
 
-Two harnesses need one extra action before they're live. The CLI surfaces this for you, both in the
-install output and in `birdybeep status` / `birdybeep doctor`.
+Two of the four harnesses need one extra action before they're live (Claude Code and Cursor are live
+the moment install finishes). The CLI surfaces this for you, both in the install output and in
+`birdybeep status` / `birdybeep doctor`.
 
 ### Codex needs one-time hook trust → `needs_trust`
 
@@ -208,8 +259,12 @@ Integrations:
   Claude Code: installed
   Codex: needs_trust
   OpenCode: needs_restart
+  Cursor: installed
 Queue:   0 queued → 0 delivered, 0 remaining
 ```
+
+(When you aren't paired, the second line reads `Paired:  no — run `birdybeep pair`` and the command
+exits 1.)
 
 `status` shows your machine identity, pairing state, per-harness integration status, and the local
 queue depth. It opportunistically drains any queued events while it runs, and exits non-zero if
@@ -278,6 +333,7 @@ Or per harness:
 birdybeep agent uninstall claude
 birdybeep agent uninstall codex
 birdybeep agent uninstall opencode
+birdybeep agent uninstall cursor
 ```
 
 Uninstall is safe and idempotent — running it when nothing is installed is a no-op:
@@ -288,6 +344,46 @@ Uninstall is safe and idempotent — running it when nothing is installed is a n
 ```
 
 To fully unpair the machine afterward, run `birdybeep logout` to delete the stored token.
+
+---
+
+## Harness support & roadmap
+
+Adapters are cheap to write and expensive to keep honest: each one has to be verified against the
+real harness end-to-end, and harness hook APIs move. So we ship an adapter only for harnesses we can
+actually exercise, and we say plainly what we skipped.
+
+**Shipped today:** Claude Code, Codex, OpenCode, Cursor (the table at the
+[top of this page](#supported-harnesses)).
+
+### Looked at and not shipped
+
+A landscape survey (snapshot: **2026-07-15**) ruled these out. Nothing here is a judgement of the
+tools — it's about whether an adapter would have users and a stable hook surface to bind to:
+
+| Harness        | Why there's no adapter                                                                            |
+| -------------- | ------------------------------------------------------------------------------------------------- |
+| **Windsurf**   | Folded into Devin; no separately supported agent CLI to hook.                                     |
+| **Roo Code**   | Discontinued (2026-05-15).                                                                        |
+| **Continue**   | Acquired by Cursor (2026-06-16); the Cursor adapter is the successor path.                        |
+| **Gemini CLI** | Individual access cut off (2026-06-18), folded toward Antigravity — no stable individual surface. |
+
+Harness landscapes move fast, and this list is a snapshot, not a standing verdict. If one of these
+comes back with a real hook API — or you want a harness that isn't listed at all — open an issue.
+
+### Tier 2 — what a new adapter needs
+
+The bar for any additional harness, in order:
+
+1. **A real lifecycle hook surface** — the harness must be able to invoke an external command (or
+   load a plugin) on session/approval/completion events. Polling and log-scraping are not adapters.
+2. **A payload with safe discriminators** — enough to map to a [§10.1](./SPEC.md) event type without
+   forwarding user or assistant content.
+3. **A reproducible install** — a documented user-level config file we can patch non-destructively,
+   back up, and fully restore on uninstall.
+4. **End-to-end verification** — the adapter is not "supported" until a real event, fired by the
+   real harness, is observed arriving at the backend. See
+   [`docs/adapter-development.md`](./adapter-development.md).
 
 ---
 
@@ -310,4 +406,4 @@ on the next hook, `status`, or `doctor`. On the backend, notification title and 
 persisted by default — only metadata, hashes, and delivery/session status.
 
 For the full detail, see [`docs/SPEC.md`](./SPEC.md) (§6, §7, §11) and the adapter source under
-`packages/claude-code`, `packages/codex`, and `packages/opencode`.
+`packages/claude-code`, `packages/codex`, `packages/opencode`, and `packages/cursor`.

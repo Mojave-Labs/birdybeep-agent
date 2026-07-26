@@ -4,19 +4,19 @@
 >
 > This file is the normative reference for building and auditing the code in `birdybeep-agent`. The canonical wire schema is the runnable source of truth: the product repo's `packages/schemas` (mirrored here by `agent-core`'s `CORE-SCHEMA`).
 
-BirdyBeep is a mobile notification layer for AI coding agents: when Claude Code, Codex, or OpenCode needs you (approval, input, finished, idle, failed), it sends a push to your phone. This repo is the part that runs in your dev environment — install once per machine, and supported agent sessions surface automatically as they emit lifecycle events.
+BirdyBeep is a mobile notification layer for AI coding agents: when Claude Code, Codex, OpenCode, or Cursor needs you (approval, input, finished, idle, failed), it sends a push to your phone. This repo is the part that runs in your dev environment — install once per machine, and supported agent sessions surface automatically as they emit lifecycle events.
 
 ---
 
 ## 1. Integration strategy (PRD §9.1)
 
-BirdyBeep does not depend on a cross-agent hook standard — each harness exposes different config formats, event names, trust models, and plugin systems. So it ships **one** shared event schema, CLI auth/token layer, local event queue, and sender, plus **bespoke adapters** for Claude Code, Codex, and OpenCode.
+BirdyBeep does not depend on a cross-agent hook standard — each harness exposes different config formats, event names, trust models, and plugin systems. So it ships **one** shared event schema, CLI auth/token layer, local event queue, and sender, plus **bespoke adapters** for Claude Code, Codex, OpenCode, and Cursor.
 
 Every adapter implements the same interface:
 
 ```ts
 interface AgentAdapter {
-  id: "claude_code" | "codex" | "opencode";
+  id: "claude_code" | "codex" | "opencode" | "cursor";
   displayName: string;
 
   detect(): Promise<DetectionResult>;

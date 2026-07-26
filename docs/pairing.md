@@ -232,7 +232,7 @@ After a successful pairing the machine token lives in **one** of two places, cho
 
 The token is **never** written into a repo-local file or into any harness's config — agent installs
 add only BirdyBeep-managed config entries and never a token. The CLI reads the token at send time;
-[`birdybeep logout`](#logout) clears it; re-pairing overwrites it. Full details, including the file
+[`birdybeep logout`](#birdybeep-logout) clears it; re-pairing overwrites it. Full details, including the file
 permissions and the keychain fallback, live in [Security](./security.md).
 
 ---
