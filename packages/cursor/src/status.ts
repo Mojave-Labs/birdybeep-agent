@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import type { DetectionResult, DoctorResult, IntegrationStatus } from "@birdybeep/agent-core";
 
 import { detectCursor } from "./detect";
-import { BIRDYBEEP_HOOK_EVENTS, isBirdyBeepEntry } from "./install";
+import { backupPathFor, BIRDYBEEP_HOOK_EVENTS, isBirdyBeepEntry } from "./install";
 import { cursorConfigDir, cursorHooksPath } from "./paths";
 
 /** Adapter version surfaced in the status report / backend integration record. */
@@ -111,12 +111,19 @@ export async function cursorDoctor(opts: StatusOptions = {}): Promise<DoctorResu
     const hooks = inspectHooks(home);
 
     if (!hooks.parseable) {
+      // The remedy names the REAL recovery path: install refuses to write into a file it
+      // cannot parse, and it left a one-time copy of the user's original at
+      // `<hooks.json>.birdybeep-backup` — so point at that file when it actually exists
+      // rather than at a backup the user may never have had.
+      const backupPath = backupPathFor(path);
       checks.push({
         name: "hooks.json is valid JSON",
         ok: false,
         status: "error",
         detail: `${path} is not valid JSON.`,
-        remedy: "Fix or remove the malformed hooks.json, then re-run install.",
+        remedy: existsSync(backupPath)
+          ? `Restore the BirdyBeep backup at ${backupPath} over ${path} (or delete the malformed file), then run \`birdybeep agent install cursor\`.`
+          : `Fix the JSON in ${path} (or delete it), then run \`birdybeep agent install cursor\`.`,
       });
     } else {
       checks.push({ name: "hooks.json is valid JSON", ok: true });

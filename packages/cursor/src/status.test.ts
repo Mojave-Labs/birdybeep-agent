@@ -4,13 +4,13 @@
  * flagging each seeded failure mode with an actionable fix. Cursor has NO trust/restart gate, so
  * `installed` is reported the moment the entries are present. statusReport carries versions.
  */
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 import type { DetectionResult } from "@birdybeep/agent-core";
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { installCursor } from "./install";
+import { backupPathFor, installCursor } from "./install";
 import { cursorHooksPath } from "./paths";
 import { CURSOR_ADAPTER_VERSION, cursorDoctor, cursorStatus, cursorStatusReport } from "./status";
 
@@ -105,13 +105,35 @@ describe("doctor()", () => {
     expect(check?.remedy).toMatch(/install cursor/i);
   });
 
-  it("flags a corrupt hooks.json with a remediation", async () => {
+  // birdybeep-agent-tu1: the corrupt-config check is the one failure `birdybeep agent install`
+  // cannot repair by itself (install refuses to parse-then-write a file it can't read), so its
+  // `→ fix` line has to name the real recovery steps — not just "re-run install".
+  it("flags a corrupt hooks.json with a copy-pasteable fix naming the file + install command", async () => {
     sandbox = createSandbox();
-    writeFileSync(seedDir(sandbox), "{ not json");
+    const path = seedDir(sandbox);
+    writeFileSync(path, "{ not json");
     const result = await cursorDoctor({ home: sandbox.home, detect: present() });
     const check = failingCheck(result.checks, "valid JSON");
     expect(check).toBeDefined();
-    expect(check?.remedy).toBeDefined();
+    expect(check?.remedy).toContain(path);
+    expect(check?.remedy).toContain("birdybeep agent install cursor");
+  });
+
+  it("points a corrupt hooks.json at the BirdyBeep backup when the installer left one", async () => {
+    sandbox = createSandbox();
+    // Install first (which backs up the pre-existing file), THEN corrupt it — the real shape of
+    // "it worked, then something scrambled hooks.json".
+    const path = seedDir(sandbox);
+    writeFileSync(path, `${JSON.stringify({ version: 1 }, null, 2)}\n`);
+    await installCursor({}, sandbox.home);
+    const backupPath = backupPathFor(path);
+    expect(existsSync(backupPath)).toBe(true);
+    writeFileSync(path, "{ not json");
+
+    const result = await cursorDoctor({ home: sandbox.home, detect: present() });
+    const check = failingCheck(result.checks, "valid JSON");
+    expect(check?.remedy).toContain(backupPath);
+    expect(check?.remedy).toContain("birdybeep agent install cursor");
   });
 
   it("flags a read-only hooks file (POSIX)", async () => {

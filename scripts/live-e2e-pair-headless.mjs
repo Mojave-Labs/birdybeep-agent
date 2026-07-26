@@ -23,11 +23,12 @@
  * Plus, on every case: nothing token-shaped in stdout or stderr.
  *
  * Case 1 asserts the INVARIANT unconditionally — no token, non-zero exit, no hang — because that
- * must hold however the CLI gets there. Which branch delivers it is environment-dependent, so the
- * rig probes (with a child spawned exactly like the CLI) and asserts the matching message: the
- * fail-closed error where no controlling terminal exists (POSIX `detached`), or prompt-then-
- * fail-closed error where no controlling terminal exists (POSIX `detached`, and ALWAYS on
- * Windows), or prompt-then-decline-on-EOF where /dev/tty is reachable.
+ * must hold however the CLI gets there. WHICH of the two branches delivers it is environment-
+ * dependent, so the rig probes (with a child spawned exactly like the CLI) and asserts the matching
+ * message: the fail-closed error naming both escape hatches where no controlling terminal is
+ * reachable (POSIX `detached`, and ALWAYS on Windows — the CLI never falls back to `CONIN$`, which
+ * opens but then blocks forever); or prompt-then-decline-on-EOF where /dev/tty IS reachable (a dev
+ * box running this from a terminal).
  *
  * Run:  node scripts/live-e2e-pair-headless.mjs
  */
