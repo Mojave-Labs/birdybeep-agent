@@ -24,3 +24,4 @@ docs/SPEC.md
 examples/claude-code/settings.json
 examples/codex/config.toml
 examples/opencode/opencode.json
+examples/cursor/hooks.json

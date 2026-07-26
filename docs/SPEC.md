@@ -59,6 +59,7 @@ There is **no** local background daemon in MVP. Local delivery behavior:
 ```bash
 birdybeep pair
 birdybeep logout
+birdybeep unpair
 birdybeep status
 birdybeep test
 birdybeep doctor
@@ -66,13 +67,16 @@ birdybeep agent install all
 birdybeep agent install claude
 birdybeep agent install codex
 birdybeep agent install opencode
+birdybeep agent install cursor
 birdybeep agent uninstall all
 birdybeep agent uninstall claude
 birdybeep agent uninstall codex
 birdybeep agent uninstall opencode
+birdybeep agent uninstall cursor
 birdybeep hook claude
 birdybeep hook codex
 birdybeep hook opencode
+birdybeep hook cursor
 ```
 
 Install behavior is **idempotent**, backs up existing config, adds only BirdyBeep-managed entries, prints changed files + any required user action, and installs at the **user/global** level (project-level is not MVP). Uninstall removes only BirdyBeep-managed entries.
@@ -184,6 +188,39 @@ Launch integration. Prefer an OpenCode **plugin package**; configure user-level/
 >   since most bus events don't carry it).
 > - OpenCode loads plugins only at startup (no hot-reload) → install surfaces
 >   `needs_restart` until the next launch.
+
+## 7a. Cursor integration (post-PRD addition — birdybeep-agent-mwbl)
+
+Cursor is not in the original PRD §9.x lineup; it was added after the Big Five harness survey and
+ships from `packages/cursor`. Install patches `~/.cursor/hooks.json` — `{ "version": 1, "hooks": {
+"<event>": [ { command, timeout } ] } }` — non-destructively, adding the `"version"` scaffold only
+when absent. Each hook command receives its payload as JSON on **stdin**. There is no trust gate and
+no restart: Cursor reads the file live, so install reports `installed` immediately.
+
+| Cursor event | BirdyBeep event | Session effect | Notify default |
+|---|---|---|---|
+| `sessionStart` | `session_started` | upsert session (status `starting`) | No |
+| `sessionEnd` `{final_status:"completed"}` | `agent_completed` | completed | Yes |
+| `sessionEnd` `{other}` | `session_ended` | terminal (ended) | No |
+| `stop` | `agent_completed` | completed | Yes |
+| `beforeShellExecution` | `approval_required` | waiting for approval | Yes |
+| `preToolUse` | `tool_started` | activity update | No |
+| `postToolUse` | `tool_finished` | activity update | No |
+| `subagentStart` | `subagent_started` | activity update | No |
+| `subagentStop` | `subagent_completed` | activity update | No |
+| `beforeSubmitPrompt` / `postToolUseFailure` / `afterAgentResponse` | _(no §10.1 target — skipped)_ | — | — |
+
+> **Verified against `cursor-agent 2026.07.09`** (headless `-p`, captured 2026-07-15 — see
+> `packages/cursor/src/__fixtures__/README.md`; §21.1 harness drift applies):
+> - **Headless `cursor-agent -p` fires ONLY `sessionStart` + `sessionEnd`** — no `stop`, no tool
+>   hooks (a version-dependent subset; the IDE fires the full set). That is why a *completed*
+>   `sessionEnd` maps to `agent_completed` rather than `session_ended`: for CLI users it is the
+>   only completion signal there is. The full documented event set is registered anyway, so a
+>   later Cursor build needs no re-install.
+> - **PRIVACY:** Cursor payloads carry `user_email` (PII) and `transcript_path` (a local path).
+>   Neither is EVER copied into the normalized event — not title, body, metadata, session id, or
+>   workspace. The only path touched is `workspace_roots[0]`, handed to the normalizer as `cwd` so
+>   it is hashed.
 
 ## 8. Normalized event model (PRD §10.1)
 

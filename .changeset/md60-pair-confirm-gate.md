@@ -22,13 +22,27 @@ noticed too late, if at all. The mint is now separated from the trust:
   set once per machine as the non-secret `expectEmail` key in the CLI config (`--expect-email`
   overrides it).
 - **`--yes` / `-y`** — the blunt headless hatch: trust whichever account approved it, no prompt.
-- **Fails closed, never hangs.** With no interactive stdin (a pipe, CI, `--non-interactive`) and
-  neither flag, `pair` refuses and prints an error naming both hatches rather than blocking on a
-  prompt no one can answer. `--json` keeps its NDJSON contract: the terminal line carries
+- **Asks on whatever terminal exists.** The answer is read from stdin when stdin is a TTY, and
+  otherwise from the **controlling terminal** (`/dev/tty`, or the `CONIN$` console device on
+  Windows). That second path is what keeps pairing usable in shells that hand programs pipe-backed
+  stdio while a human is right there — non-ConPTY MSYS/mintty **Git Bash** is the real-world case
+  (PowerShell, `cmd`, Windows Terminal and VS Code all report a real TTY and use stdin).
+- **Fails closed, never hangs.** Only when neither is available (a script, CI, a detached session,
+  or an explicit `--non-interactive`) does `pair` refuse, printing an error that names both escape
+  hatches — plus `winpty birdybeep pair` on Windows. `--json` keeps its NDJSON contract: the
+  terminal line carries
   `reason: "declined" | "non_interactive" | "expected_email_mismatch" | "expected_email_unverifiable"`.
+- **Identity comparison is homoglyph-safe.** A pin must match both before _and_ after Unicode NFKC
+  normalization, so a look-alike address (fullwidth letters, ligatures) can never auto-approve
+  against an ASCII pin. A discrepancy is treated as a mismatch, which fails closed.
+- An unverifiable pin that came from the **config key** names the config file in its error rather
+  than suggesting a `--expect-email` re-run that cannot help.
 
 Also adds per-command flag support to the CLI framework (`Command.options`), so `pair`'s flags are
-accepted by the dispatcher and documented in `birdybeep pair --help`.
+accepted by the dispatcher, documented in `birdybeep pair --help`, and inherited by subcommands from
+their parent group. The dispatcher matches GLOBAL flags **exactly** (only a command's own options
+accept the `--flag=value` spelling): `--json=true`, `--non-interactive=1`, `--help=x` and `-v=2` are
+usage errors, never silently passed through as positional args in the wrong mode.
 
 **Callers pairing headlessly must add `--expect-email <addr>` or `--yes`** — including cross-repo
 rigs that drive `birdybeep pair` from a script.
@@ -37,4 +51,7 @@ Verified live by `scripts/live-e2e-pair-confirm.mjs`: the real built CLI against
 worker (bundled by wrangler, served by Miniflare with real D1/KV/Queues/DO bindings and all
 migrations), driving the genuine `/v1/pair/start` → `/v1/pair/approve` → `/v1/pair/token` handshake
 with real accounts — decline, accept (on a real pty), `--yes`, pin match, pin mismatch (a second
-account approves), and the headless fail-closed path.
+account approves), the headless fail-closed path, and piped-stdin-under-a-pty (the `/dev/tty`
+fallback). `scripts/live-e2e-pair-headless.mjs` re-asserts the non-interactive branches with real
+pipe stdio on **all three OSes** in CI, since the stdio-shape behavior is exactly what differs
+between platforms.

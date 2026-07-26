@@ -27,6 +27,12 @@ Anything not in that table is not supported today — see
 [Harness support & roadmap](#harness-support--roadmap) for what we looked at and why. Each harness's
 exact generated config is committed under [`examples/`](../examples/README.md).
 
+> **Versions this was verified against** (CLAUDE.md §21.1 — harness hook APIs move, so claims are
+> pinned to what was actually exercised): **Cursor** `cursor-agent 2026.07.09` (headless `-p`,
+> captured 2026-07-15 — see `packages/cursor/src/__fixtures__/README.md`). Claude Code, Codex, and
+> OpenCode were verified live over 2026-07-14/15 against the versions then current. A newer harness
+> release can change or add hook events; re-run the adapter's live E2E before trusting the table.
+
 ---
 
 ## 1. Install the CLI
@@ -211,9 +217,10 @@ A managed hook entry looks like this:
 }
 ```
 
-Headless `cursor-agent -p` fires only `sessionStart`/`sessionEnd`, so on the CLI a completed
-`sessionEnd` is your "agent finished" Beep; the IDE additionally fires `stop`, the tool events, and
-the `beforeShellExecution` approval gate. Cursor's payloads include `user_email` and
+Headless `cursor-agent -p` fires only `sessionStart`/`sessionEnd` **as of `cursor-agent
+2026.07.09`** (empirically captured 2026-07-15; it is a version-dependent subset), so on the CLI a
+completed `sessionEnd` is your "agent finished" Beep; the IDE additionally fires `stop`, the tool
+events, and the `beforeShellExecution` approval gate. Cursor's payloads include `user_email` and
 `transcript_path` — the adapter drops **both** outright and hashes the workspace root like every
 other path.
 
@@ -263,8 +270,8 @@ Integrations:
 Queue:   0 queued → 0 delivered, 0 remaining
 ```
 
-(When you aren't paired, the second line reads `Paired:  no — run `birdybeep pair`` and the command
-exits 1.)
+(When you aren't paired, the second line reads `` Paired:  no — run `birdybeep pair` `` and the
+command exits 1.)
 
 `status` shows your machine identity, pairing state, per-harness integration status, and the local
 queue depth. It opportunistically drains any queued events while it runs, and exits non-zero if

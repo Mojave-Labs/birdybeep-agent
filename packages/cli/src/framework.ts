@@ -152,14 +152,20 @@ export function parseGlobalFlags(argv: string[]): { flags: GlobalFlags; rest: st
 
 /**
  * Is `token` an unknown long/short flag (after global flags were stripped)? `allowed` carries
- * the resolved command's own {@link Command.options}; a `--flag=value` token is matched on the
- * name before the `=` so value flags work in both spellings.
+ * the resolved command's own {@link Command.options}.
+ *
+ * The GLOBAL check is EXACT, deliberately: {@link parseGlobalFlags} consumes global flags by
+ * exact token, so `--json=true` is NOT a global flag — it stays in the command's args. If this
+ * guard split on `=` before the global lookup, `--json=true` / `--non-interactive=1` / `-v=2`
+ * would sail past it, never be consumed, and silently run the command in the WRONG MODE with
+ * the token landing in the positional args. They must be rejected as usage errors instead.
+ * Only a COMMAND's own options accept the `--flag=value` spelling (see {@link Command.options}).
  */
 function isUnknownFlag(token: string, allowed: ReadonlySet<string>): boolean {
   if (!token.startsWith("-")) return false;
+  if (GLOBAL_FLAG_TOKENS.has(token)) return false; // exact match only — mirrors parseGlobalFlags
   const eq = token.indexOf("=");
-  const name = eq >= 0 ? token.slice(0, eq) : token;
-  return !GLOBAL_FLAG_TOKENS.has(name) && !allowed.has(name);
+  return !allowed.has(eq >= 0 ? token.slice(0, eq) : token);
 }
 
 function renderRootHelp(version: string, commands: Command[]): string {
@@ -182,12 +188,18 @@ function renderRootHelp(version: string, commands: Command[]): string {
   ].join("\n");
 }
 
-/** Every flag token (primary + aliases) the command accepts beyond the global ones. */
-function commandFlagTokens(command: Command): ReadonlySet<string> {
+/**
+ * Every flag token (primary + aliases) the resolved command accepts beyond the global ones.
+ * A subcommand inherits its PARENT group's options too (`...commands` unions them in), so a
+ * flag declared once on a group works on every leaf under it rather than being rejected there.
+ */
+function commandFlagTokens(...commands: (Command | undefined)[]): ReadonlySet<string> {
   const tokens = new Set<string>();
-  for (const option of command.options ?? []) {
-    tokens.add(option.flag);
-    for (const alias of option.aliases ?? []) tokens.add(alias);
+  for (const command of commands) {
+    for (const option of command?.options ?? []) {
+      tokens.add(option.flag);
+      for (const alias of option.aliases ?? []) tokens.add(alias);
+    }
   }
   return tokens;
 }
@@ -261,6 +273,8 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
 
   // Resolve the command path (supports one level of nested subcommands).
   let command: Command | undefined = deps.commands.find((c) => c.name === rest[0]);
+  /** The group a resolved subcommand sits under (undefined for a top-level command). */
+  let parent: Command | undefined;
   const pathParts: string[] = [];
   let argsStart = 1;
   if (command) {
@@ -268,6 +282,7 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
     if (command.subcommands && command.subcommands.length > 0) {
       const sub = command.subcommands.find((c) => c.name === rest[1]);
       if (sub) {
+        parent = command;
         command = sub;
         pathParts.push(sub.name);
         argsStart = 2;
@@ -307,7 +322,7 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
   }
 
   const args = rest.slice(argsStart);
-  const allowed = commandFlagTokens(command);
+  const allowed = commandFlagTokens(command, parent);
   const unknown = args.find((token) => isUnknownFlag(token, allowed));
   if (unknown !== undefined) {
     io.errline(`birdybeep ${path}: unknown option "${unknown}".`);

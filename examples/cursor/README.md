@@ -48,8 +48,9 @@ always returns fast and queues locally if the network is down.
 
 ## What you keep
 
-Everything else. The installer only touches the `hooks` key, and within it only the events above.
-Any other key — including your own `"version"` value — is preserved exactly. If you already have a
+Everything else. The installer touches exactly two things: the `hooks` key (and within it only
+the events above), and the top-level `"version": 1` scaffold Cursor requires — added ONLY when
+the key is absent, so an existing value of your own is preserved byte-for-byte. If you already have a
 hook on one of these events, BirdyBeep's entry is **appended** to that event's list; your hook is
 never replaced. The original file is backed up once to `~/.cursor/hooks.json.birdybeep-backup`
 before the first change.

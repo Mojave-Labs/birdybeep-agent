@@ -209,6 +209,39 @@ the file/directory permissions so BirdyBeep can update — and later cleanly uni
 
 ---
 
+### `pair` refuses with "no terminal to ask on" (Git Bash / CI)
+
+**Symptom** — `birdybeep pair` gets as far as the approval, then refuses:
+
+```
+Pairing needs confirmation (approved by you@example.com), but there is no terminal to ask on, so the
+machine token was NOT stored. Re-run with `--expect-email <addr>` to pin the approving account
+(recommended for CI), or `--yes` to accept whichever account approved it.
+```
+
+**Why** — before it trusts a freshly minted token, `pair` asks you to confirm the account that
+approved the machine. It reads that answer from stdin when stdin is a terminal, and otherwise from
+the controlling terminal (`/dev/tty`, or `CONIN$` on Windows). When neither exists — a script, a CI
+job, a detached session — it fails closed rather than hang or silently trust.
+
+**Fix** — pick the one that matches where you are:
+
+- **CI / scripts:** `birdybeep pair --expect-email you@example.com` (still catches a wrong-account
+  approval), or `birdybeep pair --yes` to skip the check entirely.
+- **Windows Git Bash / MSYS / mintty:** these can hand programs pipe-backed stdio. Normally the
+  `CONIN$` fallback means you still get the prompt, but if the console isn't reachable, run:
+
+  ```bash
+  winpty birdybeep pair
+  ```
+
+  PowerShell, `cmd`, Windows Terminal, and the VS Code terminal all provide a real TTY and never hit
+  this.
+
+- Note that `--non-interactive` always takes this branch by design, whatever terminal is attached.
+
+---
+
 ### Missing or revoked machine token
 
 **Symptom** — `doctor` prints:

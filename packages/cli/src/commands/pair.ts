@@ -16,6 +16,8 @@
  *
  * fetch/sleep/clock/QR/TTY are injectable for hermetic tests.
  */
+import { closeSync, openSync } from "node:fs";
+
 import {
   deriveCodeChallengeS256,
   generateCodeVerifier,
@@ -28,7 +30,7 @@ import {
 // vendor, and a floating range would defeat the small-auditable-supply-chain goal (§16.4).
 import { renderUnicodeCompact } from "uqr";
 
-import { readCliConfig, resolveApiUrl, writeCliConfig } from "../config";
+import { cliConfigPath, readCliConfig, resolveApiUrl, writeCliConfig } from "../config";
 import { type Command, EXIT } from "../framework";
 import { pairStart, pairTokenPoll, type PairTokenResult } from "../pairing";
 import { CLI_VERSION } from "../version";
@@ -99,17 +101,39 @@ export interface PairConfirmInput {
   approvedByEmail?: string;
   /** The pinned identity (`--expect-email`, else the `expectEmail` config key). */
   expectEmail?: string;
+  /**
+   * WHERE the pin came from — the remedy differs. A `--flag` pin can simply be dropped from the
+   * next invocation; a `config` pin lives in a file and there is no CLI switch that ignores it,
+   * so the message has to name the file instead of suggesting an impossible re-run.
+   */
+  expectEmailSource?: "flag" | "config";
   yes: boolean;
   nonInteractive: boolean;
   /** Whether stdin can carry an answer (a real terminal), i.e. prompting won't hang. */
   stdinIsTTY: boolean;
+  /**
+   * Whether the process can still reach its CONTROLLING TERMINAL even though stdin isn't one
+   * (`/dev/tty`, or `CONIN$` on Windows). This is the difference between "a human is sitting
+   * here but their shell hands us pipe-backed stdio" — MSYS/mintty Git Bash without ConPTY is
+   * the common case — and "nobody is there at all" (a script, a CI job). Only the latter may
+   * fail closed; the former gets prompted on the terminal it actually has.
+   */
+  controllingTerminalAvailable: boolean;
+  /** Platform, for platform-specific remediation in the reject text. Default `process.platform`. */
+  platform?: string;
+  /** Where the CLI config file lives, for the config-pin remedy. */
+  configPath?: string;
 }
 
 export type PairConfirmDecision =
   /** Trust the token without asking (a pin matched, or the operator passed `--yes`). */
   | { action: "approve"; reason: "expected_email_match" | "yes_flag" }
-  /** Ask the human; `question` is the exact prompt to write. */
-  | { action: "prompt"; question: string }
+  /**
+   * Ask the human. `question` is the exact prompt to write; `on` says WHERE to read the answer
+   * — "stdin" when stdin is a terminal, "controlling-terminal" when it isn't but /dev/tty (or
+   * CONIN$) is reachable.
+   */
+  | { action: "prompt"; question: string; on: "stdin" | "controlling-terminal" }
   /** Refuse: the token must NOT be persisted, and `message` says why + how to proceed. */
   | {
       action: "reject";
@@ -117,9 +141,22 @@ export type PairConfirmDecision =
       message: string;
     };
 
-/** Case/whitespace-insensitive comparison of two email addresses. */
+/**
+ * Do two addresses denote the SAME account? Trimmed + case-folded, and required to agree both
+ * before AND after Unicode NFKC normalization.
+ *
+ * Why both: NFKC folds visually-distinct code points onto the same ASCII (fullwidth `ｅ` → `e`,
+ * ligatures, math letterforms). Comparing only normalized forms would let a server-reported
+ * homoglyph address auto-approve against an ASCII pin — the exact wrong-account acceptance this
+ * gate exists to stop. Comparing only raw forms would ignore normalization entirely. Requiring
+ * agreement means any pair that matches on one side of normalization but not the other is
+ * treated as a MISMATCH, which fails closed (the human is asked, or the pin refuses).
+ */
 function sameEmail(a: string, b: string): boolean {
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
+  const fold = (v: string): string => v.trim().toLowerCase();
+  const rawEqual = fold(a) === fold(b);
+  const nfkcEqual = fold(a.normalize("NFKC")) === fold(b.normalize("NFKC"));
+  return rawEqual && nfkcEqual;
 }
 
 /**
@@ -132,21 +169,31 @@ function sameEmail(a: string, b: string): boolean {
  *      wrong account (that would turn the pin into a no-op).
  *      A pin with no `approved_by_email` to check against also fails: unverifiable ≠ fine.
  *   2. `--yes` is the blunt escape hatch for CI: trust without asking.
- *   3. Otherwise ask — and when we CANNOT ask (`--non-interactive`, or stdin isn't a
- *      terminal, e.g. a script or a CI job), fail closed rather than hang or auto-trust.
+ *   3. Otherwise ask — on stdin when it is a terminal, else on the CONTROLLING TERMINAL when one
+ *      is still reachable (pipe-backed stdio under a real terminal: MSYS/mintty Git Bash, some
+ *      wrappers). Only when there is genuinely no one to ask (`--non-interactive`, a script, CI)
+ *      does it fail closed — never hang, never auto-trust.
  */
 export function decidePairConfirmation(input: PairConfirmInput): PairConfirmDecision {
   const { approvedByEmail, expectEmail } = input;
+  const platform = input.platform ?? process.platform;
 
   if (expectEmail !== undefined) {
     if (approvedByEmail === undefined) {
+      // The remedy depends on where the pin came from: a flag can be dropped, a config key
+      // cannot (there is no --no-expect-email), so point at the file instead of a dead end.
+      const remedy =
+        input.expectEmailSource === "config"
+          ? `Remove or correct the "expectEmail" key in ${input.configPath ?? "the BirdyBeep CLI config"} ` +
+            "(or upgrade the backend to one that reports the approving account) and re-run."
+          : "Re-run without --expect-email (and confirm interactively) if that is expected.";
       return {
         action: "reject",
         reason: "expected_email_unverifiable",
         message:
-          `Pairing refused: --expect-email ${expectEmail} was pinned, but the server did not report ` +
-          "which account approved this machine, so the pin could not be verified. The machine token " +
-          "was NOT stored. Re-run without --expect-email (and confirm interactively) if that is expected.",
+          `Pairing refused: ${expectEmail} was pinned as the expected approving account, but the ` +
+          "server did not report which account approved this machine, so the pin could not be " +
+          `verified. The machine token was NOT stored. ${remedy}`,
       };
     }
     if (sameEmail(approvedByEmail, expectEmail)) {
@@ -169,18 +216,32 @@ export function decidePairConfirmation(input: PairConfirmInput): PairConfirmDeci
       ? `Pair this machine to ${approvedByEmail}? [y/N] `
       : "The server did not report which account approved this machine. Pair anyway? [y/N] ";
 
-  if (input.nonInteractive || !input.stdinIsTTY) {
-    const who = approvedByEmail !== undefined ? ` (approved by ${approvedByEmail})` : "";
-    return {
-      action: "reject",
-      reason: "non_interactive",
-      message:
-        `Pairing needs confirmation${who}, but this is not an interactive terminal, so the machine ` +
-        "token was NOT stored. Re-run with `--expect-email <addr>` to pin the approving account " +
-        "(recommended for CI), or `--yes` to accept whichever account approved it.",
-    };
+  // `--non-interactive` is an explicit "never prompt me", so it outranks any terminal we could
+  // reach. Otherwise stdin wins when it's a terminal; failing that we ask on the controlling
+  // terminal, which is what makes pipe-backed shells (Git Bash without ConPTY) usable.
+  if (!input.nonInteractive) {
+    if (input.stdinIsTTY) return { action: "prompt", question, on: "stdin" };
+    if (input.controllingTerminalAvailable) {
+      return { action: "prompt", question, on: "controlling-terminal" };
+    }
   }
-  return { action: "prompt", question };
+
+  const who = approvedByEmail !== undefined ? ` (approved by ${approvedByEmail})` : "";
+  // On Windows the usual cause is a non-ConPTY MSYS/mintty shell handing us pipe-backed stdio;
+  // `winpty` gives the CLI a real console, so name it rather than leaving the user stuck.
+  const winptyHint =
+    platform === "win32" && !input.nonInteractive
+      ? " In Git Bash / MSYS, `winpty birdybeep pair` attaches a real console so the prompt can appear."
+      : "";
+  return {
+    action: "reject",
+    reason: "non_interactive",
+    message:
+      `Pairing needs confirmation${who}, but there is no terminal to ask on, so the machine ` +
+      "token was NOT stored. Re-run with `--expect-email <addr>` to pin the approving account " +
+      "(recommended for CI), or `--yes` to accept whichever account approved it." +
+      winptyHint,
+  };
 }
 
 /** Is a prompt answer an explicit yes? Anything else (incl. empty/EOF) means no. */
@@ -189,25 +250,71 @@ export function isAffirmative(answer: string): boolean {
 }
 
 /**
- * Ask on stderr, read one line from stdin. stderr (not stdout) so `--json` output stays a
- * clean NDJSON stream. EOF/close resolves to "" (a decline) so the CLI can never hang
- * waiting for an answer that will never come.
+ * The device that reaches this process's CONTROLLING TERMINAL, regardless of what stdin is
+ * wired to: `/dev/tty` on POSIX, the `CONIN$` console input device on Windows. Opening it
+ * succeeds only when a terminal really is attached — in a CI job, a daemon, or a detached
+ * session (`setsid`) it fails, which is exactly the signal the gate needs.
  */
-async function promptOnStdin(question: string): Promise<string> {
+export function controllingTerminalPath(platform: string = process.platform): string {
+  return platform === "win32" ? "\\\\.\\CONIN$" : "/dev/tty";
+}
+
+/** Can we open the controlling terminal for reading? Probe only — never throws, opens nothing durable. */
+export function canOpenControllingTerminal(path: string = controllingTerminalPath()): boolean {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, "r");
+    return true;
+  } catch {
+    return false; // no controlling terminal (script, CI, detached session) → caller fails closed
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+}
+
+/**
+ * Ask a question and read one line back. The question always goes to stderr (not stdout) so
+ * `--json` output stays a clean NDJSON stream. EOF/close resolves to "" (a decline) so the CLI
+ * can never hang waiting for an answer that will never come.
+ *
+ * `on: "controlling-terminal"` reads from /dev/tty (CONIN$) instead of stdin — the case where a
+ * human IS present but the shell gave us pipe-backed stdio.
+ */
+async function promptForAnswer(
+  question: string,
+  on: "stdin" | "controlling-terminal",
+): Promise<string> {
   const { createInterface } = await import("node:readline/promises");
+  const { createReadStream } = await import("node:fs");
+  const input =
+    on === "stdin"
+      ? process.stdin
+      : createReadStream(controllingTerminalPath(), { autoClose: true });
+
   return new Promise<string>((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    const rl = createInterface({ input, output: process.stderr });
     let settled = false;
     const done = (value: string): void => {
       if (settled) return;
       settled = true;
       rl.close();
-      // The interface resumed stdin; unref so a lingering TTY handle can't hold the process open.
-      process.stdin.unref?.();
+      if (on === "stdin") {
+        // The interface resumed stdin; unref so a lingering TTY handle can't hold the process open.
+        process.stdin.unref?.();
+      } else {
+        (input as { destroy?: () => void }).destroy?.(); // release the /dev/tty handle
+      }
       resolve(value);
     };
     rl.question(question).then(done, () => done(""));
     rl.once("close", () => done(""));
+    input.once?.("error", () => done("")); // tty vanished mid-prompt → decline, never hang
   });
 }
 
@@ -229,8 +336,14 @@ export interface PairCommandDeps {
    * gate's fail-closed branch — a piped/CI stdin never gets prompted.
    */
   isStdinTTY?: boolean;
-  /** Ask a question and read one line (default {@link promptOnStdin}); injected in tests. */
-  promptLine?: (question: string) => Promise<string>;
+  /**
+   * Whether the controlling terminal is reachable when stdin is NOT a TTY (default: probe
+   * /dev/tty — CONIN$ on Windows). Injected in tests so both branches are exercised without
+   * needing a real terminal.
+   */
+  hasControllingTerminal?: () => boolean;
+  /** Ask a question and read one line (default {@link promptForAnswer}); injected in tests. */
+  promptLine?: (question: string, on: "stdin" | "controlling-terminal") => Promise<string>;
   /** The pinned identity from config (default: the `expectEmail` key of the CLI config). */
   configuredExpectEmail?: () => string | undefined;
 }
@@ -241,7 +354,9 @@ export function createPairCommand(deps: PairCommandDeps = {}): Command {
   const clock = deps.now ?? (() => Date.now());
   const renderQr = deps.renderQr ?? renderQrMatrix;
   const intervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-  const promptLine = deps.promptLine ?? promptOnStdin;
+  const promptLine = deps.promptLine ?? promptForAnswer;
+  const hasControllingTerminal =
+    deps.hasControllingTerminal ?? (() => canOpenControllingTerminal());
   // Tolerant read: the config file is user-editable, so a non-string/empty pin is treated as
   // "no pin" rather than crashing `pair` (or, worse, comparing against garbage).
   const configuredExpectEmail =
@@ -378,12 +493,20 @@ export function createPairCommand(deps: PairCommandDeps = {}): Command {
       const approvedBy = paired.approvedByEmail;
       // The flag wins over the config pin, so a one-off `pair` can override a fleet default.
       const expectEmail = pairFlags.expectEmail ?? configuredExpectEmail();
+      const stdinIsTTY = deps.isStdinTTY ?? process.stdin.isTTY === true;
       const decision = decidePairConfirmation({
         ...(approvedBy !== undefined ? { approvedByEmail: approvedBy } : {}),
         ...(expectEmail !== undefined ? { expectEmail } : {}),
+        ...(expectEmail !== undefined
+          ? { expectEmailSource: pairFlags.expectEmail !== undefined ? "flag" : "config" }
+          : {}),
         yes: pairFlags.yes,
         nonInteractive: ctx.flags.nonInteractive,
-        stdinIsTTY: deps.isStdinTTY ?? process.stdin.isTTY === true,
+        stdinIsTTY,
+        // Probed ONLY when stdin can't answer — opening /dev/tty is a syscall, and when stdin is
+        // already a terminal the answer is irrelevant.
+        controllingTerminalAvailable: stdinIsTTY ? false : hasControllingTerminal(),
+        configPath: cliConfigPath(),
       });
 
       if (decision.action === "reject") {
@@ -391,7 +514,10 @@ export function createPairCommand(deps: PairCommandDeps = {}): Command {
         ctx.io.errline(decision.message);
         return EXIT.ERROR;
       }
-      if (decision.action === "prompt" && !isAffirmative(await promptLine(decision.question))) {
+      if (
+        decision.action === "prompt" &&
+        !isAffirmative(await promptLine(decision.question, decision.on))
+      ) {
         ctx.io.result({ paired: false, reason: "declined" });
         ctx.io.errline(
           "Pairing declined — the machine token was NOT stored, and this machine will send no " +

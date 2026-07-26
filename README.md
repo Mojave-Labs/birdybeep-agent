@@ -138,8 +138,10 @@ Exit codes: **`0`** ok · **`1`** error · **`2`** usage.
 
 After the backend mints a machine token, `pair` shows the account that approved the machine and
 asks `Pair this machine to <email>? [y/N]` **before** storing anything. Decline and no token is
-written. A non-interactive run (piped stdin, CI, `--non-interactive`) with neither flag fails
-closed instead of hanging. See [`docs/pairing.md`](./docs/pairing.md#confirming-the-approving-account).
+written. The question is read from stdin when stdin is a terminal, otherwise from the controlling
+terminal (`/dev/tty`, or `CONIN$` on Windows — so Git Bash without ConPTY still gets prompted); with
+neither available (a script, CI, `--non-interactive`) it fails closed instead of hanging. See
+[`docs/pairing.md`](./docs/pairing.md#confirming-the-approving-account).
 
 ## Per-harness details
 

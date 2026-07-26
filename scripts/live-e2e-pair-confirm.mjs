@@ -23,7 +23,12 @@
  *   5. --expect-email MISMATCH — refuses and stores NO token (the wrong-account case,
  *      driven by a second real account approving the session).
  *   6. headless, no flags — fails CLOSED fast (never hangs a script), naming both hatches.
- * Plus, on every case: the durable token never appears in the CLI's own output.
+ *   7. PIPED stdin under a controlling terminal — the non-ConPTY Git Bash shape: the prompt
+ *      must still engage, read from /dev/tty rather than fail closed.
+ * Plus, on every case: nothing token-SHAPED ever appears in the CLI's own output (stdout AND
+ * stderr), which is the check that actually covers the reject paths — they store no token, so a
+ * stored-value comparison alone would inspect zero bytes on exactly the paths that hold a live
+ * minted-then-discarded credential.
  *
  * Needs the SIBLING product repo checked out + installed (its node_modules provide
  * miniflare/better-auth); it is never modified — the worker secrets are generated here and
@@ -226,23 +231,52 @@ try {
   }
 
   /**
-   * Run one full pairing: spawn the real CLI (optionally on a pty), wait for the user code
-   * it prints, approve the session as `approver`, then feed `answer` to the prompt (pty
-   * cases) and resolve with the CLI's exit code + captured output.
+   * Run one full pairing: spawn the real CLI, wait for the user code it prints, approve the
+   * session as `approver`, then feed `answer` to the prompt and resolve with the CLI's exit
+   * code + captured output.
+   *
+   * `mode` decides what the CLI's stdio actually IS — the whole point of the confirm gate:
+   *   "pipe"            stdin is a closed pipe and there is no controlling terminal (a script/CI).
+   *   "tty"             stdin IS the terminal (a human in a normal shell).
+   *   "piped-stdin-tty" stdin is a PIPE but a controlling terminal exists — the Git-Bash-without-
+   *                     ConPTY shape. Built by running the CLI inside a pty (so /dev/tty resolves)
+   *                     with its stdin redirected from a real pipe. The answer we write goes to
+   *                     the pty master, so it reaches the CLI only if it truly read /dev/tty.
+   * Both stdout AND stderr are captured into `out` — the gate's refusal/decline messages go to
+   * stderr (ctx.io.errline), so an stdout-only capture would assert against nothing.
    */
-  async function pairCase({ args = [], approver, tty = false, answer }) {
+  async function pairCase({ args = [], approver, mode = "pipe", answer }) {
     const { env } = newHome();
-    const argv = tty
-      ? [PTY_PROXY, process.execPath, CLI_BIN, "pair", ...args]
-      : [CLI_BIN, "pair", ...args];
-    const child = spawn(tty ? "python3" : process.execPath, argv, {
+    const pairArgs = ["pair", ...args];
+    let command;
+    let argv;
+    if (mode === "tty") {
+      command = "python3";
+      argv = [PTY_PROXY, process.execPath, CLI_BIN, ...pairArgs];
+    } else if (mode === "piped-stdin-tty") {
+      // `printf '' |` gives the CLI a genuine pipe on fd 0 while the pty stays its controlling
+      // terminal; `exec` keeps the exit status the CLI's own.
+      const shell = [process.execPath, CLI_BIN, ...pairArgs]
+        .map((a) => JSON.stringify(a))
+        .join(" ");
+      command = "python3";
+      argv = [PTY_PROXY, "sh", "-c", `printf '' | exec ${shell}`];
+    } else {
+      command = process.execPath;
+      argv = [CLI_BIN, ...pairArgs];
+    }
+    const child = spawn(command, argv, {
       env,
       stdio: ["pipe", "pipe", "pipe"],
+      // A new session (setsid) for the plain-pipe case: without it the rig's OWN controlling
+      // terminal would be inherited, the CLI would take the /dev/tty fallback, and the
+      // "headless fails closed" case would silently stop testing what it claims to.
+      ...(mode === "pipe" ? { detached: true } : {}),
     });
     let out = "";
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (out += d));
-    if (!tty) child.stdin.end(); // a closed pipe: exactly what a script/CI gives the CLI
+    if (mode === "pipe") child.stdin.end(); // a closed pipe: exactly what a script/CI gives the CLI
 
     // 1. wait for the code the CLI printed, 2. approve it as the mobile app would.
     let userCode = null;
@@ -254,7 +288,9 @@ try {
       }
       await sleep(100);
     }
-    let approveStatus = 0;
+    // -1, not 0: a case where the code never appeared (so approve was never called) must FAIL
+    // the "was really approved" check, not sail past a `< 300` comparison.
+    let approveStatus = -1;
     if (userCode) {
       const res = await fetch(`${baseUrl}/v1/pair/approve`, {
         method: "POST",
@@ -264,8 +300,8 @@ try {
       approveStatus = res.status;
     }
 
-    // 3. answer the prompt once it appears (pty cases only).
-    if (tty && answer !== undefined) {
+    // 3. answer the prompt once it appears (terminal-backed cases only).
+    if (mode !== "pipe" && answer !== undefined) {
       for (const deadline = Date.now() + 20_000; Date.now() < deadline; ) {
         if (/\[y\/N\]/.test(out)) break;
         await sleep(100);
@@ -280,9 +316,7 @@ try {
     // BIRDYBEEP_E2E_TRANSCRIPT=1 dumps what the operator actually saw — the source of truth
     // when checking that docs/pairing.md quotes the real output.
     if (process.env.BIRDYBEEP_E2E_TRANSCRIPT) {
-      log(
-        `─── transcript (pair ${args.join(" ")}${tty ? ` <tty answer=${answer}>` : ""}) ───\n${out}`,
-      );
+      log(`─── transcript (pair ${args.join(" ")} [${mode}] answer=${answer ?? "—"}) ───\n${out}`);
     }
     return {
       code,
@@ -295,17 +329,27 @@ try {
     };
   }
 
-  /** No case may ever leak the durable token into the CLI's own output. */
-  const assertNoTokenLeak = (label, r) =>
-    check(
-      `${label}: the durable token never appears in CLI output`,
-      r.token === null || !r.out.includes(r.token),
-    );
+  /**
+   * No case may ever leak a durable token into the CLI's own output.
+   *
+   * The SHAPE check is the load-bearing one and runs on every case. A stored-value-only check
+   * short-circuits on precisely the cases that matter — decline, pin mismatch, headless — because
+   * those store no token, so `r.token === null` would pass without inspecting a single byte of
+   * output, even though those are the paths holding a minted-but-discarded live credential.
+   * The stored-value check stays as a second, narrower net.
+   */
+  const MACHINE_TOKEN_SHAPE = /mt_[0-9a-f]{64}/;
+  const assertNoTokenLeak = (label, r) => {
+    check(`${label}: no machine token in CLI output`, !MACHINE_TOKEN_SHAPE.test(r.out));
+    if (r.token !== null) {
+      check(`${label}: the stored token specifically never appears`, !r.out.includes(r.token));
+    }
+  };
 
   // ── case 1: interactive DECLINE ───────────────────────────────────────────
   {
     const approver = await makeAccount("decline");
-    const r = await pairCase({ approver, tty: true, answer: "n" });
+    const r = await pairCase({ approver, mode: "tty", answer: "n" });
     check(
       "decline: session was really approved server-side (202/200)",
       r.approveStatus < 300,
@@ -328,7 +372,7 @@ try {
   // ── case 2: interactive ACCEPT ────────────────────────────────────────────
   {
     const approver = await makeAccount("accept");
-    const r = await pairCase({ approver, tty: true, answer: "y" });
+    const r = await pairCase({ approver, mode: "tty", answer: "y" });
     check("accept: CLI exits 0", r.code === 0, `code ${r.code} out=${r.out.slice(-500)}`);
     check(
       "accept: a real machine token was stored (mt_…)",
@@ -402,6 +446,32 @@ try {
       `${r.elapsedAfterApprove}ms`,
     );
     assertNoTokenLeak("headless", r);
+  }
+
+  // ── case 7: PIPED stdin but a controlling terminal exists (the Git Bash shape) ──
+  // stdin is a real pipe, so `process.stdin.isTTY` is false — yet a terminal IS attached, so
+  // the gate must prompt on /dev/tty rather than fail closed. The "n" below is written to the
+  // pty master, so it can only reach the CLI if it genuinely opened the controlling terminal.
+  {
+    const approver = await makeAccount("devtty");
+    const r = await pairCase({ approver, mode: "piped-stdin-tty", answer: "n" });
+    check(
+      "/dev/tty fallback: the prompt engaged despite piped stdin",
+      /\[y\/N\]/.test(r.out) && r.out.includes(approver.email),
+      r.out.slice(-500),
+    );
+    check(
+      "/dev/tty fallback: the decline was read from the terminal",
+      r.code !== 0,
+      `code ${r.code}`,
+    );
+    check("/dev/tty fallback: NO token stored", r.token === null, `token=${r.token}`);
+    check(
+      "/dev/tty fallback: did not fail closed",
+      !/no terminal to ask on/.test(r.out),
+      r.out.slice(-300),
+    );
+    assertNoTokenLeak("/dev/tty fallback", r);
   }
 
   // ── server-side: a declined pairing still minted a machine row (revoke advice) ──

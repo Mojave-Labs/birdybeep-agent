@@ -14,14 +14,15 @@ BirdyBeep registers a `command` hook on the Claude Code lifecycle events it cons
 `birdybeep hook claude`, which reads the event from Claude Code, normalizes and redacts it, and ships
 a notification to your phone:
 
-| Hook event          | Why BirdyBeep listens                      |
-| ------------------- | ------------------------------------------ |
-| `SessionStart`      | a session began on this machine            |
-| `Notification`      | Claude Code surfaced a notification/prompt |
-| `PermissionRequest` | a tool/command is waiting on your approval |
-| `Stop`              | the agent finished its turn                |
-| `StopFailure`       | the turn ended in failure                  |
-| `SubagentStop`      | a subagent finished                        |
+| Hook event          | Why BirdyBeep listens                             |
+| ------------------- | ------------------------------------------------- |
+| `SessionStart`      | a session began on this machine                   |
+| `Notification`      | Claude Code surfaced a notification/prompt        |
+| `PermissionRequest` | a tool/command is waiting on your approval        |
+| `Stop`              | the agent finished its turn                       |
+| `StopFailure`       | the turn ended in failure                         |
+| `SubagentStop`      | a subagent finished                               |
+| `SessionEnd`        | the session closed for good (settles it as ended) |
 
 Every entry is identical in shape:
 
@@ -43,7 +44,7 @@ hook always returns fast and queues locally if the network is down.
 
 ## What you keep
 
-Everything else. The installer only touches the `hooks` key, and within it only the six events above.
+Everything else. The installer only touches the `hooks` key, and within it only the seven events above.
 Any other settings — `theme`, `mcpServers`, `permissions`, your own `Stop` hook — are preserved
 exactly. If you already have a hook on one of these events, BirdyBeep's entry is **appended** to that
 event's list; your hook is never replaced. The original file is backed up once to

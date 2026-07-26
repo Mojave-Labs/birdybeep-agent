@@ -163,12 +163,12 @@ working machine token. The confirm step puts a human between the mint and the tr
 
 ### Headless machines, CI, and fleets
 
-| Flag / setting                       | Effect                                                                                        |
-| ------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `--expect-email <addr>`              | Pin the expected account: pairs unattended on an exact match, **hard-fails** on a mismatch.   |
-| `--yes` (`-y`)                       | Accept whichever account approved it, without asking. The blunt hatch.                        |
-| `expectEmail` in `config.json`       | Same as `--expect-email`, baked into the machine's CLI config. The flag overrides it.         |
-| _(none, and stdin isn't a terminal)_ | **Fails closed** with an error naming both hatches — a script is never prompted, never hangs. |
+| Flag / setting                   | Effect                                                                                        |
+| -------------------------------- | --------------------------------------------------------------------------------------------- |
+| `--expect-email <addr>`          | Pin the expected account: pairs unattended on an exact match, **hard-fails** on a mismatch.   |
+| `--yes` (`-y`)                   | Accept whichever account approved it, without asking. The blunt hatch.                        |
+| `expectEmail` in `config.json`   | Same as `--expect-email`, baked into the machine's CLI config. The flag overrides it.         |
+| _(none, and no terminal at all)_ | **Fails closed** with an error naming both hatches — a script is never prompted, never hangs. |
 
 `--expect-email` is the one to reach for in CI: it is the only option that still catches a
 wrong-account approval.
@@ -188,6 +188,30 @@ open BirdyBeep and revoke the machine, then re-run `birdybeep pair`.
 
 A pin that **cannot be checked** — the server reported no approving account (an older backend) —
 is also refused, rather than quietly treated as a pass. `--yes` cannot override a mismatched pin.
+
+### Where the question is asked (and Git Bash)
+
+The prompt is written to **stderr**, so `--json` output stays a clean NDJSON stream on stdout. The
+answer is read from your terminal:
+
+1. from **stdin**, when stdin is a terminal (the normal case); otherwise
+2. from the **controlling terminal** — `/dev/tty`, or the `CONIN$` console device on Windows.
+
+Step 2 is what keeps pairing usable in shells that hand programs pipe-backed stdio even though a
+human is right there. The common case is **Git Bash / MSYS / mintty on Windows without ConPTY**:
+`process.stdin.isTTY` is false, yet the prompt still appears and your answer is read from the
+console. (PowerShell, `cmd`, Windows Terminal, and the VS Code terminal all report a real TTY and
+use step 1.)
+
+Only when **neither** is available — a script, a CI job, a detached session — does `pair` fail
+closed. If you land there on Windows unexpectedly, the error says so and points at:
+
+```bash
+winpty birdybeep pair
+```
+
+which attaches a real console so the prompt can appear. `--non-interactive` always skips straight to
+the fail-closed branch, whatever terminal is attached.
 
 The config pin is a plain non-secret key in the CLI config file (see
 [Where the token is stored](#where-the-token-is-stored) for the config location):
@@ -285,8 +309,9 @@ revoking invalidates the server-side token hash even if a copy of the token stil
 - **Pairing timed out.** You didn't confirm before the window closed. Run `birdybeep pair` again
   for a fresh code.
 - **"Code already used."** The user code is single-use. Start over with `birdybeep pair`.
-- **"Pairing needs confirmation … not an interactive terminal."** You ran `pair` from a script, CI
-  job, or piped shell. Add `--expect-email <addr>` (preferred) or `--yes`.
+- **"Pairing needs confirmation … no terminal to ask on."** You ran `pair` from a script, CI job,
+  or a shell with no terminal attached. Add `--expect-email <addr>` (preferred) or `--yes`. On
+  Windows/Git Bash, `winpty birdybeep pair` attaches a real console instead.
 - **"Pairing refused: … but `<addr>` was expected."** A different account approved the machine than
   the one you pinned. Nothing was stored. Check who approved it in the app, revoke the machine if
   it wasn't you, then re-run.

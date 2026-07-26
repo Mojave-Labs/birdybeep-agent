@@ -12,14 +12,22 @@
  * fails here, and the fix is to copy the freshly generated file over the example (the same way
  * it was produced in the first place).
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { AgentAdapter } from "@birdybeep/agent-core";
-import { claudeCodeAdapter, claudeSettingsPath } from "@birdybeep/claude-code";
+import {
+  BIRDYBEEP_HOOK_EVENTS as CLAUDE_HOOK_EVENTS,
+  claudeCodeAdapter,
+  claudeSettingsPath,
+} from "@birdybeep/claude-code";
 import { codexAdapter, codexConfigFile } from "@birdybeep/codex";
-import { cursorAdapter, cursorHooksPath } from "@birdybeep/cursor";
+import {
+  BIRDYBEEP_HOOK_EVENTS as CURSOR_HOOK_EVENTS,
+  cursorAdapter,
+  cursorHooksPath,
+} from "@birdybeep/cursor";
 import { opencodeAdapter, opencodeConfigFile } from "@birdybeep/opencode";
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -35,33 +43,46 @@ const EXAMPLES = join(REPO_ROOT, "examples");
 /** Every harness with a committed example: its install target and where it writes. */
 const HARNESSES: {
   target: string;
+  /** Directory under examples/ — also used to prove no example dir is left unguarded. */
+  dir: string;
   adapter: AgentAdapter;
   example: string;
   generated: (home: string) => string;
+  /**
+   * Hook event names the installer registers. The byte-diff below catches a changed CONFIG,
+   * but not a README that still describes the old event set — so the prose is checked too.
+   */
+  events?: readonly string[];
 }[] = [
   {
     target: "claude",
+    dir: "claude-code",
     adapter: claudeCodeAdapter,
     example: join(EXAMPLES, "claude-code", "settings.json"),
     generated: claudeSettingsPath,
+    events: CLAUDE_HOOK_EVENTS,
   },
   {
     target: "codex",
+    dir: "codex",
     adapter: codexAdapter,
     example: join(EXAMPLES, "codex", "config.toml"),
     generated: (home) => codexConfigFile({ home }),
   },
   {
     target: "opencode",
+    dir: "opencode",
     adapter: opencodeAdapter,
     example: join(EXAMPLES, "opencode", "opencode.json"),
     generated: (home) => opencodeConfigFile({ home }),
   },
   {
     target: "cursor",
+    dir: "cursor",
     adapter: cursorAdapter,
     example: join(EXAMPLES, "cursor", "hooks.json"),
     generated: cursorHooksPath,
+    events: CURSOR_HOOK_EVENTS,
   },
 ];
 
@@ -106,4 +127,33 @@ describe("examples/ match what the installers really write", () => {
       expect(committed).not.toMatch(/bbm_|mt_[0-9a-f]{8}|bearer /i);
     });
   }
+
+  /**
+   * The byte-diff above cannot see PROSE rot: `examples/claude-code/README.md` listed six hook
+   * events for months after the installer started writing seven (`SessionEnd`, #20). A README
+   * that under-describes the footprint is exactly the kind of thing an auditor relies on.
+   */
+  for (const harness of HARNESSES) {
+    const events = harness.events;
+    if (!events) continue;
+    it(`${harness.target}: its example README names every event the installer registers`, () => {
+      const readme = readFileSync(join(EXAMPLES, harness.dir, "README.md"), "utf8");
+      for (const event of events) {
+        expect(readme, `README omits the ${event} hook`).toContain(event);
+      }
+    });
+  }
+
+  /**
+   * HARNESSES is hand-maintained, so a new examples/<harness>/ directory could land completely
+   * unguarded — the failure mode this whole file exists to prevent. Every directory must be
+   * claimed by a row above.
+   */
+  it("guards every directory under examples/", () => {
+    const dirs = readdirSync(EXAMPLES).filter((entry) =>
+      statSync(join(EXAMPLES, entry)).isDirectory(),
+    );
+    expect(dirs.length).toBeGreaterThan(0);
+    expect(dirs.sort()).toEqual(HARNESSES.map((h) => h.dir).sort());
+  });
 });

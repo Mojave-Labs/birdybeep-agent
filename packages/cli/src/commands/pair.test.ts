@@ -34,7 +34,11 @@ const FILE_ONLY = { backend: unavailableKeychainBackend };
  * interactive stdin that answers "y". The gate's own branches are covered in the
  * "approving-account confirm gate" describe below.
  */
-const CONFIRM_YES = { isStdinTTY: true, promptLine: () => Promise.resolve("y") };
+const CONFIRM_YES = {
+  isStdinTTY: true,
+  hasControllingTerminal: () => false,
+  promptLine: () => Promise.resolve("y"),
+};
 // The canonical qr_payload shape the backend mints (https link carrying ONLY the short code).
 const QR_PAYLOAD = "https://birdybeep.com/pair?code=AB-1234";
 
@@ -516,7 +520,13 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
   const APPROVER = "becs@example.com";
 
   describe("decidePairConfirmation (the decision logic)", () => {
-    const base = { yes: false, nonInteractive: false, stdinIsTTY: true };
+    // Default shape: an interactive stdin, so the controlling-terminal fallback is irrelevant.
+    const base = {
+      yes: false,
+      nonInteractive: false,
+      stdinIsTTY: true,
+      controllingTerminalAvailable: false,
+    };
 
     it("prompts with the approving account when there is nothing pinned", () => {
       const d = decidePairConfirmation({ ...base, approvedByEmail: APPROVER });
@@ -524,6 +534,7 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
       // The human must SEE the identity they're being asked about — that is the whole gate.
       expect(d.action === "prompt" && d.question).toContain(APPROVER);
       expect(d.action === "prompt" && d.question).toMatch(/\[y\/N\]/);
+      expect(d.action === "prompt" && d.on).toBe("stdin");
     });
 
     it("still prompts (not auto-trusts) when the server reports no approving account", () => {
@@ -581,10 +592,17 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
       ).toEqual({ action: "approve", reason: "yes_flag" });
     });
 
-    it("fails closed (never hangs) on a non-TTY stdin or --non-interactive", () => {
+    it("fails closed (never hangs) when there is NO terminal at all", () => {
       for (const input of [
+        // A script/CI: pipe-backed stdin AND no controlling terminal to fall back to.
         { ...base, stdinIsTTY: false, approvedByEmail: APPROVER },
-        { ...base, nonInteractive: true, approvedByEmail: APPROVER },
+        // An explicit "never prompt me" outranks any terminal we could have reached.
+        {
+          ...base,
+          nonInteractive: true,
+          controllingTerminalAvailable: true,
+          approvedByEmail: APPROVER,
+        },
       ]) {
         const d = decidePairConfirmation(input);
         expect(d.action).toBe("reject");
@@ -593,6 +611,89 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
         expect(d.action === "reject" && d.message).toContain("--expect-email");
         expect(d.action === "reject" && d.message).toContain("--yes");
       }
+    });
+
+    // The gap the review caught: a human IS present, but their shell handed the CLI pipe-backed
+    // stdio (non-ConPTY MSYS/mintty Git Bash is the real-world case). Refusing there would break
+    // pairing for those users; prompting on the controlling terminal keeps the gate usable.
+    it("falls back to the controlling terminal when stdin isn't a TTY but a terminal exists", () => {
+      const d = decidePairConfirmation({
+        ...base,
+        stdinIsTTY: false,
+        controllingTerminalAvailable: true,
+        approvedByEmail: APPROVER,
+      });
+      expect(d.action).toBe("prompt");
+      expect(d.action === "prompt" && d.on).toBe("controlling-terminal");
+      expect(d.action === "prompt" && d.question).toContain(APPROVER);
+    });
+
+    it("prefers stdin over the controlling terminal when stdin IS a TTY", () => {
+      const d = decidePairConfirmation({
+        ...base,
+        stdinIsTTY: true,
+        controllingTerminalAvailable: true,
+        approvedByEmail: APPROVER,
+      });
+      expect(d.action === "prompt" && d.on).toBe("stdin");
+    });
+
+    it("names `winpty` in the win32 reject text (the Git Bash remedy)", () => {
+      const win = decidePairConfirmation({
+        ...base,
+        stdinIsTTY: false,
+        platform: "win32",
+        approvedByEmail: APPROVER,
+      });
+      expect(win.action === "reject" && win.message).toContain("winpty birdybeep pair");
+      // …and not on POSIX, where the hint would be noise.
+      const posix = decidePairConfirmation({
+        ...base,
+        stdinIsTTY: false,
+        platform: "linux",
+        approvedByEmail: APPROVER,
+      });
+      expect(posix.action === "reject" && posix.message).not.toContain("winpty");
+    });
+
+    it("points a CONFIG pin at the config file, not at a flag that cannot be dropped", () => {
+      const fromConfig = decidePairConfirmation({
+        ...base,
+        expectEmail: APPROVER,
+        expectEmailSource: "config",
+        configPath: "/home/dev/.config/birdybeep/config.json",
+      });
+      expect(fromConfig.action === "reject" && fromConfig.message).toContain(
+        "/home/dev/.config/birdybeep/config.json",
+      );
+      expect(fromConfig.action === "reject" && fromConfig.message).toContain("expectEmail");
+      // There is no CLI switch that ignores a config pin, so it must not suggest one.
+      expect(fromConfig.action === "reject" && fromConfig.message).not.toContain(
+        "Re-run without --expect-email",
+      );
+
+      const fromFlag = decidePairConfirmation({
+        ...base,
+        expectEmail: APPROVER,
+        expectEmailSource: "flag",
+      });
+      expect(fromFlag.action === "reject" && fromFlag.message).toContain(
+        "Re-run without --expect-email",
+      );
+    });
+
+    it("refuses a homoglyph pin that only matches after NFKC folding", () => {
+      // Fullwidth letters NFKC-fold onto ASCII. Comparing only normalized forms would let a
+      // server-reported look-alike auto-approve against an ASCII pin.
+      const fullwidth = "ｂｅｃｓ@example.com";
+      expect(fullwidth.normalize("NFKC")).toBe("becs@example.com"); // the fold really happens
+      const d = decidePairConfirmation({
+        ...base,
+        approvedByEmail: fullwidth,
+        expectEmail: "becs@example.com",
+      });
+      expect(d.action).toBe("reject");
+      expect(d.action === "reject" && d.reason).toBe("expected_email_mismatch");
     });
   });
 
@@ -684,11 +785,58 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
       expect(out.text()).toContain(APPROVER);
     });
 
+    it("prompts on the CONTROLLING TERMINAL when stdin is piped but a terminal exists", async () => {
+      // The Git-Bash-without-ConPTY shape: stdin is a pipe, yet a human is sitting at a real
+      // terminal. Declining there must still refuse the token — the gate works, it just reads
+      // the answer from /dev/tty instead of stdin.
+      sandbox = createSandbox();
+      const asked: { question: string; on: string }[] = [];
+      const cmd = pairCmd({
+        isStdinTTY: false,
+        hasControllingTerminal: () => true,
+        promptLine: (question, on) => {
+          asked.push({ question, on });
+          return Promise.resolve("n");
+        },
+      });
+      const err = capture();
+      const code = await runCli(["pair"], {
+        commands: [cmd],
+        stdout: capture().writer,
+        stderr: err.writer,
+        ensureConfig: false,
+      });
+
+      expect(code).toBe(EXIT.ERROR);
+      expect(asked).toHaveLength(1);
+      expect(asked[0]?.on).toBe("controlling-terminal"); // read from /dev/tty, not the pipe
+      expect(asked[0]?.question).toContain(APPROVER);
+      expect(err.text()).toMatch(/declined/i);
+      expect(await getToken(FILE_ONLY)).toBeNull();
+    });
+
+    it("accepts on the controlling terminal too (the same fallback, answered yes)", async () => {
+      sandbox = createSandbox();
+      const cmd = pairCmd({
+        isStdinTTY: false,
+        hasControllingTerminal: () => true,
+        promptLine: () => Promise.resolve("y"),
+      });
+      const code = await runCli(["pair"], {
+        commands: [cmd],
+        ...quietWriters(),
+        ensureConfig: false,
+      });
+      expect(code).toBe(EXIT.OK);
+      expect(await getToken(FILE_ONLY)).toBe(MACHINE_TOKEN);
+    });
+
     it("--yes pairs without prompting, even with no interactive stdin (CI path)", async () => {
       sandbox = createSandbox();
       let prompted = 0;
       const cmd = pairCmd({
         isStdinTTY: false,
+        hasControllingTerminal: () => false,
         promptLine: () => {
           prompted += 1;
           return Promise.resolve("n");
@@ -710,6 +858,7 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
       let prompted = 0;
       const cmd = pairCmd({
         isStdinTTY: false,
+        hasControllingTerminal: () => false,
         promptLine: () => {
           prompted += 1;
           return Promise.resolve("n");
@@ -728,7 +877,10 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
 
     it("--expect-email MISMATCH refuses the token (the hijacked-approval case)", async () => {
       sandbox = createSandbox();
-      const cmd = pairCmd({ isStdinTTY: false }, "attacker@evil.test");
+      const cmd = pairCmd(
+        { isStdinTTY: false, hasControllingTerminal: () => false },
+        "attacker@evil.test",
+      );
       const err = capture();
       const code = await runCli(["pair", "--expect-email", APPROVER], {
         commands: [cmd],
@@ -747,6 +899,7 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
       let prompted = 0;
       const cmd = pairCmd({
         isStdinTTY: false,
+        hasControllingTerminal: () => false,
         promptLine: () => {
           prompted += 1;
           return new Promise<string>(() => undefined); // would HANG if ever called
@@ -784,7 +937,7 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
       // Config pins the WRONG account → the pairing must be refused…
       writeCliConfig({ expectEmail: "someone-else@example.com" });
       const refused = await runCli(["pair"], {
-        commands: [pairCmd({ isStdinTTY: false })],
+        commands: [pairCmd({ isStdinTTY: false, hasControllingTerminal: () => false })],
         ...quietWriters(),
         ensureConfig: false,
       });
@@ -793,7 +946,7 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
 
       // …until the flag overrides the pin with the account that really approved it.
       const ok = await runCli(["pair", "--expect-email", APPROVER], {
-        commands: [pairCmd({ isStdinTTY: false })],
+        commands: [pairCmd({ isStdinTTY: false, hasControllingTerminal: () => false })],
         ...quietWriters(),
         ensureConfig: false,
       });

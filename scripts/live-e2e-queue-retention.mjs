@@ -43,7 +43,7 @@ import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, parse as parsePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -80,6 +80,8 @@ const home = join(sandbox, "home");
 const work = join(sandbox, "work");
 const temp = join(sandbox, "tmp");
 for (const d of [home, work, temp, join(home, ".claude")]) mkdirSync(d, { recursive: true });
+/** Filesystem root of the sandbox home ("C:" on win32, "" on POSIX) — see HOMEDRIVE below. */
+const HOME_ROOT = parsePath(home).root.replace(/[\\/]$/, "");
 
 let sinkUrl = "";
 /**
@@ -92,10 +94,15 @@ const makeBaseEnv = () => ({
   ...process.env,
   HOME: home, // macOS / Linux
   USERPROFILE: home, // Windows (os.homedir reads this)
-  HOMEPATH: home, // Windows (legacy)
+  // HOMEDRIVE + HOMEPATH are a PAIR — legacy Windows resolvers concatenate them. Setting only
+  // HOMEPATH (drive-qualified, as it was) while HOMEDRIVE stayed inherited from the runner
+  // produced a nonsense path like `C:C:\Users\...\home`; split them properly instead.
+  HOMEDRIVE: HOME_ROOT,
+  HOMEPATH: home.slice(HOME_ROOT.length),
   XDG_CONFIG_HOME: join(home, ".config"),
   XDG_DATA_HOME: join(home, ".local", "share"),
   XDG_STATE_HOME: join(home, ".local", "state"),
+  XDG_CACHE_HOME: join(home, ".cache"),
   APPDATA: join(home, "AppData", "Roaming"),
   LOCALAPPDATA: join(home, "AppData", "Local"), // ← the Windows queue/token base
   TMPDIR: temp,
