@@ -49,7 +49,10 @@ function probe(cmd) {
 //   • `changeset-release/*` is exempt → that is the bot's Version PR, whose whole job is to
 //     CONSUME the changesets, so the gate would fail on it by construction.
 // The base branch comes from `.changeset/config.json` (`baseBranch`), the same value the
-// changesets CLI defaults to and the branch every PR here is opened against.
+// changesets CLI defaults to and the branch every PR here is opened against. NOTE the one place
+// this can diverge from CI: CI diffs against the PR's ACTUAL base ref (`$GITHUB_BASE_REF`), so a
+// stacked PR (opened against another feature branch) is checked here against `main` instead of its
+// real base. Harmless today — every PR here targets `main` — and CI stays authoritative either way.
 const branch = probe("git rev-parse --abbrev-ref HEAD") ?? "HEAD";
 let baseBranch = "main";
 try {
@@ -65,19 +68,34 @@ if (branch === baseBranch || branch.startsWith("changeset-release/")) {
     `${DIM}birdybeep pre-push → skipping changeset status (on ${branch}; CI runs it on PRs only)…${RST}`,
   );
 } else {
-  // CI's "Ensure the base branch is available for the diff" step, locally.
-  let baseAvailable = probe(`git rev-parse --verify --quiet refs/remotes/origin/${baseBranch}`);
-  if (baseAvailable === null) baseAvailable = probe(`git fetch origin ${baseBranch}`) !== null;
-  if (!baseAvailable) {
-    // Offline / no remote: warn, don't block. CI re-runs this as a required check anyway.
+  // CI's "Ensure the base branch is available for the diff" step, locally — and, like CI, the
+  // fetch runs UNCONDITIONALLY (birdybeep-agent-97n). Fetching only when the ref was missing meant
+  // a present-but-STALE refs/remotes/origin/<base> was used as-is, so the gate diffed against an
+  // old base and could pass locally while CI — which always fetches — failed on the same push.
+  const fetched = probe(`git fetch origin ${baseBranch}`) !== null;
+  const baseRef = probe(`git rev-parse --verify --quiet refs/remotes/origin/${baseBranch}`);
+  if (baseRef === null) {
+    // Offline / no remote and nothing cached: warn, don't block. CI re-runs this as a required
+    // check anyway.
     console.error(
       `${YEL}! birdybeep pre-push → could not resolve origin/${baseBranch}; skipping changeset status.${RST}\n` +
         `  ${DIM}The CI 'changeset status' check will still enforce it on the PR.${RST}`,
     );
   } else {
+    if (!fetched) {
+      // Offline but the tracking ref is cached: degrade to a warning and check against the
+      // (possibly stale) local base rather than blocking a push we can't fairly judge.
+      console.error(
+        `${YEL}! birdybeep pre-push → could not fetch origin/${baseBranch}; using the cached ref, which may be stale.${RST}\n` +
+          `  ${DIM}The CI 'changeset status' check re-runs this against the real base on the PR.${RST}`,
+      );
+    }
     console.error(
       `${DIM}birdybeep pre-push → changeset status (--since=origin/${baseBranch}, mirrors CI)…${RST}`,
     );
+    // Caveat: `changeset status --since` diffs the WORKING TREE, not the committed range, so an
+    // uncommitted edit to a publishable package can block a push whose committed diff is exempt.
+    // Commit or stash it and push again — CI only ever sees the committed diff.
     try {
       execSync(`pnpm changeset status --since="origin/${baseBranch}"`, { stdio: "inherit" });
     } catch {
