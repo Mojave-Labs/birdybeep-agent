@@ -75,13 +75,18 @@ deliberately do **not** copy raw user/assistant content into the event:
 
 ### The one free-text field you control: your session name
 
-If you name a Claude Code session (`--name` / `/rename`), that name is sent twice over: it leads the
-event `title`, and it is also reported as `metadata.session_name` so the app can offer "lead my push
-titles with the session name" as a preference (the phone, not the adapter, decides the title format).
-It is the name **you typed**, never a session id and never anything derived from a path. Like every
-other string it goes through the full clean pipeline below before it can leave the machine — so a
-path or a token typed into a session name is hashed/redacted there too — and it is capped at 120
-characters. Sessions you have not named send no such field at all. Nothing else about the session
+If your Claude Code session is named **at session start** (`claude --name "…"`, or a `/rename` you
+did in an earlier session), that name is sent twice over: it leads the event `title`, and it is also
+reported as `metadata.session_name` so the app can offer "lead my push titles with the session name"
+as a preference (the phone, not the adapter, decides the title format). A `/rename` performed
+**mid-session does not propagate** — Claude Code hands the name to hooks only on `SessionStart` and
+never replays it — so it applies from your next session.
+
+It is the name **you typed**, never a session id and never anything derived from a path. Before it
+can leave the machine it goes through the full clean pipeline below — secrets are **redacted first,
+then** the name is capped at 120 characters (that order matters: a cut runs before the outbound
+redaction pass could match, so the cap must never come first), and any absolute path in it is
+hashed. Sessions you have not named send no such field at all. Nothing else about the session
 (prompt, transcript, or file names) rides along with it.
 
 Where a harness _does_ hand the adapter a free-text string (e.g. Claude Code's notification message),

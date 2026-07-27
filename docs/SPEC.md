@@ -260,7 +260,9 @@ type BirdyBeepEventType =
 > (pinned as `SESSION_NAME_METADATA_KEY` in `agent-core/src/event.ts`). The server reads it to compose
 > the push title when a user sets `NotificationPrefs.titleFormat = "session_name"`, and falls back to
 > the adapter's own title when it is absent — so adapters may adopt it independently.
-> Today only **Claude Code** sends it (from `session_title`, set via `--name` / `/rename`). Codex and
+> Today only **Claude Code** sends it, from the `session_title` Claude Code puts on the `SessionStart`
+> payload (set with `claude --name`, or a `/rename` from an earlier session — a MID-session `/rename`
+> is never replayed to hooks, so it only takes effect from the next session). Codex and
 > Cursor expose no session name at all — only opaque ids — and OpenCode's Session `title` is
 > conversation-derived rather than user-given, so forwarding it would leak prompt content; those
 > three deliberately send nothing. It is a name a human typed, never an id and never path-derived,

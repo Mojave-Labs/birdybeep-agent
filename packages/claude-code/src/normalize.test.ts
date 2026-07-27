@@ -598,6 +598,28 @@ describe("metadata.session_name (991)", () => {
     expect(JSON.stringify(stop)).not.toContain("/Users/");
   });
 
+  it("PRIVACY: a secret STRADDLING the 120-char name cap never reaches the wire (PR #45 review)", async () => {
+    // The reproduced defect: cleanSessionName capped BEFORE redacting, so the cut left
+    // `ghp_a1b2c3d4e5` — too short for the PAT pattern to match on the way out — readable in
+    // BOTH the metadata field and the title lead it mirrors.
+    const opts = { ...DET, sessionStateDir: sandboxDir() };
+    const token = `ghp_${"a1b2c3d4e5".repeat(3)}${"z".repeat(6)}`;
+    const padding = "word ".repeat(21); // 105 chars → the cut lands inside the token
+    await normalizeClaudeCodeEvent(
+      { ...base, hook_event_name: "SessionStart", session_title: `${padding}${token}` },
+      opts,
+    );
+    const stop = await normalizeClaudeCodeEvent({ ...base, hook_event_name: "Stop" }, opts);
+
+    const emitted = stop.metadata?.["session_name"] as string;
+    expect(emitted).toContain("[redacted]");
+    for (const surface of [emitted, stop.title, JSON.stringify(stop)]) {
+      expect(surface).not.toContain("ghp_"); // no prefix, anywhere
+      expect(surface).not.toContain(token.slice(0, 14)); // nor the head the cut used to leave
+      expect(surface).not.toContain(token);
+    }
+  });
+
   it("PRIVACY: a secret typed into a session name is REDACTED in the metadata", async () => {
     const opts = { ...DET, sessionStateDir: sandboxDir() };
     const secret = `ghp_${"a1b2c3d4e5".repeat(3)}`;

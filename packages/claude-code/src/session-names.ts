@@ -35,7 +35,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-import { birdyBeepDataDir } from "@birdybeep/agent-core";
+import { birdyBeepDataDir, redactSecrets } from "@birdybeep/agent-core";
 
 /**
  * How long a captured session name stays usable. Generous (a coding session can easily span
@@ -45,7 +45,8 @@ import { birdyBeepDataDir } from "@birdybeep/agent-core";
  */
 export const SESSION_NAME_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** Longest name we keep. Guards the title against a pathological /rename; the normalizer truncates too. */
+/** Longest name we keep (applied AFTER redaction — see cleanSessionName). Guards the title
+ * against a pathological rename; the normalizer truncates too. */
 export const SESSION_NAME_MAX_CHARS = 120;
 
 export interface SessionNameStoreOptions {
@@ -67,12 +68,29 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * Trim + collapse a raw `session_title` into something safe to lead a push title with.
- * Returns undefined for blank/non-string input so the caller falls back to repo · branch.
+ * Trim + collapse + REDACT a raw `session_title` into something safe to lead a push title with
+ * (and to report as `metadata.session_name`). Returns undefined for blank/non-string input so
+ * the caller falls back to repo · branch.
+ *
+ * ORDER IS LOAD-BEARING — redact BEFORE the length cap (PR #45 review). agent-core states the
+ * rule this function has to obey: "Redaction is the ONLY privacy control for secrets —
+ * truncation is NOT a backstop". Cutting first can DEFEAT the redaction that runs later: every
+ * credential pattern needs a minimum run of characters (`ghp_[A-Za-z0-9]{20,}`, the ≥28-char
+ * entropy floor), so a name whose secret STRADDLES the 120-char cut arrives at the normalizer as
+ * a short, unrecognisable — but still readable — token prefix, and is emitted verbatim in both
+ * the title and `metadata.session_name`. Redacting the FULL string first collapses the secret to
+ * `[redacted]` while it is still long enough to match, and only then is the result capped.
+ *
+ * Paths need no equivalent treatment here: a path chopped by the cap is still path-SHAPED, so
+ * the normalizer's scrub hashes whatever survives (it matches from a single segment). Secrets
+ * are the one control with a length floor, which is exactly why they must run first.
+ *
+ * The normalizer re-runs redaction on the way out; this is the earlier of the two passes, not a
+ * replacement for it.
  */
 export function cleanSessionName(raw: unknown): string | undefined {
   if (typeof raw !== "string") return undefined;
-  const collapsed = raw.replace(/\s+/g, " ").trim();
+  const collapsed = redactSecrets(raw.replace(/\s+/g, " ").trim());
   if (collapsed.length === 0) return undefined;
   return collapsed.length > SESSION_NAME_MAX_CHARS
     ? `${collapsed.slice(0, SESSION_NAME_MAX_CHARS - 1)}…`

@@ -16,10 +16,16 @@ the default (pass-through) title format is byte-identical. Sessions you have not
 such field, and a server that doesn't read it simply ignores it — no wire-schema change, the
 field rides the existing open `metadata` object.
 
-Privacy is unchanged in kind: `session_name` is a name YOU typed (`--name` / `/rename`), never a
-session id and never path-derived, and it goes through the same redact → hash-paths → truncate
-pipeline as the title it mirrors, so a path or token typed into a session name is scrubbed in
-both places. It is capped at 120 characters.
+The name is the one Claude Code puts on the `SessionStart` payload — set with `claude --name`, or a
+`/rename` from an earlier session. A mid-session `/rename` is not replayed to hooks, so it applies
+from the next session (unchanged from sv1, which leads the title with the same value).
+
+Privacy is unchanged in kind: `session_name` is a name YOU typed, never a session id and never
+path-derived, and it goes through the same redact → hash-paths → truncate pipeline as the title it
+mirrors, so a path or token typed into a session name is scrubbed in both places. Secrets are now
+redacted BEFORE the adapter's 120-char cap is applied: capping first could split a token below the
+length its pattern needs to match, leaving a readable prefix on the wire (a latent sv1 defect on the
+title path, fixed here for both surfaces).
 
 Codex, Cursor and OpenCode send no session name: the first two expose only opaque ids, and
 OpenCode's session `title` is generated from the conversation rather than typed by the user, so

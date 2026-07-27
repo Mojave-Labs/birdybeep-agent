@@ -315,8 +315,9 @@ falls back to the adapter's own title when the field is absent — so adopting i
 per-adapter. What does **not** qualify: a session/thread/conversation **id** (opaque, worse than the
 fallback), anything derived from a **path**, and any label the harness **generated from the
 conversation** (that is user content, and content never leaves the machine). Of the four shipped
-adapters only Claude Code has a genuine name — `session_title`, which the user sets with `--name` /
-`/rename` — and because it rides only the `SessionStart` payload it is parked in a small disk store
+adapters only Claude Code has a genuine name — `session_title`, which the user sets with `--name`
+(or a `/rename` that lands before the next session starts) — and because it rides only the
+`SessionStart` payload, and is never replayed, it is parked in a small disk store
 ([`session-names.ts`](../packages/claude-code/src/session-names.ts)) so later hooks can report it
 too. Codex, Cursor and OpenCode deliberately send nothing; each adapter's file header records why.
 

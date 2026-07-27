@@ -38,6 +38,28 @@ describe("cleanSessionName", () => {
     expect(cleaned.length).toBe(SESSION_NAME_MAX_CHARS);
     expect(cleaned.endsWith("…")).toBe(true);
   });
+
+  /**
+   * PR #45 review repro: redaction MUST run before the length cap. Every credential pattern has
+   * a minimum run length (`ghp_[A-Za-z0-9]{20,}`, the ≥28-char entropy floor), so a secret that
+   * STRADDLES the cut used to arrive at the normalizer already too short to match — and was
+   * emitted verbatim as a readable token prefix. Cutting is a size bound, never a privacy one.
+   */
+  it("redacts a secret that STRADDLES the length cap (redact before truncate)", () => {
+    const token = `ghp_${"a1b2c3d4e5".repeat(3)}${"z".repeat(6)}`; // a full-length GitHub PAT
+    const padding = "word ".repeat(21); // 105 chars → the cut lands INSIDE the token
+    expect(padding.length + token.length).toBeGreaterThan(SESSION_NAME_MAX_CHARS);
+    const cleaned = cleanSessionName(`${padding}${token}`)!;
+    expect(cleaned).not.toContain("ghp_"); // not even the prefix survives
+    expect(cleaned).not.toContain(token.slice(0, 14)); // nor the leaked head of the token
+    expect(cleaned).toContain("[redacted]");
+    expect(cleaned.length).toBeLessThanOrEqual(SESSION_NAME_MAX_CHARS);
+  });
+
+  it("control: a secret WELL INSIDE the cap is redacted as before", () => {
+    const token = `ghp_${"a1b2c3d4e5".repeat(3)}`;
+    expect(cleanSessionName(`debug ${token}`)).toBe("debug [redacted]");
+  });
 });
 
 describe("SessionNameStore", () => {
