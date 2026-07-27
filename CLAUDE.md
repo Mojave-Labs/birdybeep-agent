@@ -133,6 +133,8 @@ packages/
   claude-code/   Claude Code adapter + hook templates      (highest-priority integration)
   codex/         Codex adapter + config templates           (one-time hook trust → needs_trust)
   opencode/      OpenCode plugin/adapter                     (restart-once to load)
+  cursor/        Cursor adapter + ~/.cursor/hooks.json       (read live — no trust/restart gate)
+  test-harness/  internal E2E spine: temp-HOME sandbox · swappable sink · fixtures · contract asserts
 examples/        generated config examples per harness
 docs/            install · pairing · security · troubleshooting · adapter-development
 scripts/         release.ts · smoke-test.ts

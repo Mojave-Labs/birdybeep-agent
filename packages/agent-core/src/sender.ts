@@ -4,10 +4,11 @@
  * fast — never blocking or throwing into the harness. The retry-vs-terminal
  * decision keys off the product error-envelope code (mirrored in `api.ts`), so the
  * queue never fills with un-deliverable events. Each send also opportunistically
- * drains the backlog (bounded by count AND by a TOTAL time budget — Claude Code
- * installs its hooks with a 10s timeout, and an unbounded 50-entry drain at 3s per
- * attempt could blow well past it, erm). The token is read from secure storage at
- * send time and never logged; request bodies/title/body are never logged.
+ * drains the backlog (bounded by count AND by a TOTAL time budget — every harness
+ * kills a hook that overruns its registered timeout, and an unbounded 50-entry drain
+ * at 3s per attempt could blow well past the tightest of those, erm). The token is
+ * read from secure storage at send time and never logged; request bodies/title/body
+ * are never logged.
  */
 import { type ErrorCode, errorEnvelopeSchema } from "./api";
 import { agentEventsResponseSchema, type BirdyBeepAgentEvent } from "./event";
@@ -17,8 +18,9 @@ import { getToken, type TokenStoreOptions } from "./token-store";
 export const DEFAULT_SEND_TIMEOUT_MS = 3000;
 /**
  * Total wall-clock budget for one send() (first attempt + opportunistic drain).
- * Comfortably under the 10s hook timeout the adapters install, with headroom for
- * process spawn + stdin read around it.
+ * Sized against the TIGHTEST hook timeout any adapter registers — 10s (Claude Code
+ * and Codex; Cursor registers 30s, and the OpenCode plugin runs in-process with no
+ * harness-imposed timeout) — leaving headroom for process spawn + stdin read around it.
  */
 export const DEFAULT_TOTAL_BUDGET_MS = 5000;
 /** Stop draining when less than this remains — a send that can't finish shouldn't start. */

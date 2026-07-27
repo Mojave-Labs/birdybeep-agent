@@ -16,17 +16,19 @@
  *     CLI's prompt engages (scripts/lib/pty-proxy.py), with the true exit code observed.
  *
  * Proves, against that live stack:
- *   1. DECLINE  — answering "n" leaves NO token in the store and exits non-zero.
+ *   1. DECLINE  — answering "n" leaves NO token in the store and exits 1 promptly.
  *   2. ACCEPT   — answering "y" stores the minted token.
  *   3. --yes    — pairs unattended with no tty at all.
  *   4. --expect-email MATCH    — pairs unattended, no prompt.
- *   5. --expect-email MISMATCH — refuses and stores NO token (the wrong-account case,
- *      driven by a second real account approving the session).
+ *   5. --expect-email MISMATCH — refuses (exit 1, promptly) and stores NO token (the
+ *      wrong-account case, driven by a second real account approving the session).
  *   6. headless, no flags — fails CLOSED fast (never hangs a script), naming both hatches.
  *   7. PIPED stdin under a controlling terminal — the pipe-backed-shell shape: the prompt must
  *      still engage and read from /dev/tty rather than fail closed, for BOTH answers, and the
- *      process must exit promptly afterwards (an exact exit code + a time bound, because a
- *      SIGKILLed hang also produces a non-zero "code").
+ *      process must exit promptly afterwards.
+ * Every refusing case (1, 5, 7) pins an EXACT exit code AND a time bound rather than merely
+ * "non-zero": this rig SIGKILLs a stuck child at 60s and `code` is then `null`, which satisfies
+ * `!== 0` — so a one-minute hang would otherwise score PASS.
  * Plus, on every case: nothing token-SHAPED ever appears in the CLI's own output (stdout AND
  * stderr), which is the check that actually covers the reject paths — they store no token, so a
  * stored-value comparison alone would inspect zero bytes on exactly the paths that hold a live
@@ -373,7 +375,19 @@ try {
       r.out.includes(approver.email) && /\[y\/N\]/.test(r.out),
       r.out.slice(-500),
     );
-    check("decline: CLI exits non-zero", r.code !== 0, `code ${r.code}`);
+    // EXACT code + a time bound, for the same reason case 7 pins them: pairCase SIGKILLs at 60s
+    // and `code` is then `null`, which satisfies `!== 0` — so a full-minute hang on the decline
+    // path would have scored PASS on a bare non-zero assertion.
+    check(
+      "decline: CLI exits 1 (a null code would mean it was killed mid-hang)",
+      r.code === 1,
+      `code ${r.code}`,
+    );
+    check(
+      "decline: exits promptly after the answer (<15s)",
+      r.elapsedAfterApprove < 15_000,
+      `${r.elapsedAfterApprove}ms after approval`,
+    );
     check("decline: NO token was stored", r.token === null, `token=${r.token}`);
     check(
       "decline: says it was declined + how to revoke",
@@ -436,7 +450,18 @@ try {
     const expected = await makeAccount("expected");
     const r = await pairCase({ approver, args: ["--expect-email", expected.email] });
     assertApproved("--expect-email mismatch", r);
-    check("--expect-email mismatch: CLI exits non-zero", r.code !== 0, `code ${r.code}`);
+    // Same reasoning as case 1: pin the EXACT code (null = SIGKILLed mid-hang fails) and bound the
+    // time, so the pin-mismatch refusal cannot pass by hanging until the rig's kill timer.
+    check(
+      "--expect-email mismatch: CLI exits 1 (a null code would mean it was killed mid-hang)",
+      r.code === 1,
+      `code ${r.code}`,
+    );
+    check(
+      "--expect-email mismatch: refuses fast instead of hanging (<15s after approval)",
+      r.elapsedAfterApprove < 15_000,
+      `${r.elapsedAfterApprove}ms`,
+    );
     check("--expect-email mismatch: NO token stored", r.token === null, `token=${r.token}`);
     check(
       "--expect-email mismatch: names the account that actually approved it",

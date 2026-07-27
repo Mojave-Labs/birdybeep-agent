@@ -182,10 +182,16 @@ A harness reports `error` when its config is corrupt or only half-configured. Th
 
 ✗  OpenCode: opencode.json is valid JSON — ~/.config/opencode/opencode.json is not valid JSON.
      → Fix or remove the malformed opencode.json, then re-run install.
+
+✗  Cursor: hooks.json is valid JSON — ~/.cursor/hooks.json is not valid JSON.
+     → Fix the JSON in ~/.cursor/hooks.json (or delete it), then run `birdybeep agent install cursor`.
 ```
 
 BirdyBeep will not write into a config file it cannot parse (that would risk destroying your settings).
-Fix the JSON/TOML by hand or remove the file, then re-run the install command.
+Fix the JSON/TOML by hand or remove the file, then re-run the install command. If BirdyBeep had already
+installed successfully, it left a one-time copy of your original config next to it with a
+`.birdybeep-backup` suffix (e.g. `~/.cursor/hooks.json.birdybeep-backup`) — restoring that and re-running
+install is the quickest way back.
 
 **Partial install** — only some of the managed entries are present:
 
