@@ -210,3 +210,39 @@ describe("unmapped events reject (caught + skipped by runAgentHook)", () => {
     );
   });
 });
+
+/**
+ * 991 audit guard: OpenCode must NOT report a `metadata.session_name`. The Session object on
+ * session.created/updated carries a conversation-DERIVED `title` (OpenCode writes it from the
+ * session's own messages — it is not a name the user typed), so forwarding it would leak
+ * summarized prompt text and would only be present on the two non-beeping events that carry
+ * `info` at all. The server degrades gracefully when the field is absent; that is the correct
+ * outcome here, and this test keeps a future "just pass info.title through" from undoing it.
+ */
+describe("no session_name from OpenCode (991)", () => {
+  const PROMPT_TITLE = "Refactor the billing webhook retry logic";
+
+  it("session.updated does NOT forward the auto-generated session title", async () => {
+    const ev = await normalizeOpenCodeEvent(
+      {
+        type: "session.updated",
+        properties: { info: { id: SID, title: PROMPT_TITLE, directory: CWD } },
+        cwd: CWD,
+      },
+      OPTS,
+    );
+    expect(ev.metadata?.["session_name"]).toBeUndefined();
+    expect(JSON.stringify(ev)).not.toContain(PROMPT_TITLE);
+    expect(ev.source_session_id).toBe(SID); // the id IS used — as an id, never as a name
+  });
+
+  it("the beeping events carry no session_name either", async () => {
+    for (const payload of [
+      { type: "session.idle", properties: { sessionID: SID }, cwd: CWD },
+      { type: "permission.asked", properties: { sessionID: SID, permission: "bash" }, cwd: CWD },
+    ]) {
+      const ev = await normalizeOpenCodeEvent(payload, OPTS);
+      expect(ev.metadata?.["session_name"]).toBeUndefined();
+    }
+  });
+});

@@ -25,6 +25,7 @@ import {
   normalizeEvent,
   type NormalizeOptions,
   type RepoContext,
+  SESSION_NAME_METADATA_KEY,
 } from "@birdybeep/agent-core";
 
 import { cleanSessionName, SessionNameStore } from "./session-names";
@@ -101,8 +102,9 @@ function bestEffortSessionId(payload: Record<string, unknown>): string {
 }
 
 /**
- * Resolve the session NAME to lead this event's title with (sv1), and drive the name store's
- * lifecycle. `session_title` (set via Claude Code `--name` / `/rename`) rides ONLY on the
+ * Resolve the session NAME this event carries — it leads the adapter's own title (sv1) AND is
+ * reported discretely as `metadata.session_name` for server-side composition (991) — and drive
+ * the name store's lifecycle. `session_title` (set via Claude Code `--name` / `/rename`) rides ONLY on the
  * SessionStart payload, so:
  *   - SessionStart: capture it and persist keyed by the REAL session_id (best-effort ids are
  *     per-event and can't be correlated by a later Stop, so we never persist under them).
@@ -259,6 +261,16 @@ function buildAndNormalize(input: unknown, opts: ClaudeCodeNormalizeOptions): Bi
   });
   const sessionName = resolveSessionName(payload, realSessionId, store);
   const label = sessionName ?? repoLabel(repo);
+  // 991: ALSO report the name as a DISCRETE metadata field, not just baked into the title.
+  // The server composes the push title itself when the user picks titleFormat="session_name"
+  // (§8.9), and it cannot recover a name that only exists as a title prefix. Riding the §10.2
+  // metadata catchall means no wire-schema change on either side, and an absent field degrades
+  // to the adapter's title — so an unnamed session (or an older/newer server) is never worse
+  // off. Omitted entirely when there is no name: an empty string would out-rank nothing.
+  const metadata = {
+    ...mapped.metadata,
+    ...(sessionName ? { [SESSION_NAME_METADATA_KEY]: sessionName } : {}),
+  };
   const draft = {
     event_type: mapped.eventType,
     status: mapped.status,
@@ -272,10 +284,12 @@ function buildAndNormalize(input: unknown, opts: ClaudeCodeNormalizeOptions): Bi
     },
     title: label ? `${label} — ${mapped.title}` : mapped.title,
     body: mapped.body,
-    metadata: mapped.metadata,
+    metadata,
   };
-  // Shared normalizer hashes the cwd, redacts/truncates strings, enforces the size
-  // cap, and validates against the canonical schema (or throws).
+  // Shared normalizer hashes the cwd, redacts/truncates strings, enforces the size cap, and
+  // validates against the canonical schema (or throws). metadata.session_name is cleaned by
+  // exactly the same pipeline as the title lead it mirrors — a name a user typed a path or a
+  // token into is hashed/redacted in BOTH places, never in one and not the other.
   return normalizeEvent(draft, opts);
 }
 

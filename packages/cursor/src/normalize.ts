@@ -28,6 +28,13 @@
  * completed sessionEnd is the ONLY completion signal there is; mapping it to agent_completed
  * gives them the "your agent finished" beep. IDE users additionally get `stop`, and a
  * non-completed sessionEnd (cancelled/errored) settles terminal via session_ended.
+ *
+ * NO `metadata.session_name` (audited for birdybeep-agent-991): the captured real payloads
+ * (`src/__fixtures__/session{Start,End}.json`) carry the complete field set Cursor sends —
+ * `conversation_id`, `generation_id`, `session_id`, `model`, `cursor_version`,
+ * `workspace_roots`, `user_email`, `transcript_path`, plus per-event extras. Every identity
+ * field is an opaque UUID; Cursor exposes no session name to a hook. Passing an id (or a
+ * path-derived label) off as a name would be worse than the server's graceful fallback.
  */
 import { createHash } from "node:crypto";
 

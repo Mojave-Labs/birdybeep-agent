@@ -25,6 +25,16 @@
  *   permission.asked           → approval_required  (type from properties.permission)
  *   tool.execute.before        → tool_started
  *   tool.execute.after         → tool_finished
+ *
+ * NO `metadata.session_name` (audited for birdybeep-agent-991). OpenCode has no user-typed
+ * session name to report. The only name-shaped thing near these payloads is the `title` on the
+ * Session object that rides `session.created`/`session.updated` as `properties.info` — and that
+ * is CONVERSATION-DERIVED (OpenCode composes it from the session's own messages), not something
+ * the user named the session. Forwarding it would push summarized prompt text off the machine,
+ * breaking this adapter's standing rule that no message content is ever persisted — and it would
+ * do so inconsistently, since `info` is absent from the events that actually beep (session.idle,
+ * permission.asked, tool.execute.*) and there is no cross-process name store here. An absent
+ * field degrades cleanly server-side; a sometimes-present summary of the user's prompt does not.
  */
 import { createHash } from "node:crypto";
 

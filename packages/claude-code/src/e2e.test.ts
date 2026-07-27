@@ -214,6 +214,38 @@ describe("CC-E2E: install → fire real hooks → assert delivered", () => {
     expect(sink!.received()).toHaveLength(0);
   });
 
+  it("delivers metadata.session_name through the REAL hook pipeline (991)", async () => {
+    // The cross-repo payoff: the server composes a `titleFormat="session_name"` push title
+    // from this field, so it has to survive the whole local path — adapter mapping →
+    // normalizer (redact/scrub/truncate) → dedup → sender → the wire — not just the mapper.
+    const { fire } = await setUp();
+    const repo = tmpCheckout("myapp", "main");
+    const named = { session_id: "sess_e2e_named", transcript_path: RAW_TRANSCRIPT, cwd: repo };
+
+    // SessionStart is the ONLY hook that carries session_title; a LATER hook must still send it.
+    expect(
+      await fire({ ...named, hook_event_name: "SessionStart", session_title: "billing refactor" }),
+    ).toBe("delivered");
+    expect(await fire({ ...named, hook_event_name: "PermissionRequest", tool_name: "Bash" })).toBe(
+      "delivered",
+    );
+
+    const approval = sink!
+      .received()
+      .find((e) => (e.body as { event_type?: string }).event_type === "approval_required");
+    expect(approval, "approval_required not delivered").toBeDefined();
+    const body = approval!.body as Record<string, unknown>;
+    const metadata = body["metadata"] as Record<string, unknown>;
+    expect(metadata["session_name"]).toBe("billing refactor"); // what the server reads
+    expect(metadata["tool"]).toBe("Bash"); // and it did not displace the event's own metadata
+    // The sv1 title still leads with the name, so `titleFormat="agent"` users see no change.
+    expect(body["title"]).toBe("billing refactor — Claude Code needs approval");
+    // Privacy holds on the wire, field included.
+    assertNoAbsolutePaths(approval!);
+    assertWithinSizeCap(approval!);
+    expect(JSON.stringify(approval!.body)).not.toContain(repo);
+  });
+
   it("delivers an enriched title + last-message body for a Stop from a real checkout (0r6)", async () => {
     const { fire } = await setUp();
     const repo = tmpCheckout("myapp", "main");

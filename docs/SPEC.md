@@ -250,9 +250,23 @@ type BirdyBeepEventType =
   "status": "waiting_for_approval",
   "title": "Claude Code needs approval",
   "body": "birdybeep · mobile · npm test",
-  "metadata": { "tool": "Bash", "command_summary": "npm test" }
+  "metadata": { "tool": "Bash", "command_summary": "npm test", "session_name": "billing refactor" }
 }
 ```
+
+> **`metadata.session_name` (birdybeep-agent-991)** — an adapter reports a human session NAME here
+> when the harness has one. It rides the open `metadata` catchall, so neither schema declares it and
+> no wire-schema bump is needed on either side; the exact key `session_name` is the whole contract
+> (pinned as `SESSION_NAME_METADATA_KEY` in `agent-core/src/event.ts`). The server reads it to compose
+> the push title when a user sets `NotificationPrefs.titleFormat = "session_name"`, and falls back to
+> the adapter's own title when it is absent — so adapters may adopt it independently.
+> Today only **Claude Code** sends it, from the `session_title` Claude Code puts on the `SessionStart`
+> payload (set with `claude --name`, or a `/rename` from an earlier session — a MID-session `/rename`
+> is never replayed to hooks, so it only takes effect from the next session). Codex and
+> Cursor expose no session name at all — only opaque ids — and OpenCode's Session `title` is
+> conversation-derived rather than user-given, so forwarding it would leak prompt content; those
+> three deliberately send nothing. It is a name a human typed, never an id and never path-derived,
+> and it is redacted/scrubbed/truncated by the normalizer exactly like the title it mirrors.
 
 The event is sent to the BirdyBeep API (`POST /v1/agent-events`), authenticated by the machine installation token. The endpoint validates the schema, enforces a max payload size, and returns quickly. Title/body are used only for delivering the push notification — they are **not** persisted server-side by default.
 

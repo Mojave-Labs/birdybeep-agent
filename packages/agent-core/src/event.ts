@@ -39,6 +39,24 @@ export const eventMetadataSchema = z
   })
   .catchall(z.unknown());
 
+/**
+ * The metadata key an adapter reports a human session NAME under (birdybeep-agent-991).
+ *
+ * CROSS-REPO CONTRACT — the exact string matters. The product Worker reads
+ * `metadata.session_name` out of the catchall above (`apps/api/src/lib/title-format.ts`,
+ * `sessionNameFromMetadata`) to compose the push title when a user picks
+ * `NotificationPrefs.titleFormat = "session_name"`. Because it rides the CATCHALL, neither
+ * schema declares it and neither side needs a wire-schema bump — which also means nothing but
+ * this constant (and the tests that pin it) protects the spelling. Rename it here and the
+ * server silently stops finding it; the title just degrades to the adapter's own, with no
+ * type error anywhere. Adapters must emit it via this constant, never a bare literal.
+ *
+ * It is ONLY ever a name a human gave the session — never a session id, never anything
+ * path-derived. Like every metadata value it goes through the normalizer's
+ * redact → scrub-paths → truncate pipeline before it can leave the machine.
+ */
+export const SESSION_NAME_METADATA_KEY = "session_name";
+
 /** The canonical agent event payload (§10.2). */
 export const birdyBeepAgentEventSchema = z.object({
   event_id: z.string().min(1),
