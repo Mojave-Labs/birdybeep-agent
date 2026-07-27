@@ -6,7 +6,7 @@
  * hint and a missing token). Both are read-only: the config tree is byte-identical after.
  */
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { type DetectionResult, setToken, unavailableKeychainBackend } from "@birdybeep/agent-core";
@@ -18,7 +18,7 @@ import {
 } from "@birdybeep/test-harness";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { installOpenCode } from "./install";
+import { backupPathFor, installOpenCode } from "./install";
 import { opencodeConfigFile } from "./paths";
 import { recordOpenCodeEventSeen } from "./restart";
 import { opencodeDoctor, opencodeStatus } from "./status";
@@ -102,9 +102,13 @@ describe("opencodeDoctor — actionable diagnoses", () => {
     expect(loaded?.remedy).toMatch(/[Rr]estart OpenCode/);
   });
 
-  it("flags a malformed opencode.json", async () => {
+  // birdybeep-agent-8kt: the corrupt-config check is the one failure `birdybeep agent install`
+  // cannot repair by itself (install refuses to parse-then-write a file it can't read), so its
+  // `→ fix` line has to name the real recovery steps — not just "re-run install".
+  it("flags a malformed opencode.json with a fix naming the file + install command", async () => {
     sandbox = createSandbox();
     seed(sandbox.home, "{ bad json");
+    const path = opencodeConfigFile({ home: sandbox.home });
     const r = await opencodeDoctor({
       home: sandbox.home,
       detect: DETECTED,
@@ -112,7 +116,33 @@ describe("opencodeDoctor — actionable diagnoses", () => {
     });
     const valid = r.checks.find((c) => c.name === "opencode.json is valid JSON");
     expect(valid?.ok).toBe(false);
-    expect(valid?.remedy).toMatch(/malformed/);
+    expect(valid?.remedy).toContain(path);
+    expect(valid?.remedy).toContain("birdybeep agent install opencode");
+    // Branch-discriminating: the backup-branch string CONTAINS the config path, so without this
+    // the no-backup case passes even if the ternary always took the backup branch.
+    expect(valid?.remedy).not.toContain("birdybeep-backup");
+  });
+
+  it("points a malformed opencode.json at the BirdyBeep backup when the installer left one", async () => {
+    sandbox = createSandbox();
+    // Install first (which backs up the pre-existing config), THEN corrupt it — the real shape
+    // of "it worked, then something scrambled opencode.json".
+    seed(sandbox.home, `${JSON.stringify({ theme: "opencode" }, null, 2)}\n`);
+    await installOpenCode({}, sandbox.home);
+    const path = opencodeConfigFile({ home: sandbox.home });
+    const backupPath = backupPathFor(path);
+    expect(existsSync(backupPath)).toBe(true);
+    writeFileSync(path, "{ bad json");
+
+    const r = await opencodeDoctor({
+      home: sandbox.home,
+      detect: DETECTED,
+      tokenOptions: FILE_ONLY,
+    });
+    const valid = r.checks.find((c) => c.name === "opencode.json is valid JSON");
+    expect(valid?.ok).toBe(false);
+    expect(valid?.remedy).toContain(backupPath);
+    expect(valid?.remedy).toContain("birdybeep agent install opencode");
   });
 
   it("flags a missing machine token with a pair remedy", async () => {

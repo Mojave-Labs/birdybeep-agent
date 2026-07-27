@@ -21,6 +21,7 @@ import { parse } from "smol-toml";
 
 import { detectCodex } from "./detect";
 import {
+  backupPathFor,
   BIRDYBEEP_HOOK_COMMAND,
   BIRDYBEEP_HOOK_EVENTS,
   BIRDYBEEP_NOTIFY,
@@ -151,12 +152,19 @@ export async function codexDoctor(opts: CodexStatusOptions = {}): Promise<Doctor
 
     // 2. config.toml valid TOML?
     if (config.exists && !config.parseable) {
+      // birdybeep-agent-8kt (house style from tu1): the remedy names the REAL recovery path —
+      // install refuses to write into a file it cannot parse, and it left a one-time copy of the
+      // user's original at `<config.toml>.birdybeep-backup` — so point at that file when it
+      // actually exists rather than at a backup the user may never have had.
+      const backupPath = backupPathFor(path);
       checks.push({
         name: "config.toml is valid TOML",
         ok: false,
         status: "error",
         detail: `${path} is not valid TOML.`,
-        remedy: "Fix or remove the malformed config.toml, then re-run install.",
+        remedy: existsSync(backupPath)
+          ? `Restore the BirdyBeep backup at ${backupPath} over ${path} (or delete the malformed file), then run \`birdybeep agent install codex\`.`
+          : `Fix the TOML in ${path} (or delete it), then run \`birdybeep agent install codex\`.`,
       });
     } else {
       checks.push({ name: "config.toml is valid TOML", ok: true });

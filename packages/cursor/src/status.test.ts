@@ -117,6 +117,10 @@ describe("doctor()", () => {
     expect(check).toBeDefined();
     expect(check?.remedy).toContain(path);
     expect(check?.remedy).toContain("birdybeep agent install cursor");
+    // birdybeep-agent-8kt: branch-discriminating. The backup-branch string CONTAINS the hooks
+    // path, so without this the no-backup case passes even if the ternary always took the
+    // backup branch — i.e. we would happily tell the user to restore a file that isn't there.
+    expect(check?.remedy).not.toContain("birdybeep-backup");
   });
 
   it("points a corrupt hooks.json at the BirdyBeep backup when the installer left one", async () => {

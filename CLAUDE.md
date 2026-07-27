@@ -2,7 +2,7 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
-`birdybeep-agent` is the **public, MIT-licensed** half of BirdyBeep: the open-source CLI (`@birdybeep/cli`) and the agent adapters (Claude Code, Codex, OpenCode) that run inside developers' coding harnesses, normalize lifecycle events, and ship them to the BirdyBeep backend. It is auditable on purpose — this code runs in users' dev environments, so trust and transparency are features. The private app/backend lives in the sibling repo **`birdybeep`**.
+`birdybeep-agent` is the **public, MIT-licensed** half of BirdyBeep: the open-source CLI (`@birdybeep/cli`) and the agent adapters (Claude Code, Codex, OpenCode, Cursor) that run inside developers' coding harnesses, normalize lifecycle events, and ship them to the BirdyBeep backend. It is auditable on purpose — this code runs in users' dev environments, so trust and transparency are features. The private app/backend lives in the sibling repo **`birdybeep`**.
 
 ---
 
@@ -158,4 +158,4 @@ node scripts/smoke-test.ts           # post-build smoke (install published-shape
 ## Conventions
 - **MIT, public, auditable.** Clear docs for install, uninstall, exactly what data is sent, and how tokens are stored. Reversible, non-destructive installs.
 - Keep adapter code isolated and easy to patch — harness APIs change (`§21.1`). Version docs against harness versions.
-- Codex is not "installed" until the first event arrives (one-time `/hooks` trust); surface that as `needs_trust`. OpenCode needs a restart to load its plugin; surface `needs_restart`.
+- Codex is not "installed" until the first event arrives (one-time `/hooks` trust); surface that as `needs_trust`. OpenCode needs a restart to load its plugin; surface `needs_restart`. Claude Code and Cursor read their config live (no trust/restart gate), so they report `installed` as soon as the managed entries are present.
