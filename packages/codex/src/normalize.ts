@@ -22,6 +22,13 @@
  *
  * notify carries JSON on argv; hooks carry JSON on stdin. The `birdybeep hook codex`
  * entrypoint feeds either shape here; dispatch keys off `hook_event_name` vs `type`.
+ *
+ * NO `metadata.session_name` (audited for birdybeep-agent-991): Codex exposes no session/
+ * thread NAME on either surface. The hook payloads carry `session_id`, `source`, `model`,
+ * `tool_name`; notify carries `thread-id`, `turn-id`, `client`. Those are IDs and
+ * discriminators, not human names — sending an opaque id as a "session name" would give the
+ * server's `titleFormat="session_name"` a worse title than the graceful fallback it already
+ * has. Nothing to emit until Codex surfaces a real name.
  */
 import { createHash } from "node:crypto";
 

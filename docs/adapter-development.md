@@ -307,6 +307,19 @@ safe string, not raw content. This is a hard requirement, not a nicety.
 `CodexMappingError`) — never a malformed event. The hook pipeline catches it and `skip`s the fire so
 the harness is never disturbed.
 
+**Report a session NAME if — and only if — the harness really has one.** When the user has named
+their session, emit that name as `metadata.session_name` (use the
+`SESSION_NAME_METADATA_KEY` constant from `@birdybeep/agent-core`, never a bare literal). The server
+reads that key to compose push titles for users who pick the "session name" title format, and it
+falls back to the adapter's own title when the field is absent — so adopting it is optional and
+per-adapter. What does **not** qualify: a session/thread/conversation **id** (opaque, worse than the
+fallback), anything derived from a **path**, and any label the harness **generated from the
+conversation** (that is user content, and content never leaves the machine). Of the four shipped
+adapters only Claude Code has a genuine name — `session_title`, which the user sets with `--name` /
+`/rename` — and because it rides only the `SessionStart` payload it is parked in a small disk store
+([`session-names.ts`](../packages/claude-code/src/session-names.ts)) so later hooks can report it
+too. Codex, Cursor and OpenCode deliberately send nothing; each adapter's file header records why.
+
 ### Step 2 — build a draft and call the shared normalizer
 
 Assemble a plain draft and pass it to `normalizeEvent` from `@birdybeep/agent-core`. The shared
@@ -594,8 +607,15 @@ which uses `createSandbox`, `StubEventSink`, and the privacy assertions from
 - the hook **returns fast** (never blocks the harness).
 
 A unit test of the mapper is necessary but **not sufficient** — the E2E is the bar. (The stub-sink
-E2E is the in-repo gate; the cross-repo live-delivery run against the product's `wrangler dev`
-backend is the deferred end-to-end check.)
+E2E is the in-repo gate.)
+
+When what you changed only MEANS something to the backend — a metadata field the server reads, a
+new wire value — the stub sink cannot prove it, because a stub accepts anything. Those changes get a
+live rig that runs the real CLI against the product worker under `wrangler dev`; see
+[`scripts/live-e2e-session-name.mjs`](../scripts/live-e2e-session-name.mjs), which fires real Claude
+Code hooks and asserts the push title the worker composes from `metadata.session_name`. It needs a
+sibling product checkout (`BIRDYBEEP_REPO`, default `../birdybeep`) with real `.dev.vars`, so it
+exits 2 (skip) rather than failing when they are absent — that is why CI cannot run it and you must.
 
 ### 3. `doctor()` actually diagnoses
 

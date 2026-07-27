@@ -8,10 +8,11 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import { birdyBeepAgentEventSchema } from "@birdybeep/agent-core";
+import { birdyBeepAgentEventSchema, SESSION_NAME_METADATA_KEY } from "@birdybeep/agent-core";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ClaudeCodeMappingError, normalizeClaudeCodeEvent } from "./normalize";
+import { SESSION_NAME_MAX_CHARS } from "./session-names";
 
 const DET = { now: () => "2026-06-14T00:00:00.000Z", generateId: () => "evt_fixed" };
 
@@ -466,5 +467,170 @@ describe("session name in the push title (sv1)", () => {
       opts,
     );
     expect(stop.title).toBe("myapp · main — Claude Code finished"); // graceful 0r6 fallback
+  });
+});
+
+/**
+ * 991: the session name is ALSO reported as a discrete `metadata.session_name`, so the
+ * server can compose a `titleFormat="session_name"` push title instead of having to
+ * reverse-engineer it out of the adapter's title prefix. Rides the §10.2 metadata catchall
+ * (no wire-schema change); absent when the session is unnamed, so the server degrades to
+ * the adapter title. The field is cleaned by exactly the same pipeline as the title lead.
+ */
+describe("metadata.session_name (991)", () => {
+  const tmpDirs: string[] = [];
+  function sandboxDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "bb-991-"));
+    tmpDirs.push(dir);
+    return dir;
+  }
+  function gitCheckout(name: string, head: string): string {
+    const root = sandboxDir();
+    const repo = join(root, name);
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    writeFileSync(join(repo, ".git", "HEAD"), head);
+    return repo;
+  }
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** The exact spelling the product Worker reads out of the catchall — pinned, not inferred. */
+  it("uses the exact cross-repo key 'session_name'", () => {
+    expect(SESSION_NAME_METADATA_KEY).toBe("session_name");
+  });
+
+  it("SessionStart emits the captured name; a LATER Stop still carries it", async () => {
+    const opts = { ...DET, sessionStateDir: sandboxDir() };
+    const started = await normalizeClaudeCodeEvent(
+      {
+        ...base,
+        hook_event_name: "SessionStart",
+        source: "startup",
+        session_title: "auth refactor",
+      },
+      opts,
+    );
+    expect(started.metadata?.["session_name"]).toBe("auth refactor");
+
+    // The later hook payload has no session_title at all — the store supplies it.
+    const stop = await normalizeClaudeCodeEvent({ ...base, hook_event_name: "Stop" }, opts);
+    expect(stop.metadata?.["session_name"]).toBe("auth refactor");
+    // …and the sv1 title lead is unchanged: the field is ADDITIONAL, not a replacement.
+    expect(stop.title).toBe("auth refactor — Claude Code finished");
+  });
+
+  it("is ABSENT (not empty) for an unnamed session — the server degrades to the adapter title", async () => {
+    const opts = { ...DET, sessionStateDir: sandboxDir() };
+    await normalizeClaudeCodeEvent(
+      { ...base, hook_event_name: "SessionStart", source: "startup" },
+      opts,
+    );
+    const stop = await normalizeClaudeCodeEvent({ ...base, hook_event_name: "Stop" }, opts);
+    expect(stop.metadata?.["session_name"]).toBeUndefined();
+    expect(Object.keys(stop.metadata ?? {})).not.toContain("session_name");
+  });
+
+  it("rides ALONGSIDE the event's own metadata (never clobbers it)", async () => {
+    const opts = { ...DET, sessionStateDir: sandboxDir() };
+    await normalizeClaudeCodeEvent(
+      { ...base, hook_event_name: "SessionStart", session_title: "auth refactor" },
+      opts,
+    );
+    const approval = await normalizeClaudeCodeEvent(
+      { ...base, hook_event_name: "PermissionRequest", tool_name: "Bash" },
+      opts,
+    );
+    expect(approval.metadata?.["tool"]).toBe("Bash");
+    expect(approval.metadata?.["session_name"]).toBe("auth refactor");
+  });
+
+  it("SessionEnd carries the name (its last word) and StopFailure keeps its error_type", async () => {
+    const opts = { ...DET, sessionStateDir: sandboxDir() };
+    await normalizeClaudeCodeEvent(
+      { ...base, hook_event_name: "SessionStart", session_title: "auth refactor" },
+      opts,
+    );
+    const failed = await normalizeClaudeCodeEvent(
+      { ...base, hook_event_name: "StopFailure", error_type: "rate_limit" },
+      opts,
+    );
+    expect(failed.metadata).toMatchObject({
+      error_type: "rate_limit",
+      session_name: "auth refactor",
+    });
+    const ended = await normalizeClaudeCodeEvent(
+      { ...base, hook_event_name: "SessionEnd", reason: "clear" },
+      opts,
+    );
+    expect(ended.metadata?.["session_name"]).toBe("auth refactor");
+  });
+
+  it("does NOT leak one session's name onto another session's events", async () => {
+    const opts = { ...DET, sessionStateDir: sandboxDir() };
+    await normalizeClaudeCodeEvent(
+      { ...base, hook_event_name: "SessionStart", session_title: "auth refactor" },
+      opts,
+    );
+    const other = await normalizeClaudeCodeEvent(
+      { ...base, session_id: "sess_cc_OTHER", hook_event_name: "Stop" },
+      opts,
+    );
+    expect(other.metadata?.["session_name"]).toBeUndefined();
+  });
+
+  it("PRIVACY: an absolute path typed into a session name is HASHED in the metadata, exactly as in the title", async () => {
+    const opts = { ...DET, sessionStateDir: sandboxDir() };
+    const named = `fix ${RAW_CWD}/src`;
+    await normalizeClaudeCodeEvent(
+      { ...base, hook_event_name: "SessionStart", session_title: named },
+      opts,
+    );
+    const stop = await normalizeClaudeCodeEvent({ ...base, hook_event_name: "Stop" }, opts);
+    const emitted = stop.metadata?.["session_name"] as string;
+    expect(emitted).not.toContain(RAW_CWD);
+    expect(emitted).toMatch(/^fix h_[0-9a-f]{16}$/);
+    // The title lead gets the same treatment — it is hashed there too (the token itself
+    // differs only because the title appends the action, and the scrubber deliberately
+    // over-absorbs trailing prose into the hashed run rather than risk leaking a fragment).
+    expect(stop.title).toMatch(/^fix h_[0-9a-f]{16}$/);
+    expect(JSON.stringify(stop)).not.toContain(RAW_CWD);
+    expect(JSON.stringify(stop)).not.toContain("/Users/");
+  });
+
+  it("PRIVACY: a secret typed into a session name is REDACTED in the metadata", async () => {
+    const opts = { ...DET, sessionStateDir: sandboxDir() };
+    const secret = `ghp_${"a1b2c3d4e5".repeat(3)}`;
+    await normalizeClaudeCodeEvent(
+      { ...base, hook_event_name: "SessionStart", session_title: `debug ${secret}` },
+      opts,
+    );
+    const stop = await normalizeClaudeCodeEvent({ ...base, hook_event_name: "Stop" }, opts);
+    expect(stop.metadata?.["session_name"]).toBe("debug [redacted]");
+    expect(JSON.stringify(stop)).not.toContain(secret);
+  });
+
+  it("is length-bounded (a pathological /rename can't bloat the event)", async () => {
+    const opts = { ...DET, sessionStateDir: sandboxDir() };
+    await normalizeClaudeCodeEvent(
+      { ...base, hook_event_name: "SessionStart", session_title: "n".repeat(5000) },
+      opts,
+    );
+    const stop = await normalizeClaudeCodeEvent({ ...base, hook_event_name: "Stop" }, opts);
+    // cleanSessionName caps at 120 before the normalizer's own 500-char metadata cap.
+    expect((stop.metadata?.["session_name"] as string).length).toBe(SESSION_NAME_MAX_CHARS);
+  });
+
+  it("the repo · branch fallback does NOT masquerade as a session name", async () => {
+    const opts = { ...DET, sessionStateDir: sandboxDir() };
+    const repo = gitCheckout("myapp", "ref: refs/heads/main\n");
+    const stop = await normalizeClaudeCodeEvent(
+      { ...base, cwd: repo, hook_event_name: "Stop" },
+      opts,
+    );
+    // The title still leads with repo · branch (0r6) — but that is NOT a name, so the
+    // server must not be told it is one (it has repo_name/branch for that format).
+    expect(stop.title).toBe("myapp · main — Claude Code finished");
+    expect(stop.metadata?.["session_name"]).toBeUndefined();
   });
 });

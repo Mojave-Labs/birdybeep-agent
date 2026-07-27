@@ -46,7 +46,8 @@ thing the sender transmits (to `POST /v1/agent-events`). These are the exact fie
   "status": "completed", // session status enum
   "title": "Claude Code finished", // short, generated label (truncated to 200 chars)
   "body": "Turn complete", // short, generated body (truncated to 2000 chars)
-  "metadata": { "tool": "Bash" }, // optional, safe discriminators only (see below)
+  "metadata": { "tool": "Bash", "session_name": "billing refactor" },
+  // ^ optional: safe discriminators + the session name YOU set, if any (see below)
 }
 ```
 
@@ -68,7 +69,20 @@ deliberately do **not** copy raw user/assistant content into the event:
   name, permission type, error class name, status) flow.
 - **Claude Code** carries only the harness-provided notification `message` (already redacted and
   truncated by the shared normalizer) plus safe discriminators (notification type, tool name, error
-  type, source, model).
+  type, source, model) — and, when you have NAMED the session, that name.
+- **Cursor** drops `user_email` and `transcript_path` entirely (they are never copied into the
+  event) and keeps only safe identifiers (tool name, model, final status, reason).
+
+### The one free-text field you control: your session name
+
+If you name a Claude Code session (`--name` / `/rename`), that name is sent twice over: it leads the
+event `title`, and it is also reported as `metadata.session_name` so the app can offer "lead my push
+titles with the session name" as a preference (the phone, not the adapter, decides the title format).
+It is the name **you typed**, never a session id and never anything derived from a path. Like every
+other string it goes through the full clean pipeline below before it can leave the machine — so a
+path or a token typed into a session name is hashed/redacted there too — and it is capped at 120
+characters. Sessions you have not named send no such field at all. Nothing else about the session
+(prompt, transcript, or file names) rides along with it.
 
 Where a harness _does_ hand the adapter a free-text string (e.g. Claude Code's notification message),
 it still passes through the full clean pipeline below before it can leave the machine.
