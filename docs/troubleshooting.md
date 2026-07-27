@@ -175,23 +175,34 @@ A harness reports `error` when its config is corrupt or only half-configured. Th
 
 ```
 ✗  Claude Code: settings.json is valid JSON — ~/.claude/settings.json is not valid JSON.
-     → Fix or remove the malformed settings.json, then re-run install.
+     → Fix the JSON in ~/.claude/settings.json (or delete it), then run `birdybeep agent install claude`.
 
 ✗  Codex: config.toml is valid TOML — ~/.codex/config.toml is not valid TOML.
-     → Fix or remove the malformed config.toml, then re-run install.
+     → Fix the TOML in ~/.codex/config.toml (or delete it), then run `birdybeep agent install codex`.
 
 ✗  OpenCode: opencode.json is valid JSON — ~/.config/opencode/opencode.json is not valid JSON.
-     → Fix or remove the malformed opencode.json, then re-run install.
+     → Fix the JSON in ~/.config/opencode/opencode.json (or delete it), then run `birdybeep agent install opencode`.
 
 ✗  Cursor: hooks.json is valid JSON — ~/.cursor/hooks.json is not valid JSON.
      → Fix the JSON in ~/.cursor/hooks.json (or delete it), then run `birdybeep agent install cursor`.
 ```
 
 BirdyBeep will not write into a config file it cannot parse (that would risk destroying your settings).
-Fix the JSON/TOML by hand or remove the file, then re-run the install command. If BirdyBeep had already
-installed successfully, it left a one-time copy of your original config next to it with a
-`.birdybeep-backup` suffix (e.g. `~/.cursor/hooks.json.birdybeep-backup`) — restoring that and re-running
-install is the quickest way back.
+Fix the JSON/TOML by hand or remove the file, then re-run the install command.
+
+If BirdyBeep had already installed successfully, it left a one-time copy of your original config next to
+it with a `.birdybeep-backup` suffix — and the `→ fix` line points straight at it instead:
+
+```
+✗  Cursor: hooks.json is valid JSON — ~/.cursor/hooks.json is not valid JSON.
+     → Restore the BirdyBeep backup at ~/.cursor/hooks.json.birdybeep-backup over ~/.cursor/hooks.json
+       (or delete the malformed file), then run `birdybeep agent install cursor`.
+```
+
+All four adapters print the same two shapes against their own config file
+(`~/.claude/settings.json`, `~/.codex/config.toml`, `~/.config/opencode/opencode.json`,
+`~/.cursor/hooks.json`) — the backup line only appears when that `.birdybeep-backup` file actually
+exists, so you are never told to restore something you never had.
 
 **Partial install** — only some of the managed entries are present:
 

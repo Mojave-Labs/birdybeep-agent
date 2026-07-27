@@ -18,7 +18,7 @@ import {
 } from "@birdybeep/agent-core";
 
 import { detectOpenCode } from "./detect";
-import { BIRDYBEEP_PLUGIN_REF, isBirdyBeepPluginConfigured } from "./install";
+import { backupPathFor, BIRDYBEEP_PLUGIN_REF, isBirdyBeepPluginConfigured } from "./install";
 import { opencodeConfigDir, opencodeConfigFile } from "./paths";
 import { hasOpenCodeEventBeenSeen, type OpenCodeRestartOptions } from "./restart";
 
@@ -118,12 +118,19 @@ export async function opencodeDoctor(opts: OpenCodeStatusOptions = {}): Promise<
 
     // 2. opencode.json valid JSON?
     if (config.exists && !config.parseable) {
+      // birdybeep-agent-8kt (house style from tu1): the remedy names the REAL recovery path —
+      // install refuses to write into a file it cannot parse, and it left a one-time copy of the
+      // user's original at `<opencode.json>.birdybeep-backup` — so point at that file when it
+      // actually exists rather than at a backup the user may never have had.
+      const backupPath = backupPathFor(path);
       checks.push({
         name: "opencode.json is valid JSON",
         ok: false,
         status: "error",
         detail: `${path} is not valid JSON.`,
-        remedy: "Fix or remove the malformed opencode.json, then re-run install.",
+        remedy: existsSync(backupPath)
+          ? `Restore the BirdyBeep backup at ${backupPath} over ${path} (or delete the malformed file), then run \`birdybeep agent install opencode\`.`
+          : `Fix the JSON in ${path} (or delete it), then run \`birdybeep agent install opencode\`.`,
       });
     } else {
       checks.push({ name: "opencode.json is valid JSON", ok: true });

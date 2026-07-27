@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import type { DetectionResult, DoctorResult, IntegrationStatus } from "@birdybeep/agent-core";
 
 import { detectClaudeCode } from "./detect";
-import { BIRDYBEEP_HOOK_EVENTS, isBirdyBeepEntry } from "./install";
+import { backupPathFor, BIRDYBEEP_HOOK_EVENTS, isBirdyBeepEntry } from "./install";
 import { claudeConfigDir, claudeSettingsPath } from "./paths";
 
 /** Adapter version surfaced in the status report / backend integration record. */
@@ -111,12 +111,19 @@ export async function claudeCodeDoctor(opts: StatusOptions = {}): Promise<Doctor
     const hooks = inspectHooks(home);
 
     if (!hooks.parseable) {
+      // birdybeep-agent-8kt (house style from tu1): the remedy names the REAL recovery path —
+      // install refuses to write into a file it cannot parse, and it left a one-time copy of the
+      // user's original at `<settings.json>.birdybeep-backup` — so point at that file when it
+      // actually exists rather than at a backup the user may never have had.
+      const backupPath = backupPathFor(path);
       checks.push({
         name: "settings.json is valid JSON",
         ok: false,
         status: "error",
         detail: `${path} is not valid JSON.`,
-        remedy: "Fix or remove the malformed settings.json, then re-run install.",
+        remedy: existsSync(backupPath)
+          ? `Restore the BirdyBeep backup at ${backupPath} over ${path} (or delete the malformed file), then run \`birdybeep agent install claude\`.`
+          : `Fix the JSON in ${path} (or delete it), then run \`birdybeep agent install claude\`.`,
       });
     } else {
       checks.push({ name: "settings.json is valid JSON", ok: true });
