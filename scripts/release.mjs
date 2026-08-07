@@ -13,7 +13,7 @@ import { execFileSync } from "node:child_process";
 
 const PUBLISH = process.argv.includes("--publish");
 // Dependency order: core first, adapters, then the CLI that depends on them.
-const PACKAGES = ["agent-core", "claude-code", "codex", "opencode", "cli"];
+const PACKAGES = ["agent-core", "claude-code", "codex", "cursor", "copilot", "opencode", "cli"];
 
 const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: "inherit", ...opts });
 const capture = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: "utf8", ...opts });
@@ -84,4 +84,6 @@ if (!PUBLISH) {
 // 5. Real publish (HUMAN-REQUIRED: needs an authenticated npm token; never run automatically).
 console.log("\n▶ publishing (public access, dependency order)…");
 run("pnpm", ["-r", "publish", "--access", "public", "--no-git-checks"]);
-console.log("\n✓ published.");
+console.log("\n▶ verifying the published CLI from npmjs in a clean environment…");
+run("node", ["scripts/smoke-test.mjs", "--published"]);
+console.log("\n✓ published and consumer-smoke verified.");

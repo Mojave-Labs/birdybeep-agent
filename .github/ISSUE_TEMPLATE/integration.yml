@@ -1,0 +1,50 @@
+name: Harness integration request
+description: Propose a new coding harness or report an upstream hook-surface change
+title: "[Integration]: "
+labels: [integration]
+body:
+  - type: input
+    id: harness
+    attributes:
+      label: Harness and version
+      placeholder: "Example Agent 3.2.1"
+    validations:
+      required: true
+  - type: input
+    id: documentation
+    attributes:
+      label: Public lifecycle-hook documentation
+      description: Link to the official hook/plugin API or upstream source.
+      placeholder: "https://..."
+    validations:
+      required: true
+  - type: textarea
+    id: events
+    attributes:
+      label: Relevant lifecycle events
+      description: List approval, input, idle, completion, failure, tool, and subagent events exposed by the harness.
+    validations:
+      required: true
+  - type: textarea
+    id: install
+    attributes:
+      label: User-level install surface
+      description: Config path/format, trust prompts, restart requirements, and uninstall behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Real-harness verification path
+      description: Explain how CI or a maintainer can fire real events without committing credentials.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy review
+      options:
+        - label: I identified payload fields that may contain prompts, replies, tool data, paths, PII, or credentials.
+          required: true
+        - label: I understand that documentation alone is insufficient; captured real payloads and live E2E verification are required before support is claimed.
+          required: true

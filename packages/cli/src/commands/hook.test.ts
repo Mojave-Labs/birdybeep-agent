@@ -9,6 +9,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createSender, setToken, unavailableKeychainBackend } from "@birdybeep/agent-core";
+import type { CopilotHookEventName } from "@birdybeep/copilot";
 import {
   assertNoAbsolutePaths,
   assertPathsHashed,
@@ -49,7 +50,12 @@ function capture(): { writer: { write: (s: string) => void }; text: () => string
 }
 
 // Real-shaped payloads (one notifying event per harness) + the expected §10.1 type.
-const PAYLOADS: { harness: HarnessName; payload: unknown; eventType: string }[] = [
+const PAYLOADS: {
+  harness: HarnessName;
+  payload: unknown;
+  eventType: string;
+  copilotEventName?: CopilotHookEventName;
+}[] = [
   {
     harness: "claude",
     payload: {
@@ -91,10 +97,23 @@ const PAYLOADS: { harness: HarnessName; payload: unknown; eventType: string }[] 
     },
     eventType: "agent_completed",
   },
+  {
+    // Copilot payloads have no event discriminator: the config passes preToolUse separately.
+    harness: "copilot",
+    copilotEventName: "preToolUse",
+    payload: {
+      sessionId: "sess-copilot",
+      timestamp: 1786075958198,
+      cwd: RAW_CWD,
+      toolName: "bash",
+      toolArgs: '{"command":"cat /Users/dev/private"}',
+    },
+    eventType: "tool_started",
+  },
 ];
 
 describe("runHookCommand delivers the right normalized event per harness", () => {
-  for (const { harness, payload, eventType } of PAYLOADS) {
+  for (const { harness, payload, eventType, copilotEventName } of PAYLOADS) {
     it(`${harness} → ${eventType}, paths hashed, delivered fast`, async () => {
       sink = await StubEventSink.start();
       sandbox = createSandbox();
@@ -103,7 +122,7 @@ describe("runHookCommand delivers the right normalized event per harness", () =>
       const sender = createSender({ baseUrl: sink.url, tokenOptions: FILE_ONLY });
 
       const start = Date.now();
-      const result = await runHookCommand(harness, payload, sender);
+      const result = await runHookCommand(harness, payload, sender, copilotEventName);
       const elapsed = Date.now() - start;
 
       expect(result.outcome).toBe("delivered");
@@ -278,6 +297,33 @@ describe("hook command dispatch (full CLI path)", () => {
     expect(sink.received()).toHaveLength(1);
   });
 
+  it("delivers Copilot stdin with the separate event-name argument", async () => {
+    sink = await StubEventSink.start();
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const sinkUrl = sink.url;
+    const copilot = PAYLOADS.find((item) => item.harness === "copilot")!;
+    const cmd = createHookCommand({
+      createSender: () => createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY }),
+      readStdin: () => Promise.resolve(JSON.stringify(copilot.payload)),
+    });
+    const out = capture();
+    const code = await runCli(["hook", "copilot", "preToolUse", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.OK);
+    expect(JSON.parse(out.text())).toMatchObject({
+      harness: "copilot",
+      event: "preToolUse",
+      outcome: "delivered",
+      eventType: "tool_started",
+    });
+    expect(sink.received()).toHaveLength(1);
+  });
+
   it("unknown harness → USAGE", async () => {
     const cmd = createHookCommand({ readStdin: () => Promise.resolve("{}") });
     const out = capture();
@@ -288,7 +334,7 @@ describe("hook command dispatch (full CLI path)", () => {
       ensureConfig: false,
     });
     expect(code).toBe(EXIT.USAGE);
-    expect(out.text()).toContain("expected one of claude|codex|opencode|cursor");
+    expect(out.text()).toContain("expected one of claude|codex|opencode|cursor|copilot");
   });
 
   it("returns fast (skipped) when stdin hangs — never blocks the harness", async () => {
@@ -328,10 +374,11 @@ describe("hook command dispatch (full CLI path)", () => {
 });
 
 describe("helpers", () => {
-  it("isHarnessName guards the four harnesses", () => {
-    expect(HOOK_HARNESSES).toEqual(["claude", "codex", "opencode", "cursor"]);
+  it("isHarnessName guards all five harnesses", () => {
+    expect(HOOK_HARNESSES).toEqual(["claude", "codex", "opencode", "cursor", "copilot"]);
     expect(isHarnessName("codex")).toBe(true);
     expect(isHarnessName("cursor")).toBe(true);
+    expect(isHarnessName("copilot")).toBe(true);
     expect(isHarnessName("bogus")).toBe(false);
     expect(isHarnessName(undefined)).toBe(false);
   });
@@ -339,5 +386,8 @@ describe("helpers", () => {
   it("readHookPayload prefers the trailing arg, else reads stdin", async () => {
     expect(await readHookPayload(["codex", "ARGV"], () => Promise.resolve("STDIN"))).toBe("ARGV");
     expect(await readHookPayload(["claude"], () => Promise.resolve("STDIN"))).toBe("STDIN");
+    expect(
+      await readHookPayload(["copilot", "preToolUse"], () => Promise.resolve("STDIN"), true),
+    ).toBe("STDIN");
   });
 });

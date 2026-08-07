@@ -12,7 +12,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const PACKAGES = ["agent-core", "claude-code", "codex", "opencode", "cli"];
+const PACKAGES = ["agent-core", "claude-code", "codex", "cursor", "copilot", "opencode", "cli"];
 const ALLOWED_TOP = new Set([
   "package.json",
   "README.md",

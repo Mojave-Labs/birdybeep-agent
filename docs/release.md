@@ -15,10 +15,12 @@ together:
 - `@birdybeep/claude-code`
 - `@birdybeep/codex`
 - `@birdybeep/opencode`
+- `@birdybeep/cursor`
+- `@birdybeep/copilot`
 
 `@birdybeep/test-harness` is private (`"private": true`) and in the changeset `ignore` list —
 it is never published. Everything else is public (`access: public`), because the CLI depends on
-the four `@birdybeep/*` packages at runtime, so they must resolve on npm.
+the six other `@birdybeep/*` packages at runtime, so they must resolve on npm.
 
 ## Day-to-day: record intent with a changeset
 
@@ -42,8 +44,8 @@ whole fixed group.)
    workflow then runs `pnpm release:ci` (build → `check-pack` packaging guard → `changeset
 publish`), which publishes the fixed group to npm in dependency order and pushes git tags.
 
-For the very first release, the pending changeset bumps `0.0.0 → 0.0.1`; merging the Version PR
-ships `0.0.1` publicly.
+When a newly added package has not been published before, the release that creates it needs the
+one-time bootstrap described below. Later releases use trusted publishing.
 
 ### One-time repo setting (so the Version PR can open)
 
@@ -67,21 +69,21 @@ modes automatically: it uses `NPM_TOKEN` if the secret exists, otherwise OIDC.
 The only catch: a package must already exist on npm before a trusted publisher can be
 configured for it — so the very first publish uses a throwaway token.
 
-### HUMAN-REQUIRED before the first publish (`A-HUMAN-NPM`)
+### HUMAN-REQUIRED before the first publish of a package (`A-HUMAN-NPM`)
 
-1. Create the `@birdybeep` npm org (or claim the scope) with the intended maintainer.
-2. Create a **granular automation token** (90-day cap is irrelevant — it's used once). Grant it
+1. Confirm the `@birdybeep` npm org and intended maintainer access exist.
+2. Create a **granular automation token** (90-day cap is irrelevant — it is used once). Grant it
    publish rights to the `@birdybeep` scope, and add it as the repo secret **`NPM_TOKEN`**
    (Settings → Secrets and variables → Actions).
 3. **Make the repo public** before publishing — npm provenance (`NPM_CONFIG_PROVENANCE`,
    enabled in the workflow) requires a public source repo at publish time.
-4. Merge the Version PR → `0.0.1` publishes with the token.
+4. Merge the Version PR; any new packages publish with the token.
 
 ### HUMAN-REQUIRED right after the first publish (switch to tokenless)
 
-1. For **each of the five packages**, open `npmjs.com/package/<name>/access` and add a
+1. For **each newly published package**, open `npmjs.com/package/<name>/access` and add a
    **Trusted Publisher**: GitHub Actions, org `Mojave-Labs`, repo `birdybeep-agent`, workflow
-   `release.yml` (they can all point at the same workflow file).
+   `release.yml` (all seven packages can point at the same workflow file).
 2. **Delete the `NPM_TOKEN` repo secret and revoke the token on npmjs.com.** All future
    releases publish tokenless via OIDC.
 
@@ -105,12 +107,12 @@ Fastest → most realistic:
 
 ```bash
 pnpm release   # dry-run: build + packaging guard + `npm pack --dry-run` plan, ZERO registry calls
-pnpm smoke     # packs all 5, installs @birdybeep/cli from tarballs into a clean temp project, runs the bin
+pnpm smoke     # packs all 7, installs @birdybeep/cli from tarballs into a clean temp project, runs the bin
 ```
 
 For a true `npm install -g` dress rehearsal, publish to a local registry (Verdaccio) — no
 credentials, nothing touches real npm. **`scripts/verdaccio-rehearsal.sh` does the whole thing**
-(starts Verdaccio, publishes all five with pnpm, global-installs the CLI into an isolated prefix,
+(starts Verdaccio, publishes all seven with pnpm, global-installs the CLI into an isolated prefix,
 runs it, and tears down on exit):
 
 ```bash

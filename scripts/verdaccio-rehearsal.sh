@@ -127,7 +127,16 @@ node scripts/check-pack.mjs
 echo "▶ publishing @birdybeep/* with pnpm…"
 NPM_CONFIG_USERCONFIG="$NPMRC" pnpm -r publish --force --registry "$REGISTRY" --no-git-checks --access public
 
-# ---- 6. Real global install from the local registry, into an isolated prefix ----
+# ---- 6. Automated clean-HOME consumer smoke against the local registry ----
+# Uses the SAME verifier as the public-npm post-publish gate: exact version, isolated HOME /
+# cache / global prefix, --version + help + unpaired status + doctor, and no token written.
+echo "▶ running clean consumer smoke against the local registry…"
+CLI_VERSION="$(node -p "require('./packages/cli/package.json').version")"
+node scripts/smoke-test.mjs \
+  --registry "$REGISTRY" \
+  --expected-version "$CLI_VERSION"
+
+# ---- 7. Real global install kept for the optional interactive hold below ----
 echo "▶ installing @birdybeep/cli globally into $GLOBAL_PREFIX …"
 NPM_CONFIG_USERCONFIG="$NPMRC" npm install -g @birdybeep/cli --registry "$REGISTRY" --prefix "$GLOBAL_PREFIX"
 
@@ -141,7 +150,7 @@ echo "✓ rehearsal passed — @birdybeep/cli installed from a local registry an
 echo "    binary:   $BIN"
 echo "    registry: $REGISTRY"
 
-# ---- 7. Hold open so you can actually exercise the CLI before teardown ----
+# ---- 8. Hold open so you can actually exercise the CLI before teardown ----
 # Without this the script would exit here, the EXIT trap would kill verdaccio, and the
 # installed CLI would be gone before you could type a single command. So, when we're on a
 # terminal, drop into an interactive subshell that already has the CLI on PATH and npm

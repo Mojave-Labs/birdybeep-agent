@@ -76,6 +76,9 @@ importers:
       '@birdybeep/codex':
         specifier: workspace:*
         version: link:../codex
+      '@birdybeep/copilot':
+        specifier: workspace:*
+        version: link:../copilot
       '@birdybeep/cursor':
         specifier: workspace:*
         version: link:../cursor
@@ -98,6 +101,16 @@ importers:
       smol-toml:
         specifier: ^1.6.1
         version: 1.6.1
+    devDependencies:
+      '@birdybeep/test-harness':
+        specifier: workspace:*
+        version: link:../test-harness
+
+  packages/copilot:
+    dependencies:
+      '@birdybeep/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
     devDependencies:
       '@birdybeep/test-harness':
         specifier: workspace:*

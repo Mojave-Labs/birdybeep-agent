@@ -1,0 +1,74 @@
+name: Bug report
+description: Report a reproducible BirdyBeep CLI or adapter problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve BirdyBeep. Never paste machine tokens, prompts, tool output, or private paths.
+  - type: dropdown
+    id: harness
+    attributes:
+      label: Harness
+      options:
+        - Claude Code
+        - Codex
+        - OpenCode
+        - Cursor
+        - GitHub Copilot CLI
+        - CLI / pairing / queue
+        - Multiple or unknown
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: BirdyBeep version, harness version, Node version, and package manager version.
+      placeholder: "birdybeep 0.x; copilot 1.x; node 22.x; pnpm 10.x"
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Minimal steps starting from a clean or isolated HOME. Redact all secrets and private content.
+      placeholder: |
+        1. Run `birdybeep agent install ...`
+        2. Trigger ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Paste `birdybeep doctor --json` only after confirming it contains no private data.
+      render: shell
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed tokens, prompts, tool input/output, notification content, and private filesystem paths.
+          required: true
+        - label: This is not a security vulnerability. I will use the private process in SECURITY.md for vulnerabilities.
+          required: true
