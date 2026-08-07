@@ -14,6 +14,7 @@ import {
 } from "@birdybeep/agent-core";
 import { claudeCodeAdapter } from "@birdybeep/claude-code";
 import { codexAdapter } from "@birdybeep/codex";
+import { copilotAdapter } from "@birdybeep/copilot";
 import { cursorAdapter } from "@birdybeep/cursor";
 import { opencodeAdapter } from "@birdybeep/opencode";
 
@@ -26,6 +27,7 @@ const DEFAULT_ADAPTERS: AgentAdapter[] = [
   codexAdapter,
   opencodeAdapter,
   cursorAdapter,
+  copilotAdapter,
 ];
 
 interface Check {

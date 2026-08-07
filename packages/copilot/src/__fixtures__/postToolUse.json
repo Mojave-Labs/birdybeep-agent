@@ -1,0 +1,11 @@
+{
+  "sessionId": "copilot-session-fixture",
+  "timestamp": 1786075958262,
+  "cwd": "/home/user/project",
+  "toolName": "bash",
+  "toolArgs": "{\"command\":\"printf 'PRIVATE COMMAND /home/user/secret\\n'\",\"description\":\"fixture command\"}",
+  "toolResult": {
+    "resultType": "success",
+    "textResultForLlm": "PRIVATE TOOL OUTPUT /home/user/secret\n<shellId: 0 completed with exit code 0>"
+  }
+}

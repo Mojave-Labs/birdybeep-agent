@@ -9,7 +9,8 @@
       "@birdybeep/claude-code",
       "@birdybeep/codex",
       "@birdybeep/opencode",
-      "@birdybeep/cursor"
+      "@birdybeep/cursor",
+      "@birdybeep/copilot"
     ]
   ],
   "linked": [],

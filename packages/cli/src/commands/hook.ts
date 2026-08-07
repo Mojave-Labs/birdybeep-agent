@@ -1,5 +1,5 @@
 /**
- * `birdybeep hook <claude|codex|opencode|cursor>` (§9.2–9.3) — the hot-path entrypoint every
+ * `birdybeep hook <claude|codex|opencode|cursor|copilot>` (§9.2–9.3) — the hot-path entrypoint every
  * installed adapter config invokes when its harness fires a lifecycle event. It reads the
  * raw payload (from the trailing arg for Codex's notify argv, else from stdin), selects the
  * named harness's `runXHook` (normalize → redact/hash/truncate → dedup → send w/ short
@@ -25,24 +25,35 @@ import {
 } from "@birdybeep/agent-core";
 import { runClaudeHook } from "@birdybeep/claude-code";
 import { runCodexHook } from "@birdybeep/codex";
+import {
+  type CopilotHookEventName,
+  isCopilotHookEventName,
+  runCopilotHook,
+} from "@birdybeep/copilot";
 import { runCursorHook } from "@birdybeep/cursor";
 import { runOpenCodeHook } from "@birdybeep/opencode";
 
 import { resolveApiUrl } from "../config";
 import { type Command, EXIT } from "../framework";
 
-export type HarnessName = "claude" | "codex" | "opencode" | "cursor";
+export type HarnessName = "claude" | "codex" | "opencode" | "cursor" | "copilot";
 
 type HarnessRunner = (input: unknown, options: { sender: Sender }) => Promise<HookResult>;
 
-const RUNNERS: Record<HarnessName, HarnessRunner> = {
+const RUNNERS: Record<Exclude<HarnessName, "copilot">, HarnessRunner> = {
   claude: runClaudeHook,
   codex: runCodexHook,
   opencode: runOpenCodeHook,
   cursor: runCursorHook,
 };
 
-export const HOOK_HARNESSES: readonly HarnessName[] = ["claude", "codex", "opencode", "cursor"];
+export const HOOK_HARNESSES: readonly HarnessName[] = [
+  "claude",
+  "codex",
+  "opencode",
+  "cursor",
+  "copilot",
+];
 
 /**
  * Hard cap on reading the payload — a misbehaving harness must never hang the hook.
@@ -72,7 +83,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
 }
 
 export function isHarnessName(value: string | undefined): value is HarnessName {
-  return value === "claude" || value === "codex" || value === "opencode" || value === "cursor";
+  return (
+    value === "claude" ||
+    value === "codex" ||
+    value === "opencode" ||
+    value === "cursor" ||
+    value === "copilot"
+  );
 }
 
 /** Run one hook fire: select the harness runner and execute via the shared pipeline. */
@@ -80,7 +97,12 @@ export function runHookCommand(
   harness: HarnessName,
   payload: unknown,
   sender: Sender,
+  copilotEventName?: CopilotHookEventName,
 ): Promise<HookResult> {
+  if (harness === "copilot") {
+    if (copilotEventName === undefined) return Promise.resolve({ outcome: "skipped" });
+    return runCopilotHook(copilotEventName, payload, { sender });
+  }
   return RUNNERS[harness](payload, { sender });
 }
 
@@ -103,8 +125,9 @@ function readStdinDefault(): Promise<string> {
 export async function readHookPayload(
   args: string[],
   readStdin: () => Promise<string>,
+  stdinOnly = false,
 ): Promise<string> {
-  return args[1] ?? (await readStdin());
+  return stdinOnly ? readStdin() : (args[1] ?? (await readStdin()));
 }
 
 /**
@@ -224,7 +247,7 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
   return {
     name: "hook",
     summary: "Internal: normalize + send an event fired by a harness hook",
-    usage: "birdybeep hook <claude|codex|opencode|cursor>",
+    usage: "birdybeep hook <claude|codex|opencode|cursor|copilot> [copilot-event]",
     run: async (ctx) => {
       const harness = ctx.args[0];
       if (!isHarnessName(harness)) {
@@ -252,7 +275,15 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
 
       // Bounded read: the trailing argv payload resolves instantly; a hung/never-closing
       // stdin falls back to "" after the timeout so the hook ALWAYS returns fast (§9.3).
-      const raw = await withTimeout(readHookPayload(ctx.args, readStdin), stdinTimeoutMs, "");
+      // Copilot's second arg is the event name, not a JSON payload. Every Copilot payload must
+      // therefore come from stdin; Codex retains its notify argv-payload behavior.
+      const copilotEventName =
+        harness === "copilot" && isCopilotHookEventName(ctx.args[1]) ? ctx.args[1] : undefined;
+      const raw = await withTimeout(
+        readHookPayload(ctx.args, readStdin, harness === "copilot"),
+        stdinTimeoutMs,
+        "",
+      );
 
       // If we ARE the detached notify worker (spawned by detachCodexNotifyWorker), the payload
       // was handed to us as a strict-perm temp file used for stdin — now that it's read, delete
@@ -282,7 +313,7 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       }
 
       const sender = makeSender(resolveApiUrl());
-      const result = await runHookCommand(harness, payload, sender);
+      const result = await runHookCommand(harness, payload, sender, copilotEventName);
       // Hot path: human mode is silent; --json emits the outcome for scripts/debugging.
       // Surface the backend's 202 decision (notified/suppressed/deduped) + HTTP status when
       // a send was attempted — the outcome alone ("delivered") can't distinguish a beep that
@@ -290,6 +321,7 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       // `doctor` and delivery debugging need to see.
       ctx.io.result({
         harness,
+        ...(copilotEventName !== undefined ? { event: copilotEventName } : {}),
         outcome: result.outcome,
         eventType: result.eventType,
         ...(result.send?.decision ? { decision: result.send.decision } : {}),

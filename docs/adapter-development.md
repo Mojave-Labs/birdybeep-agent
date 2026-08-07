@@ -70,7 +70,7 @@ radius when they do.
 
 - `id: HarnessId` — the stable harness id, vendored in
   [`packages/agent-core/src/primitives.ts`](../packages/agent-core/src/primitives.ts) as
-  `HARNESS_IDS` (currently `"claude_code"`, `"codex"`, `"opencode"`). It is also the `harness` value
+  `HARNESS_IDS` (currently `"claude_code"`, `"codex"`, `"opencode"`, `"cursor"`, `"copilot"`). It is also the `harness` value
   on every event your adapter emits. Adding a harness means adding its id to `HARNESS_IDS` — and
   because that tuple is kept in **lockstep** with the private product repo's `@birdybeep/shared`,
   flag the addition on your ticket so both sides move together (the schema-parity test fails if the

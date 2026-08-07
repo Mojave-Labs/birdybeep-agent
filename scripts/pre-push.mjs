@@ -12,6 +12,13 @@ import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+// Git exports repository-location overrides to hooks. In a linked worktree, carrying GIT_DIR into
+// nested Git commands can make working-tree-aware tools inspect the primary checkout instead of the
+// checkout being pushed. Let every child command rediscover this worktree from the current directory.
+delete process.env.GIT_DIR;
+delete process.env.GIT_WORK_TREE;
+delete process.env.GIT_PREFIX;
+
 const RED = "\x1b[31m";
 const GRN = "\x1b[32m";
 const YEL = "\x1b[33m";
@@ -111,7 +118,9 @@ if (branch === baseBranch || branch.startsWith("changeset-release/")) {
 // Always-on gates — mirror CI. Run on EVERY push.
 console.error(`${DIM}birdybeep pre-push → lint + typecheck + unit + format (mirrors CI)…${RST}`);
 try {
+  execSync("pnpm -w test:scripts", { stdio: "inherit" });
   execSync("pnpm -w turbo run lint typecheck test", { stdio: "inherit" });
+  execSync("node scripts/staging-e2e.mjs --local-self-test", { stdio: "inherit" });
 } catch {
   block(
     `\n${RED}${B}✗ push blocked${RST} — lint/typecheck/unit failed (these mirror the CI gates).\n` +

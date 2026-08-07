@@ -31,7 +31,7 @@ thing the sender transmits (to `POST /v1/agent-events`). These are the exact fie
   "event_id": "evt_local_…", // generated locally if the harness gives none
   "event_type": "agent_completed", // enum (session_started, approval_required, tool_finished, …)
   "occurred_at": "2026-06-14T…Z", // ISO timestamp
-  "harness": "claude_code", // claude_code | codex | opencode
+  "harness": "claude_code", // claude_code | codex | opencode | cursor | copilot
   "harness_version": "…", // optional
   "source_session_id": "…", // harness session id (paths scrubbed); else a hash
   "machine": {
@@ -60,7 +60,8 @@ The `title` and `body` you see above are written by the adapter, not lifted from
 example, every "finished" event sends the literal string `Turn complete`; an approval event sends
 `Approval requested` or `Approve <tool>?`. The adapters
 ([claude-code](../packages/claude-code/src/normalize.ts),
-[codex](../packages/codex/src/normalize.ts), [opencode](../packages/opencode/src/normalize.ts))
+[codex](../packages/codex/src/normalize.ts), [opencode](../packages/opencode/src/normalize.ts),
+[cursor](../packages/cursor/src/normalize.ts), [copilot](../packages/copilot/src/normalize.ts))
 deliberately do **not** copy raw user/assistant content into the event:
 
 - **Codex** drops `input-messages`, `last-assistant-message`, and `tool_input`. Only safe identifiers
@@ -70,8 +71,11 @@ deliberately do **not** copy raw user/assistant content into the event:
 - **Claude Code** carries only the harness-provided notification `message` (already redacted and
   truncated by the shared normalizer) plus safe discriminators (notification type, tool name, error
   type, source, model) — and, when you have NAMED the session, that name.
-- **Cursor** drops `user_email` and `transcript_path` entirely (they are never copied into the
-  event) and keeps only safe identifiers (tool name, model, final status, reason).
+- **Cursor** drops `prompt`, `user_email`, `transcript_path`, tool input/output, and shell command
+  text. Only lifecycle discriminators such as tool name and status flow.
+- **GitHub Copilot CLI** drops `initialPrompt`, `prompt`, `toolArgs`,
+  `toolResult.textResultForLlm`, `transcriptPath`, subagent responses, and error messages/stacks.
+  Only the event name supplied by the managed hook command and safe lifecycle metadata flow.
 
 ### The one free-text field you control: your session name
 
@@ -197,8 +201,9 @@ birdybeep queue clear
 The local pattern is: harness hook → `birdybeep hook <harness>` → read token → normalize → redact /
 truncate / hash → send with a short timeout → queue on failure → return fast. There is **no background
 daemon**. The `birdybeep hook <harness>` command is internal — it is invoked by the installed harness
-config, reads the payload (stdin, or a trailing arg for Codex `notify`), runs everything above, and
-always returns fast and exits 0 so it can never hang your session.
+config, reads the payload (stdin, or a trailing payload for Codex `notify`; Copilot passes its event
+name as a separate argument), runs everything above, and always returns fast and exits 0 so it can
+never hang your session.
 
 ## Verify it yourself
 
