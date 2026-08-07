@@ -2,7 +2,7 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
-`birdybeep-agent` is the **public, MIT-licensed** half of BirdyBeep: the open-source CLI (`@birdybeep/cli`) and the agent adapters (Claude Code, Codex, OpenCode, Cursor) that run inside developers' coding harnesses, normalize lifecycle events, and ship them to the BirdyBeep backend. It is auditable on purpose — this code runs in users' dev environments, so trust and transparency are features. The private app/backend lives in the sibling repo **`birdybeep`**.
+`birdybeep-agent` is the **public, MIT-licensed** half of BirdyBeep: the open-source CLI (`@birdybeep/cli`) and the agent adapters (Claude Code, Codex, OpenCode, Cursor, GitHub Copilot CLI) that run inside developers' coding harnesses, normalize lifecycle events, and ship them to the BirdyBeep backend. It is auditable on purpose — this code runs in users' dev environments, so trust and transparency are features. The private app/backend lives in the sibling repo **`birdybeep`**.
 
 ---
 
@@ -22,7 +22,7 @@ This package edits real config files in users' home directories and hooks into r
 
 ### Adapter & CLI behavior — the core mandate
 - Use the **E2E harness** (`A-TEST-HARNESS`): run every install/uninstall against an **isolated temporary `HOME`**, never your real machine. Assert generated config is exactly the BirdyBeep-managed entries, that existing config is preserved + backed up, and that **uninstall restores the original byte-for-byte**.
-- **Fire real harness events.** For each adapter, feed the actual event payloads/commands the harness emits (Claude Code hooks, Codex `notify` + lifecycle hooks, OpenCode plugin events) and assert the normalized BirdyBeep event is produced and **delivered** — run against the product repo's `wrangler dev` backend (`EVT-INGEST`) and confirm the event arrives and a push job is enqueued. A unit test of the mapper is necessary but **not sufficient**.
+- **Fire real harness events.** For each adapter, feed the actual event payloads/commands the harness emits (Claude Code hooks, Codex `notify` + lifecycle hooks, OpenCode plugin events, Cursor hooks, Copilot CLI hooks) and assert the normalized BirdyBeep event is produced and **delivered** — run against the product repo's `wrangler dev` backend (`EVT-INGEST`) and confirm the event arrives and a push job is enqueued. A unit test of the mapper is necessary but **not sufficient**.
 - **Snapshot tests** guard config generation and non-destructive patching for every adapter (`*-SNAPSHOT` tickets). Regenerate intentionally, never blindly.
 - **`birdybeep doctor` must actually diagnose** the failure modes it claims to (missing token, untrusted Codex hooks, OpenCode needs-restart, offline queue). Test it by inducing each failure.
 - Idempotency is tested: install twice → identical result; install over foreign config → preserved.
@@ -61,15 +61,17 @@ This package edits real config files in users' home directories and hooks into r
 - **Do NOT run `bd repo sync` / `bd repo add`** (multi-repo hydration) — it imports the *sibling* repo's issues into this DB and the auto-export hooks would commit them, re-polluting. For cross-repo context, read the shared Linear project or peek with `bd -C /path/to/sibling <cmd>`.
 - **Beads vs git conflicts:** on a `.beads/issues.jsonl` conflict during `git pull --rebase`/merge, don't hand-merge it — the shared Dolt server is the truth. Resolve by regenerating the file (`bd export`) and verify `bd count` + `external_ref` links after.
 
-## 🗄️ Beads on the shared Dolt server
+## 🗄️ Beads data service
 
-Since 2026-07-16 this repo's beads live on a **shared network Dolt SQL server** (homelab `rebeccas-mac-mini:3307`, database `birdybeep_agent`) — there is NO local embedded DB. Every machine and agent reads/writes the same live database: no `bd dolt push/pull`, and `bd update --claim` is atomic across all machines.
+This checkout uses an externally managed shared Dolt service for Beads. Connection details are
+supplied outside the repository through `BEADS_DOLT_SERVER_HOST`, `BEADS_DOLT_SERVER_PORT`, and
+`BEADS_DOLT_PASSWORD` or untracked local configuration; never document or commit real endpoints or
+credentials. If bd reports **"Dolt server unreachable"**, fix connectivity or local configuration.
+Never replace the shared service with `bd init`, embedded mode, or `bd import` of `issues.jsonl`.
 
-- **bd needs two things:** `BEADS_DOLT_PASSWORD` in env (on this machine exported by `~/.zshenv` from `~/.config/beads/credentials`) and the server port — untracked `.beads/dolt-server.port` containing `3307`, or `BEADS_DOLT_SERVER_PORT=3307`. Fresh clones must recreate one of those.
-- **Cloud sessions** cannot dial raw TCP. The SessionStart hook runs `scripts/cloud-dolt-bridge.sh`, which starts a Cloudflare-Access tunnel bridge on `127.0.0.1:3307` when `TUNNEL_SERVICE_TOKEN_ID/SECRET` are set; the cloud environment must also set `BEADS_DOLT_SERVER_HOST=127.0.0.1` and `BEADS_DOLT_PASSWORD`. Locally the script no-ops (direct tailnet access).
-- If bd reports **"Dolt server unreachable"** / circuit-breaker fast-fails: fix connectivity (server up? bridge up?). **Never** "fix" it with `bd init`, embedded mode, or `bd import` of `issues.jsonl`.
-- `.beads/issues.jsonl` and `interactions.jsonl` are passive local exports and are **gitignored (not tracked)** — the shared Dolt server is the source of truth and off-machine DR is handled by scheduled, verified backups (`~/.config/dolt-backup`). bd still writes them locally for visibility; never a sync channel, never hand-edited, never re-track them.
-- **bd version is pinned — do NOT upgrade it casually.** All clients on the shared database must run the **same** bd version (**1.1.0**; databases are at schema **v53**). Schema migrations auto-apply on store open and our server DBs have no Dolt remote, so bd 1.1.0's remote-migrate gate won't stop a newer client from silently migrating the schema out from under everyone. Never run the upstream `install.sh | bash` (no version pin — always `latest`). Upgrading = coordinated op: back up (`bd export --all`), upgrade every client + both databases together, verify. See `Mojave-Labs/agentic-infra`.
+- `.beads/issues.jsonl` stays a passive per-checkout export for git visibility — never a sync channel, never hand-edited.
+- **bd version is pinned at 1.1.0.** Coordinate any upgrade across every client and database; never
+  run an unpinned installer against the shared service.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:7510c1e2 -->
 ## Beads Issue Tracker
@@ -134,10 +136,11 @@ packages/
   codex/         Codex adapter + config templates           (one-time hook trust → needs_trust)
   opencode/      OpenCode plugin/adapter                     (restart-once to load)
   cursor/        Cursor adapter + ~/.cursor/hooks.json       (read live — no trust/restart gate)
+  copilot/       GitHub Copilot CLI adapter + hook file      (read live — no trust/restart gate)
   test-harness/  internal E2E spine: temp-HOME sandbox · swappable sink · fixtures · contract asserts
 examples/        generated config examples per harness
 docs/            install · pairing · security · troubleshooting · adapter-development
-scripts/         release.ts · smoke-test.ts
+scripts/         release.mjs · smoke-test.mjs · live-e2e-*.mjs
 ```
 
 Every adapter implements the same `AgentAdapter` interface: `detect / install / uninstall / status / doctor / normalizeEvent`. The local hook command pattern is: harness hook → `birdybeep hook <harness>` → read token → normalize → redact/truncate → send (short timeout) → queue on failure → return fast. **No background daemon.**
@@ -150,7 +153,7 @@ Every adapter implements the same `AgentAdapter` interface: `detect / install / 
 pnpm install
 pnpm turbo lint typecheck test       # includes adapter snapshot tests
 pnpm test:e2e                        # real install into temp HOME + fire harness events (needs a backend; use birdybeep wrangler dev)
-node scripts/smoke-test.ts           # post-build smoke (install published-shape CLI, run doctor)
+node scripts/smoke-test.mjs          # post-build smoke (install published-shape CLI, run doctor)
 ```
 
 (Exact scripts firm up as `A-*` / `REL-*` tickets land; keep this current.)

@@ -1,0 +1,7 @@
+{
+  "sessionId": "copilot-session-fixture",
+  "timestamp": 1786075958198,
+  "cwd": "/home/user/project",
+  "toolName": "bash",
+  "toolArgs": "{\"command\":\"printf 'PRIVATE COMMAND /home/user/secret\\n'\",\"description\":\"fixture command\"}"
+}

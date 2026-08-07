@@ -1,0 +1,17 @@
+# Default ownership: this public CLI runs inside users' coding harnesses.
+* @becs-n-bytes
+
+# Credential handling, wire contracts, and install/uninstall behavior are security-sensitive.
+/packages/agent-core/ @becs-n-bytes
+/packages/cli/ @becs-n-bytes
+/packages/claude-code/ @becs-n-bytes
+/packages/codex/ @becs-n-bytes
+/packages/opencode/ @becs-n-bytes
+/packages/cursor/ @becs-n-bytes
+/packages/copilot/ @becs-n-bytes
+
+# Supply-chain and repository policy changes require explicit owner review.
+/.github/ @becs-n-bytes
+/.changeset/ @becs-n-bytes
+/scripts/ @becs-n-bytes
+/SECURITY.md @becs-n-bytes

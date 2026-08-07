@@ -127,6 +127,7 @@ birdybeep agent install claude
 birdybeep agent install codex
 birdybeep agent install opencode
 birdybeep agent install cursor
+birdybeep agent install copilot
 ```
 
 `all` is the default, so `birdybeep agent install` with no target is equivalent to
@@ -146,6 +147,7 @@ create config for a harness you don't use. Output looks like this:
      → Restart OpenCode for the plugin to load.
      → After restart, OpenCode sessions on this machine will be tracked automatically.
 ✓  Cursor: installed (/Users/you/.cursor/hooks.json)
+✓  GitHub Copilot CLI: installed (/Users/you/.copilot/hooks/birdybeep.json)
 ```
 
 Re-run it and the idempotency shows in the output — the same statuses, with `(no changes)` in place
@@ -153,6 +155,19 @@ of the paths.
 
 Use `--json` for machine-readable output (changed files, backups, required actions, and per-harness
 status).
+
+### Support matrix
+
+| Harness            | Support   | Initial status                                     | Verification baseline                                          |
+| ------------------ | --------- | -------------------------------------------------- | -------------------------------------------------------------- |
+| Claude Code        | Supported | `installed`                                        | Live harness E2E                                               |
+| Codex              | Supported | `needs_trust` until a trusted lifecycle hook fires | Live harness E2E                                               |
+| OpenCode           | Supported | `needs_restart` until the restarted plugin emits   | Live harness E2E; event shapes reconciled with OpenCode 1.18.1 |
+| Cursor             | Supported | `installed`                                        | Cursor Agent 2026.07.09 fixtures; Cursor IDE 3.14.27 live E2E  |
+| GitHub Copilot CLI | Supported | `installed`                                        | CLI 1.0.70 BYOK + 1.0.78 GitHub OAuth live E2E (2026-08-07)    |
+
+The version column is a tested baseline, not a maximum supported version. `birdybeep status` reports
+the harness version detected on the current machine so API drift is visible in diagnostics.
 
 ### What each install writes
 
@@ -224,13 +239,29 @@ events, and the `beforeShellExecution` approval gate. Cursor's payloads include 
 `transcript_path` — the adapter drops **both** outright and hashes the workspace root like every
 other path.
 
+The exact full generated file is committed at [`examples/cursor/hooks.json`](../examples/cursor/hooks.json)
+and is byte-compared with the installer in the adapter test suite.
+
+#### GitHub Copilot CLI
+
+- **File:** `~/.copilot/hooks/birdybeep.json` (honors `$COPILOT_HOME`)
+- **Change:** writes one dedicated hook file for Copilot's eight lifecycle events. Every entry has
+  matching `bash` and `powershell` commands in the form `birdybeep hook copilot <event-name>`.
+  Foreign files in the hooks directory are never modified.
+- **Status:** `installed`. Copilot combines hook files without a trust or restart step.
+
+Copilot's payload does not include its event name, so the event-specific command is required for
+correct normalization. The file is written with `0600` permissions. Its exact contents are
+committed at [`examples/copilot/birdybeep.json`](../examples/copilot/birdybeep.json) and guarded
+against installer drift in tests.
+
 ---
 
 ## 4. Per-harness gotchas
 
-Two of the four harnesses need one extra action before they're live (Claude Code and Cursor are live
-the moment install finishes). The CLI surfaces this for you, both in the install output and in
-`birdybeep status` / `birdybeep doctor`.
+Two of the five harnesses need one extra action before they're live (Claude Code, Cursor, and
+GitHub Copilot CLI are live the moment install finishes). The CLI surfaces this for you, both in
+the install output and in `birdybeep status` / `birdybeep doctor`.
 
 ### Codex needs one-time hook trust → `needs_trust`
 
@@ -267,6 +298,7 @@ Integrations:
   Codex: needs_trust
   OpenCode: needs_restart
   Cursor: installed
+  GitHub Copilot CLI: installed
 Queue:   0 queued → 0 delivered, 0 remaining
 ```
 
@@ -341,6 +373,7 @@ birdybeep agent uninstall claude
 birdybeep agent uninstall codex
 birdybeep agent uninstall opencode
 birdybeep agent uninstall cursor
+birdybeep agent uninstall copilot
 ```
 
 Uninstall is safe and idempotent — running it when nothing is installed is a no-op:
@@ -360,7 +393,7 @@ Adapters are cheap to write and expensive to keep honest: each one has to be ver
 real harness end-to-end, and harness hook APIs move. So we ship an adapter only for harnesses we can
 actually exercise, and we say plainly what we skipped.
 
-**Shipped today:** Claude Code, Codex, OpenCode, Cursor (the table at the
+**Shipped today:** Claude Code, Codex, OpenCode, Cursor, and GitHub Copilot CLI (the table at the
 [top of this page](#supported-harnesses)).
 
 ### Looked at and not shipped
@@ -413,4 +446,5 @@ on the next hook, `status`, or `doctor`. On the backend, notification title and 
 persisted by default — only metadata, hashes, and delivery/session status.
 
 For the full detail, see [`docs/SPEC.md`](./SPEC.md) (§6, §7, §11) and the adapter source under
-`packages/claude-code`, `packages/codex`, `packages/opencode`, and `packages/cursor`.
+`packages/claude-code`, `packages/codex`, `packages/opencode`, `packages/cursor`, and
+`packages/copilot`.

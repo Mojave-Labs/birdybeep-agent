@@ -36,6 +36,6 @@ export const AGENT_CORE_VERSION = "0.0.0";
  * install / uninstall / status / doctor / normalizeEvent) is defined in CORE-ADAPTER.
  */
 export interface AdapterMeta {
-  /** Stable harness id, e.g. `"claude_code"`, `"codex"`, `"opencode"`. */
+  /** Stable harness id, e.g. `"claude_code"`, `"codex"`, `"opencode"`, `"cursor"`, `"copilot"`. */
   readonly harness: string;
 }

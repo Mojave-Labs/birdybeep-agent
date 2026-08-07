@@ -4,19 +4,19 @@
 >
 > This file is the normative reference for building and auditing the code in `birdybeep-agent`. The canonical wire schema is the runnable source of truth: the product repo's `packages/schemas` (mirrored here by `agent-core`'s `CORE-SCHEMA`).
 
-BirdyBeep is a mobile notification layer for AI coding agents: when Claude Code, Codex, OpenCode, or Cursor needs you (approval, input, finished, idle, failed), it sends a push to your phone. This repo is the part that runs in your dev environment — install once per machine, and supported agent sessions surface automatically as they emit lifecycle events.
+BirdyBeep is a mobile notification layer for AI coding agents: when Claude Code, Codex, OpenCode, Cursor, or GitHub Copilot CLI needs you (approval, input, finished, idle, failed), it sends a push to your phone. This repo is the part that runs in your dev environment — install once per machine, and supported agent sessions surface automatically as they emit lifecycle events.
 
 ---
 
 ## 1. Integration strategy (PRD §9.1)
 
-BirdyBeep does not depend on a cross-agent hook standard — each harness exposes different config formats, event names, trust models, and plugin systems. So it ships **one** shared event schema, CLI auth/token layer, local event queue, and sender, plus **bespoke adapters** for Claude Code, Codex, OpenCode, and Cursor.
+BirdyBeep does not depend on a cross-agent hook standard — each harness exposes different config formats, event names, trust models, and plugin systems. So it ships **one** shared event schema, CLI auth/token layer, local event queue, and sender, plus **bespoke adapters** for Claude Code, Codex, OpenCode, Cursor, and GitHub Copilot CLI.
 
 Every adapter implements the same interface:
 
 ```ts
 interface AgentAdapter {
-  id: "claude_code" | "codex" | "opencode" | "cursor";
+  id: "claude_code" | "codex" | "opencode" | "cursor" | "copilot";
   displayName: string;
 
   detect(): Promise<DetectionResult>;
@@ -68,15 +68,18 @@ birdybeep agent install claude
 birdybeep agent install codex
 birdybeep agent install opencode
 birdybeep agent install cursor
+birdybeep agent install copilot
 birdybeep agent uninstall all
 birdybeep agent uninstall claude
 birdybeep agent uninstall codex
 birdybeep agent uninstall opencode
 birdybeep agent uninstall cursor
+birdybeep agent uninstall copilot
 birdybeep hook claude
 birdybeep hook codex
 birdybeep hook opencode
 birdybeep hook cursor
+birdybeep hook copilot <event-name>
 ```
 
 Install behavior is **idempotent**, backs up existing config, adds only BirdyBeep-managed entries, prints changed files + any required user action, and installs at the **user/global** level (project-level is not MVP). Uninstall removes only BirdyBeep-managed entries.
@@ -189,7 +192,7 @@ Launch integration. Prefer an OpenCode **plugin package**; configure user-level/
 > - OpenCode loads plugins only at startup (no hot-reload) → install surfaces
 >   `needs_restart` until the next launch.
 
-## 7a. Cursor integration (post-PRD addition — birdybeep-agent-mwbl)
+## 7.1. Cursor integration
 
 Cursor is not in the original PRD §9.x lineup; it was added after the Big Five harness survey and
 ships from `packages/cursor`. Install patches `~/.cursor/hooks.json` — `{ "version": 1, "hooks": {
@@ -220,7 +223,31 @@ no restart: Cursor reads the file live, so install reports `installed` immediate
 > - **PRIVACY:** Cursor payloads carry `user_email` (PII) and `transcript_path` (a local path).
 >   Neither is EVER copied into the normalized event — not title, body, metadata, session id, or
 >   workspace. The only path touched is `workspace_roots[0]`, handed to the normalizer as `cwd` so
->   it is hashed.
+>   it is hashed. Prompts, commands, and tool data are not copied either.
+
+## 7.2. GitHub Copilot CLI integration
+
+Install the dedicated `~/.copilot/hooks/birdybeep.json` file (honoring `COPILOT_HOME`). Copilot
+combines hook files, so foreign files are never merged or rewritten. The payload itself has no event
+discriminator; each managed command therefore invokes `birdybeep hook copilot <event-name>` and
+passes the JSON payload on stdin. No trust or restart step is required.
+
+| Copilot event | BirdyBeep event | Session effect |
+|---|---|---|
+| `sessionStart` | `session_started` | starting |
+| `userPromptSubmitted` | `session_active` | running |
+| `preToolUse` | `tool_started` | running |
+| `postToolUse` | `tool_finished` | running |
+| `agentStop` | `agent_completed` | completed |
+| `subagentStop` | `subagent_completed` | running |
+| `errorOccurred` | `agent_failed` | failed |
+| `sessionEnd` | `session_ended` | completed/failed |
+
+The eight-event surface and shapes were captured from real Copilot CLI `1.0.70` and live-verified on
+2026-08-06 with GitHub credentials absent and a loopback OpenAI-compatible BYOK provider. The same
+installed hooks were live-verified again on 2026-08-07 against GitHub-hosted Copilot CLI `1.0.78`,
+using an OAuth credential held only in the macOS Keychain. Raw prompts, tool arguments/results,
+transcript paths, subagent responses, and error details are dropped.
 
 ## 8. Normalized event model (PRD §10.1)
 

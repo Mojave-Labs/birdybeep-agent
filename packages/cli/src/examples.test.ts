@@ -23,6 +23,7 @@ import {
   claudeSettingsPath,
 } from "@birdybeep/claude-code";
 import { codexAdapter, codexConfigFile } from "@birdybeep/codex";
+import { COPILOT_HOOK_EVENTS, copilotAdapter, copilotHooksPath } from "@birdybeep/copilot";
 import {
   BIRDYBEEP_HOOK_EVENTS as CURSOR_HOOK_EVENTS,
   cursorAdapter,
@@ -84,17 +85,30 @@ const HARNESSES: {
     generated: cursorHooksPath,
     events: CURSOR_HOOK_EVENTS,
   },
+  {
+    target: "copilot",
+    dir: "copilot",
+    adapter: copilotAdapter,
+    example: join(EXAMPLES, "copilot", "birdybeep.json"),
+    generated: (home) => copilotHooksPath({ home, env: {} }),
+    events: COPILOT_HOOK_EVENTS,
+  },
 ];
 
 let sandbox: Sandbox | undefined;
 const ORIGINAL_CODEX_HOME = process.env["CODEX_HOME"];
-beforeEach(() => delete process.env["CODEX_HOME"]); // the example is the ~/.codex default path
+const ORIGINAL_COPILOT_HOME = process.env["COPILOT_HOME"];
+beforeEach(() => {
+  delete process.env["CODEX_HOME"];
+  delete process.env["COPILOT_HOME"];
+});
 afterEach(() => {
   sandbox?.cleanup();
   sandbox = undefined;
 });
 afterAll(() => {
   if (ORIGINAL_CODEX_HOME !== undefined) process.env["CODEX_HOME"] = ORIGINAL_CODEX_HOME;
+  if (ORIGINAL_COPILOT_HOME !== undefined) process.env["COPILOT_HOME"] = ORIGINAL_COPILOT_HOME;
 });
 
 /** Force detection so the installer never skips a harness that isn't on this machine. */

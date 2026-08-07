@@ -21,6 +21,12 @@ import {
   codexAdapter,
   codexConfigFile,
 } from "@birdybeep/codex";
+import { copilotAdapter, copilotHooksPath } from "@birdybeep/copilot";
+import {
+  BIRDYBEEP_HOOK_COMMAND as CURSOR_HOOK,
+  cursorAdapter,
+  cursorHooksPath,
+} from "@birdybeep/cursor";
 import { BIRDYBEEP_PLUGIN_REF, opencodeAdapter, opencodeConfigFile } from "@birdybeep/opencode";
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -31,13 +37,18 @@ import { createAgentCommand, selectAdapters } from "./agent";
 
 let sandbox: Sandbox | undefined;
 const ORIGINAL_CODEX_HOME = process.env["CODEX_HOME"];
-beforeEach(() => delete process.env["CODEX_HOME"]);
+const ORIGINAL_COPILOT_HOME = process.env["COPILOT_HOME"];
+beforeEach(() => {
+  delete process.env["CODEX_HOME"];
+  delete process.env["COPILOT_HOME"];
+});
 afterEach(() => {
   sandbox?.cleanup();
   sandbox = undefined;
 });
 afterAll(() => {
   if (ORIGINAL_CODEX_HOME !== undefined) process.env["CODEX_HOME"] = ORIGINAL_CODEX_HOME;
+  if (ORIGINAL_COPILOT_HOME !== undefined) process.env["COPILOT_HOME"] = ORIGINAL_COPILOT_HOME;
 });
 
 function capture(): { writer: { write: (s: string) => void }; text: () => string } {
@@ -50,7 +61,13 @@ function detected(adapter: AgentAdapter): AgentAdapter {
   return { ...adapter, detect: () => Promise.resolve({ detected: true, version: "test" }) };
 }
 function adapters(): AgentAdapter[] {
-  return [detected(claudeCodeAdapter), detected(codexAdapter), detected(opencodeAdapter)];
+  return [
+    detected(claudeCodeAdapter),
+    detected(codexAdapter),
+    detected(opencodeAdapter),
+    detected(cursorAdapter),
+    detected(copilotAdapter),
+  ];
 }
 
 function seed(path: string, body: string): void {
@@ -62,6 +79,11 @@ function seedAll(home: string): void {
   seed(claudeSettingsPath(home), `${JSON.stringify({ theme: "dark" }, null, 2)}\n`);
   seed(codexConfigFile({ home }), 'model = "o3"\n');
   seed(opencodeConfigFile({ home }), `${JSON.stringify({ theme: "tokyonight" }, null, 2)}\n`);
+  seed(
+    cursorHooksPath(home),
+    `${JSON.stringify({ version: 1, hooks: { sessionStart: [{ command: "company-cursor-hook" }] } }, null, 2)}\n`,
+  );
+  seed(copilotHooksPath({ home, env: {} }), '{"company":"pre-existing-dedicated-path"}\n');
 }
 
 interface JsonResult {
@@ -94,6 +116,8 @@ describe("agent install all", () => {
     expect(byId["claude_code"]?.status).toBe("installed");
     expect(byId["codex"]?.status).toBe("needs_trust");
     expect(byId["opencode"]?.status).toBe("needs_restart");
+    expect(byId["cursor"]?.status).toBe("installed");
+    expect(byId["copilot"]?.status).toBe("installed");
 
     // Required actions surfaced: Codex /hooks trust + OpenCode restart.
     expect((byId["codex"]?.requiredActions ?? []).join(" ")).toMatch(/\/hooks/);
@@ -112,8 +136,13 @@ describe("agent install all", () => {
     const opencode = readFileSync(opencodeConfigFile({ home }), "utf8");
     expect(opencode).toContain(BIRDYBEEP_PLUGIN_REF);
     expect(opencode).toContain("tokyonight"); // prior key preserved
+    const cursor = readFileSync(cursorHooksPath(home), "utf8");
+    expect(cursor).toContain(CURSOR_HOOK);
+    expect(cursor).toContain("company-cursor-hook");
+    const copilot = readFileSync(copilotHooksPath({ home, env: {} }), "utf8");
+    expect(copilot).toContain("birdybeep hook copilot sessionStart");
 
-    for (const content of [claude, codex, opencode]) {
+    for (const content of [claude, codex, opencode, cursor, copilot]) {
       expect(content.toLowerCase()).not.toContain("bearer ");
       expect(content).not.toMatch(/bbm_|token["']?\s*[:=]\s*["']\S/i);
     }
@@ -136,12 +165,16 @@ describe("agent install all", () => {
       claudeSettingsPath(home),
       codexConfigFile({ home }),
       opencodeConfigFile({ home }),
+      cursorHooksPath(home),
+      copilotHooksPath({ home, env: {} }),
     ].map((p) => readFileSync(p, "utf8"));
     await run();
     const after2 = [
       claudeSettingsPath(home),
       codexConfigFile({ home }),
       opencodeConfigFile({ home }),
+      cursorHooksPath(home),
+      copilotHooksPath({ home, env: {} }),
     ].map((p) => readFileSync(p, "utf8"));
     expect(after2).toEqual(after1);
   });
@@ -179,6 +212,8 @@ describe("agent install <harness> + edge cases", () => {
     expect(existsSync(codexConfigFile({ home }))).toBe(true);
     expect(existsSync(claudeSettingsPath(home))).toBe(false); // others untouched
     expect(existsSync(opencodeConfigFile({ home }))).toBe(false);
+    expect(existsSync(cursorHooksPath(home))).toBe(false);
+    expect(existsSync(copilotHooksPath({ home, env: {} }))).toBe(false);
   });
 
   it("reports an undetected harness cleanly (skipped, exit 0)", async () => {
@@ -214,9 +249,11 @@ describe("agent install <harness> + edge cases", () => {
 
   it("selectAdapters maps targets to adapter ids", () => {
     const all = adapters();
-    expect(selectAdapters("all", all)).toHaveLength(3);
+    expect(selectAdapters("all", all)).toHaveLength(5);
     expect((selectAdapters("claude", all) as AgentAdapter[])[0]?.id).toBe("claude_code");
     expect((selectAdapters("codex", all) as AgentAdapter[])[0]?.id).toBe("codex");
+    expect((selectAdapters("cursor", all) as AgentAdapter[])[0]?.id).toBe("cursor");
+    expect((selectAdapters("copilot", all) as AgentAdapter[])[0]?.id).toBe("copilot");
     expect(selectAdapters("nope", all)).toBe("unknown");
   });
 });
@@ -230,6 +267,8 @@ describe("agent uninstall", () => {
       claudeSettingsPath(home),
       codexConfigFile({ home }),
       opencodeConfigFile({ home }),
+      cursorHooksPath(home),
+      copilotHooksPath({ home, env: {} }),
     ].map((p) => readFileSync(p, "utf8"));
 
     const cmd = createAgentCommand({ adapters: adapters() });
@@ -252,11 +291,14 @@ describe("agent uninstall", () => {
       claudeSettingsPath(home),
       codexConfigFile({ home }),
       opencodeConfigFile({ home }),
+      cursorHooksPath(home),
+      copilotHooksPath({ home, env: {} }),
     ].map((p) => readFileSync(p, "utf8"));
     expect(restored).toEqual(originals); // byte-for-byte original (no BirdyBeep references)
     for (const c of restored) {
       expect(c).not.toContain(CLAUDE_HOOK);
       expect(c).not.toContain(BIRDYBEEP_PLUGIN_REF);
+      expect(c).not.toContain("birdybeep hook copilot");
     }
   });
 

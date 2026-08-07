@@ -9,7 +9,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { installCursor } from "./install";
+import { installCursor, mergeBirdyBeepHooks } from "./install";
 import { cursorHooksPath } from "./paths";
 import { uninstallCursor } from "./uninstall";
 
@@ -35,6 +35,15 @@ function expectNoSecrets(content: string): void {
 }
 
 describe("generated config snapshots (§21.1)", () => {
+  it("keeps the public generated-config example byte-for-byte current", () => {
+    const generated = `${JSON.stringify(mergeBirdyBeepHooks({}).merged, null, 2)}\n`;
+    const example = readFileSync(
+      new URL("../../../examples/cursor/hooks.json", import.meta.url),
+      "utf8",
+    );
+    expect(example).toBe(generated);
+  });
+
   it("from-scratch install writes the canonical BirdyBeep hooks block", async () => {
     sandbox = createSandbox();
     const out = await installAndRead(sandbox);
