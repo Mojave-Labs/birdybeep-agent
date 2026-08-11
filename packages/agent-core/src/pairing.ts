@@ -4,10 +4,11 @@
  * requests and parses these (BARE, not `{ data }`-wrapped) responses. LOCKSTEP (§16.4):
  * additive to and independent of the §10.2 event payload — a change here is coordinated.
  *
- * Privacy (§15.1): codes are short-lived single-use, stored HASHED server-side; `qr_payload`
- * carries only the short `user_code`, NEVER a durable token; the `machine_token` from
- * `/pair/token` is shown once and only its peppered hash is persisted. Optional advisory
- * fields use `.catch(undefined)` to match the routes' accept-and-ignore leniency.
+ * Privacy (§15.1): pairing sessions are short-lived and single-use; `qr_payload` carries the
+ * display `user_code` plus a high-entropy approval secret in its URL fragment, NEVER a durable
+ * token. The user code cannot approve by itself. The `machine_token` from `/pair/token` is shown
+ * once and only its peppered hash is persisted. Optional advisory fields use `.catch(undefined)`
+ * to match the routes' accept-and-ignore leniency.
  *
  * (`/v1/pair/approve` is the signed-in MOBILE side — not mirrored here; the CLI never calls it.)
  */
@@ -48,7 +49,7 @@ export const pairTokenRequestSchema = z.object({
   code_verifier: z.string().min(1).optional().catch(undefined),
 });
 
-/** `POST /v1/pair/start` response (bare). `qr_payload` encodes only the short `user_code`. */
+/** `POST /v1/pair/start` response (bare). `qr_payload` is the complete QR-only approval proof. */
 export const pairStartResponseSchema = z.object({
   device_code: z.string(),
   user_code: z.string(),

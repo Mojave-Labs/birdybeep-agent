@@ -1,10 +1,12 @@
 /**
  * CLI pairing client — the device-code flow (§7.2/§13.4). `pairStart` opens a session via
- * `POST /v1/pair/start`; the CLI shows `qr_payload` + `user_code`, then polls
+ * `POST /v1/pair/start`; the CLI shows the complete `qr_payload` plus a display-only
+ * `user_code`, then polls
  * `POST /v1/pair/token` (`pairTokenPoll`) until it returns 201 `{ machine_token, machine_id }`
  * or the `expires_at` deadline. A `validation_failed`/4xx during polling means "not approved
- * yet — keep polling". Per SPEC §11 the QR / user code carries only short-lived pairing info,
- * NEVER a durable token. Request/response shapes are mirrored from the product (agent-core).
+ * yet — keep polling". Per SPEC §11 the QR/link carries short-lived pairing info plus its
+ * approval secret, NEVER a durable token; the user code alone cannot approve. Request/response
+ * shapes are mirrored from the product (agent-core).
  */
 import {
   type ErrorCode,

@@ -317,8 +317,9 @@ type AgentSessionStatus =
 
 **Pairing protocol (device-code flow; schemas mirrored from the product `packages/schemas`):**
 `birdybeep pair` POSTs `/v1/pair/start` (`{ machine_label, os?, cli_version?, requested_scopes? }`)
-→ bare `{ device_code, user_code, qr_payload, expires_at }`; it shows `qr_payload` + `user_code`
-(the QR carries only the short code, never a token) and polls `POST /v1/pair/token`
+→ bare `{ device_code, user_code, qr_payload, expires_at }`; it shows the complete `qr_payload`
+plus a display-only `user_code` (the QR/link carries a short-lived approval secret, never a durable
+token; the user code alone cannot approve) and polls `POST /v1/pair/token`
 (`{ device_code, machine_fingerprint? }`) — a `validation_failed`/4xx means "not approved yet,
 keep polling" — until `201 { machine_token, machine_id }` or the `expires_at` deadline. The token
 is stored in the secure store only. `report-status` sends ONE batched
@@ -329,7 +330,8 @@ mirrored field-for-field in `agent-core` (§16.4 lockstep); the LIVE pass agains
 backend is the deferred cross-repo follow-up.
 
 **Tokens:**
-- The pairing QR contains only short-lived pairing info — **never a durable token**.
+- The complete pairing QR/link contains a short-lived approval secret — **never a durable token**.
+- The displayed user code identifies the session but cannot approve it by itself.
 - Machine tokens are shown once; the server stores only token **hashes**.
 - Store the local token in the **OS keychain** where possible; otherwise a **strict-permission file** fallback.
 - Tokens can be revoked + rotated from the mobile app.

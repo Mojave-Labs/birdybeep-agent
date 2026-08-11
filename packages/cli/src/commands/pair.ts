@@ -1,17 +1,19 @@
 /**
  * `birdybeep pair` (§7.1/§7.2/§9.4) — pair this machine via the device-code flow.
  * `POST /v1/pair/start` (machine_label derived from hostname/OS) → show a scannable
- * QR matrix + the pair link + `user_code` → poll `POST /v1/pair/token` with the device
+ * QR matrix + the complete pair link + display-only `user_code` → poll `POST /v1/pair/token`
+ * with the device
  * code (+ stable machine fingerprint) until it returns the durable token or the
  * `expires_at` (10-min) deadline. The issued token is stored in the SECURE store only
  * (keychain / strict-perm file — never config or the QR); the non-secret apiUrl is
- * persisted. Per SPEC §11 the QR/code carries only short-lived pairing info.
+ * persisted. Per SPEC §11 the QR/link carries only short-lived pairing info; its fragment
+ * contains the approval secret, so the displayed user code cannot approve by itself.
  *
  * The QR matrix (birdybeep-agent-pe1) renders only on an interactive TTY — piped/CI
- * output keeps the plain link + code lines, which are ALWAYS printed as the SSH/
+ * output keeps the plain link + display-code lines, which are ALWAYS printed as the SSH/
  * headless fallback (docs/pairing.md "Headless and SSH machines"). In `--json` mode
  * the pairing info is emitted as an NDJSON line up front (status "pairing_started")
- * so scripts/agents can read the code and approve — previously json mode printed
+ * so scripts/agents can surface the complete QR payload for approval — previously json mode printed
  * nothing until success, making scripted pairing impossible (birdybeep-agent-pe1).
  *
  * fetch/sleep/clock/QR/TTY are injectable for hermetic tests.
@@ -40,7 +42,7 @@ export const DEFAULT_POLL_INTERVAL_MS = 2000;
 
 /**
  * How often to reprint a "still waiting…" heartbeat while polling. Without it, `pair`
- * prints the code once and then appears frozen ("stuck doing nothing") for the whole
+ * prints the pairing instructions once and then appears frozen ("stuck doing nothing") for the whole
  * 10-minute window — the reported bug. Time-gated on the injected clock so it never
  * fires spuriously in the fast, instant-sleep tests.
  */
@@ -454,8 +456,8 @@ export function createPairCommand(deps: PairCommandDeps = {}): Command {
       );
 
       if (ctx.flags.json) {
-        // NDJSON: emit the pairing info NOW so a script/agent can surface the code for
-        // approval while we poll; the final success object is a later line (pe1).
+        // NDJSON: emit the pairing info NOW so a script/agent can surface the complete
+        // qr_payload for approval while we poll; the final success object is a later line.
         ctx.io.result({
           status: "pairing_started",
           user_code: start.user_code,
@@ -463,18 +465,19 @@ export function createPairCommand(deps: PairCommandDeps = {}): Command {
           expires_at: start.expires_at,
         });
       } else {
-        // Point at the RELIABLE path: the in-app scanner. Opening the https link only
-        // reaches the approval screen where universal/app links are configured; scanning
-        // (or typing the code) in the app always works, so lead with that.
+        // Approval needs the high-entropy fragment secret carried by the complete QR/link.
+        // The short user_code remains visible only to identify the same pending session.
         ctx.io.line(
-          "To pair this machine, open the BirdyBeep app, tap “pair a machine”, and scan this QR (or enter the code):",
+          "To pair this machine, open the BirdyBeep app, tap “pair a machine”, and scan this QR or open the complete link:",
         );
         // The matrix is TTY-only (a piped/CI consumer wants greppable lines, and
         // half-block art garbles logs); the link + code lines below ALWAYS print.
         const isTTY = deps.isTTY ?? process.stdout.isTTY === true;
         if (isTTY) ctx.io.line(renderQr(start.qr_payload));
         ctx.io.line(`   Scan or open:  ${start.qr_payload}`);
-        ctx.io.line(`   Code:  ${start.user_code}`);
+        ctx.io.line(
+          `   Session code (display only; cannot approve by itself):  ${start.user_code}`,
+        );
         ctx.io.line("Waiting for you to approve this machine in the app…");
       }
 
@@ -530,7 +533,7 @@ export function createPairCommand(deps: PairCommandDeps = {}): Command {
         // so scripts can key off the last parseable line instead of only the exit code.
         ctx.io.result({ paired: false, reason: "timeout" });
         ctx.io.errline(
-          "Pairing timed out before you approved it. In the BirdyBeep app, tap “pair a machine”, scan the QR (or enter the code), then run `birdybeep pair` again.",
+          "Pairing timed out before you approved it. In the BirdyBeep app, tap “pair a machine”, scan a fresh QR or open its complete link, then run `birdybeep pair` again.",
         );
         return EXIT.ERROR;
       }
