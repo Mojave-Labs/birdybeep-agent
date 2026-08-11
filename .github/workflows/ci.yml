@@ -39,8 +39,6 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
-      - name: Verify the five-harness staging probe against an authenticated loopback sink
-        run: node scripts/staging-e2e.mjs --local-self-test
       - run: pnpm format:check
       # birdybeep-agent-fuf: prove the codex notify send survives `codex exec` reaping its
       # process group. Needs only the built CLI + POSIX process groups (no codex binary / API

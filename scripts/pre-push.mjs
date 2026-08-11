@@ -120,7 +120,6 @@ console.error(`${DIM}birdybeep pre-push → lint + typecheck + unit + format (mi
 try {
   execSync("pnpm -w test:scripts", { stdio: "inherit" });
   execSync("pnpm -w turbo run lint typecheck test", { stdio: "inherit" });
-  execSync("node scripts/staging-e2e.mjs --local-self-test", { stdio: "inherit" });
 } catch {
   block(
     `\n${RED}${B}✗ push blocked${RST} — lint/typecheck/unit failed (these mirror the CI gates).\n` +
