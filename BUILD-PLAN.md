@@ -134,11 +134,11 @@ _PRD: §16.3_
 _PRD: §16.3_
 
 - `P2` **[HUMAN] npm org @birdybeep + publish tokens + first publish** (chore, phase 3) — 🧑 HUMAN
-- `P2` **[HUMAN] Public repo settings + CI secrets + protection** (chore, phase 3) — 🧑 HUMAN
+- `P2` **[HUMAN] Public repo settings + protection** (chore, phase 3) — 🧑 HUMAN
 
 ## 🧑 Human-required gates (you, not agents) — left until the end
 
 Agents prepare everything up to these; a human performs the real-account / secret / billing / store / production action. They are wired late in the dependency graph.
 
 - **[HUMAN] npm org @birdybeep + publish tokens + first publish** — Create npm org @birdybeep; publish tokens; first publish of @birdybeep/cli + packages. Agent prepares release.mjs; human runs with credentials.
-- **[HUMAN] Public repo settings + CI secrets + protection** — Configure public GitHub repo: branch protection, CODEOWNERS, issue/PR templates, CI secrets (staging API URL/token for E2E).
+- **[HUMAN] Public repo settings + protection** — Configure branch protection, CODEOWNERS enforcement, issue/PR templates, and private vulnerability reporting.

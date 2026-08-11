@@ -16,7 +16,6 @@
     "typecheck": "turbo run typecheck",
     "test": "pnpm test:scripts && turbo run test",
     "test:scripts": "node --test scripts/*.test.mjs",
-    "test:staging": "node scripts/staging-e2e.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check:pack": "node scripts/check-pack.mjs",
