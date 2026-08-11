@@ -39,7 +39,7 @@ describe("pairing schemas", () => {
       pairStartResponseSchema.safeParse({
         device_code: "dc",
         user_code: "AB-12",
-        qr_payload: "birdybeep://pair?code=AB-12",
+        qr_payload: `https://birdybeep.com/pair#code=AB-12&s=${"ab".repeat(32)}`,
         expires_at: "2026-06-14T00:10:00.000Z",
       }).success,
     ).toBe(true);

@@ -75,7 +75,7 @@ const server = createServer((req, res) => {
         JSON.stringify({
           device_code: "dc_headless",
           user_code: "HD-0001",
-          qr_payload: "https://birdybeep.com/pair#code=HD-0001",
+          qr_payload: `https://birdybeep.com/pair#code=HD-0001&s=${"ab".repeat(32)}`,
           expires_at: new Date(Date.now() + 600_000).toISOString(),
         }),
       );

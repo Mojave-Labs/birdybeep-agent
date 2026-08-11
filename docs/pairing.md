@@ -1,13 +1,14 @@
 # Pairing
 
 `birdybeep pair` pairs this machine with your BirdyBeep account so the agent adapters can send
-you Beeps (notifications). Pairing uses a device-authorization-style flow: the CLI shows you a
-short link and a code, you confirm in the BirdyBeep mobile app, and the CLI receives and stores a
-machine token locally.
+you Beeps (notifications). Pairing uses a device-authorization-style flow: the CLI shows you a QR,
+its complete link, and a display-only session code; you confirm in the BirdyBeep mobile app, and
+the CLI receives and stores a machine token locally.
 
-The important part of the trust story up front: **the QR / link carries only a short-lived
-pairing code — never a durable token.** The machine token is minted server-side, returned to the
-CLI once, and stored locally in your OS keychain (or a strict-permission file). See
+The important part of the trust story up front: **the complete QR/link carries a short-lived,
+high-entropy approval secret — never a durable token.** The displayed session code identifies the
+pending request but cannot approve it by itself. The machine token is minted server-side, returned
+to the CLI once, and stored locally in your OS keychain (or a strict-permission file). See
 [Security](./security.md) for the full token-handling details.
 
 > **Wire contract.** The pairing endpoints (`POST /v1/pair/start`, `POST /v1/pair/token`) are a
@@ -25,15 +26,15 @@ CLI once, and stored locally in your OS keychain (or a strict-permission file). 
 birdybeep pair
 ```
 
-You'll see a QR code, a link, and a short code. Scan the QR (or open the link / type the code),
-approve in the BirdyBeep app, then **confirm the account it was approved by** — the CLI asks
-before it trusts anything:
+You'll see a QR code, its complete link, and a display-only session code. Scan the QR or open the
+complete link, approve in the BirdyBeep app, then **confirm the account it was approved by** — the
+CLI asks before it trusts anything:
 
 ```text
-To pair this machine, open the BirdyBeep app, tap “pair a machine”, and scan this QR (or enter the code):
+To pair this machine, open the BirdyBeep app, tap “pair a machine”, and scan this QR or open the complete link:
    ▄▄▄▄▄▄▄ ▄  ▄▄ ▄▄▄▄▄▄▄        (a scannable QR matrix renders here on a TTY)
-   Scan or open:  https://birdybeep.com/pair#code=WXYZ-1234
-   Code:  WXYZ-1234
+   Scan or open:  https://birdybeep.com/pair#code=WXYZ-1234&s=<short-lived-approval-secret>
+   Session code (display only; cannot approve by itself):  WXYZ-1234
 Waiting for you to approve this machine in the app…
 Pair this machine to you@example.com? [y/N] y
 ✓ Paired to you@example.com. Run `birdybeep test` to send a test Beep.
@@ -53,10 +54,11 @@ a test Beep, or `birdybeep status` to check integration state.
 
 1. **Start.** `birdybeep pair` calls `POST /v1/pair/start` with this machine's label (derived from
    your hostname/OS), its OS, and the CLI version. The backend returns a **device code**, a
-   human-typeable **user code**, a **QR payload** (which encodes only the short user code), and an
-   **`expires_at`** for the pairing session.
-2. **Confirm.** You scan the QR or open the link and confirm the user code in the BirdyBeep mobile
-   app. The app shows an approval screen for this machine.
+   display **user code**, a **QR payload** (which carries the code plus a high-entropy approval
+   secret in its URL fragment), and an **`expires_at`** for the pairing session.
+2. **Confirm.** You scan the QR or open the complete link in the BirdyBeep mobile app. The app
+   submits both the display code and approval secret, then shows an approval screen for this
+   machine. The display code alone is deliberately insufficient.
 3. **Poll.** Meanwhile the CLI polls `POST /v1/pair/token` with the device code (and a stable,
    non-reversible machine fingerprint). Until you approve, the backend replies with a
    `validation_failed`/4xx, which the CLI treats as "not yet — keep polling".
@@ -73,57 +75,58 @@ If you don't confirm before the pairing session expires, the CLI stops polling a
 retry:
 
 ```text
-Pairing timed out before you approved it. In the BirdyBeep app, tap “pair a machine”, scan the QR
-(or enter the code), then run `birdybeep pair` again.
+Pairing timed out before you approved it. In the BirdyBeep app, tap “pair a machine”, scan a fresh
+QR or open its complete link, then run `birdybeep pair` again.
 ```
 
-The pairing session is short-lived (the backend sets `expires_at` — a ~10-minute window), the user
-code is single-use, and the device code only lets the CLI ask "am I approved yet?" — it is **not**
-the machine token.
+The pairing session is short-lived (the backend sets `expires_at` — a ~10-minute window), the
+approval proof is single-use, and the device code only lets the CLI ask "am I approved yet?" — it
+is **not** the machine token.
 
 ---
 
-## QR vs. manual code
+## QR and complete link
 
-The pair URL is QR-friendly: it's short and encodes only the pairing session, so it scans cleanly
-and you can open it on your phone with one tap. **Both paths are equivalent** — scanning the QR and
-typing the code at the link land you on the same approval screen in the app.
+The pair URL is QR-friendly and opens on your phone with one tap. **Both supported paths are
+equivalent**: scan the QR or open the complete link. Each carries the same short-lived approval
+secret in the URL fragment. The displayed session code is useful for matching the terminal to the
+approval sheet, but code-only approval is intentionally unavailable.
 
 On an interactive terminal the CLI renders the pair URL as a scannable QR matrix (point the
-BirdyBeep app's pairing camera at it), with the plain link and code printed underneath. When
-output is piped (CI logs, scripts) the matrix is skipped and only the plain lines print. So in
-practice you'll either:
+BirdyBeep app's pairing camera at it), with the complete link and display code printed underneath.
+When output is piped (CI logs, scripts) the matrix is skipped and only the plain lines print. So
+in practice you'll either:
 
 - **scan the QR** with the pairing screen's camera in the BirdyBeep app,
-- **open the link** on a device where you're signed in to the BirdyBeep app, or
-- **type the short user code** into the pairing screen in the app.
+- **open the complete link** on a device where you're signed in to the BirdyBeep app.
 
-Every path confirms the same single-use code shown in the terminal.
+Both paths submit the same single-use approval proof.
 
 ### Headless and SSH machines
 
 Many agent boxes are remote — a CI runner, a cloud dev box, a server you reach over SSH. There's no
-browser or camera there, and that's fine: pairing never needs one. The CLI prints the pair URL and
-the **user code** as plain text, so you:
+browser or camera there, and that's fine: pairing never needs one. The CLI prints the complete pair
+URL as plain text, so you:
 
 1. Run `birdybeep pair` on the remote machine.
-2. Copy the link or the short code from the terminal.
-3. Open the link (or enter the code) in the BirdyBeep app on **any** device — your phone or a
-   laptop.
+2. Copy the complete link from the terminal, including everything after `#`.
+3. Open the link on **any** device where you're signed in to BirdyBeep — your phone or a laptop.
 4. Confirm. The remote CLI's next poll picks up the approval and stores the token there.
 
-Because the confirmation happens on a device of your choosing and only the short code crosses over,
-you can pair a headless box without ever exposing a browser or token on it.
+Because the confirmation happens on a device of your choosing and the link carries only a
+short-lived approval proof, you can pair a headless box without exposing a browser or durable token
+on it.
 
 ### Non-interactive mode
 
 `birdybeep pair` works with the global `--non-interactive` flag (never prompts, fails fast) and
 `--json` (machine-readable output). In `--json` mode the output is NDJSON — one JSON object per
-line. The first line is emitted as soon as the pairing session opens, carrying the code your
-script/agent needs to surface for approval; the last line is the success result:
+line. The first line is emitted as soon as the pairing session opens. Your script or agent must
+surface the complete `qr_payload` for approval; `user_code` is display-only identification. The
+last line is the success result:
 
 ```json
-{ "status": "pairing_started", "user_code": "WXYZ-1234", "qr_payload": "https://birdybeep.com/pair#code=WXYZ-1234", "expires_at": "2026-07-01T12:34:56.000Z" }
+{ "status": "pairing_started", "user_code": "WXYZ-1234", "qr_payload": "https://birdybeep.com/pair#code=WXYZ-1234&s=<short-lived-approval-secret>", "expires_at": "2026-07-01T12:34:56.000Z" }
 { "paired": true, "machineId": "mac_123", "approvedByEmail": "you@example.com" }
 ```
 
@@ -135,7 +138,7 @@ birdybeep pair --json --expect-email you@example.com
 ```
 
 On timeout the terminal line is `{ "paired": false, "reason": "timeout" }` (exit code 1). Scripts
-should read the **last** parseable line for the outcome and the **first** for the pairing code.
+should read the **last** parseable line for the outcome and the **first** for the complete QR payload.
 Every non-success exit emits a terminal line with a `reason`: `timeout`, `declined`,
 `non_interactive`, `expected_email_mismatch`, `expected_email_unverifiable`, or the backend's own
 error code (e.g. `quota_exceeded`).
@@ -152,8 +155,8 @@ Pair this machine to you@example.com? [y/N]
 ```
 
 This is deliberate defense-in-depth for the social/human layer. Approval happens on your phone, and
-a code typed into the wrong account — or into someone else's — would otherwise silently produce a
-working machine token. The confirm step puts a human between the mint and the trust:
+a complete pairing link opened under the wrong account would otherwise silently produce a working
+machine token. The confirm step puts a human between the mint and the trust:
 
 - The gate runs **after** the token is minted but **before** anything is stored. Decline and the
   CLI writes **no token and no config**, and exits non-zero.
@@ -229,12 +232,14 @@ The config pin is a plain non-secret key in the CLI config file (see
 
 This is the core of the trust story:
 
-- **No durable token in the QR/link.** The pair URL and user code carry only short-lived pairing
-  info. A leaked QR can't notify your devices or impersonate your machine — at worst someone could
-  try to claim a pairing session that you'd then have to approve in the app.
-- **Single-use code.** The user code is consumed when you approve it; it can't be replayed.
+- **No durable token in the QR/link.** The pair URL carries only a short-lived approval proof. A
+  leaked QR can't notify your devices or impersonate your machine — at worst someone could try to
+  claim the pending pairing under an account the CLI then asks you to confirm.
+- **Code-only approval is blocked.** The display code identifies the session but cannot approve it
+  without the high-entropy secret from the complete QR/link.
+- **Single-use proof.** The pairing session is consumed when approved and can't be replayed.
 - **Short expiry.** The pairing session is time-boxed (the backend sets `expires_at` — a
-  ~10-minute window). After it expires, the code is dead and you simply run `birdybeep pair` again.
+  ~10-minute window). After it expires, the proof is dead and you simply run `birdybeep pair` again.
 - **Token minted server-side, shown once.** The machine token is created by the backend and handed
   to the CLI exactly once during pairing. The server stores only a **hash** of it, never the token
   itself.
@@ -310,8 +315,8 @@ revoking invalidates the server-side token hash even if a copy of the token stil
 ## Troubleshooting
 
 - **Pairing timed out.** You didn't confirm before the window closed. Run `birdybeep pair` again
-  for a fresh code.
-- **"Code already used."** The user code is single-use. Start over with `birdybeep pair`.
+  for a fresh QR/link.
+- **"Code already used."** The pairing session is single-use. Start over with `birdybeep pair`.
 - **"Pairing needs confirmation … no terminal to ask on."** You ran `pair` from a script, CI job,
   or a shell with no terminal attached. Add `--expect-email <addr>` (preferred) or `--yes`. On
   Windows/Git Bash, `winpty birdybeep pair` attaches a real console instead.

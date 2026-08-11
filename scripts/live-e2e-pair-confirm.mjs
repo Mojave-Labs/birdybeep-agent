@@ -44,10 +44,19 @@
  */
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -198,6 +207,46 @@ try {
   }
 
   sandbox = mkdtempSync(join(tmpdir(), "bb-pairconfirm-home-"));
+  // Keep the real keychain integration path without ever touching the user's login keychain.
+  // macOS's `security` ignores HOME and can block on an auth prompt even in a temp profile, so
+  // place a per-run file-backed shim first on PATH. Linux never invokes it.
+  const shimDir = join(sandbox, "bin");
+  mkdirSync(shimDir, { recursive: true });
+  if (process.platform === "darwin") {
+    const shim = `#!/usr/bin/env bash
+set -euo pipefail
+store="\${BIRDYBEEP_FAKE_KEYCHAIN:?}"
+mkdir -p "$store"
+cmd="\${1:-}"; shift || true
+service=""; account=""; secret=""; wflag=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -s) service="\${2:-}"; shift 2 ;;
+    -a) account="\${2:-}"; shift 2 ;;
+    -w) wflag=1; shift ;;
+    *) shift ;;
+  esac
+done
+file="$store/\${service}__\${account}"
+case "$cmd" in
+  add-generic-password)
+    if [ "$wflag" -eq 1 ]; then
+      IFS= read -r pw1 || pw1=""
+      IFS= read -r pw2 || pw2=""
+      if [ "$pw1" = "$pw2" ]; then secret="$pw1"; fi
+    fi
+    printf '%s' "$secret" > "$file"
+    ;;
+  find-generic-password) if [ -f "$file" ]; then cat "$file"; echo; else exit 44; fi ;;
+  delete-generic-password) rm -f "$file" ;;
+  *) exit 1 ;;
+esac
+`;
+    const securityShim = join(shimDir, "security");
+    writeFileSync(securityShim, shim, { mode: 0o755 });
+    chmodSync(securityShim, 0o755);
+    log("macOS: using a per-run security shim; the user's keychain is untouched");
+  }
   let caseNo = 0;
   /** A fresh hermetic HOME per case: no token, config, or install salt is ever shared. */
   function newHome() {
@@ -206,12 +255,13 @@ try {
     return {
       home,
       env: {
-        PATH: process.env.PATH,
+        PATH: `${shimDir}${delimiter}${process.env.PATH ?? ""}`,
         HOME: home,
         XDG_DATA_HOME: join(home, ".local", "share"),
         XDG_CONFIG_HOME: join(home, ".config"),
         XDG_STATE_HOME: join(home, ".local", "state"),
         BIRDYBEEP_API_URL: baseUrl,
+        BIRDYBEEP_FAKE_KEYCHAIN: join(home, "fake-keychain"),
         // A pty makes stderr a tty, which would otherwise wake the npm update notifier.
         NO_UPDATE_NOTIFIER: "1",
       },
@@ -235,9 +285,9 @@ try {
   }
 
   /**
-   * Run one full pairing: spawn the real CLI, wait for the user code it prints, approve the
-   * session as `approver`, then feed `answer` to the prompt and resolve with the CLI's exit
-   * code + captured output.
+   * Run one full pairing: spawn the real CLI, parse the complete QR approval proof it prints,
+   * approve the session as `approver`, then feed `answer` to the prompt and resolve with the
+   * CLI's exit code + captured output.
    *
    * `mode` decides what the CLI's stdio actually IS — the whole point of the confirm gate:
    *   "pipe"            stdin is a closed pipe and there is no controlling terminal (a script/CI).
@@ -282,24 +332,29 @@ try {
     child.stderr.on("data", (d) => (out += d));
     if (mode === "pipe") child.stdin.end(); // a closed pipe: exactly what a script/CI gives the CLI
 
-    // 1. wait for the code the CLI printed, 2. approve it as the mobile app would.
+    // 1. wait for the complete QR/link proof, 2. approve it as the mobile app would. The short
+    // display code alone is intentionally insufficient after the product's approval binding.
     let userCode = null;
+    let approvalSecret = null;
     for (const deadline = Date.now() + 20_000; Date.now() < deadline; ) {
-      const m = /Code:\s*([A-Z0-9-]{4,})/.exec(out);
-      if (m) {
-        userCode = m[1];
-        break;
+      const m = /Scan or open:\s*(https:\/\/[^\s]+)/.exec(out);
+      if (m?.[1]) {
+        const pairUrl = new URL(m[1]);
+        const params = new URLSearchParams(pairUrl.hash.slice(1));
+        userCode = params.get("code");
+        approvalSecret = params.get("s");
+        if (userCode && approvalSecret) break;
       }
       await sleep(100);
     }
-    // -1, not 0: a case where the code never appeared (so approve was never called) must FAIL
-    // the "was really approved" check, not sail past a `< 300` comparison.
+    // -1, not 0: a case where the complete proof never appeared (so approve was never called)
+    // must FAIL the "was really approved" check, not sail past a `< 300` comparison.
     let approveStatus = -1;
-    if (userCode) {
+    if (userCode && approvalSecret) {
       const res = await fetch(`${baseUrl}/v1/pair/approve`, {
         method: "POST",
         headers: { authorization: `Bearer ${approver.bearer}`, "content-type": "application/json" },
-        body: JSON.stringify({ user_code: userCode }),
+        body: JSON.stringify({ user_code: userCode, approval_secret: approvalSecret }),
       });
       approveStatus = res.status;
     }

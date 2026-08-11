@@ -4,8 +4,8 @@
  * (validation_failed/4xx = pending) until 201 {machine_token, machine_id}; store the token in
  * the SECURE store, persist the non-secret apiUrl, and NEVER write the token to config/output.
  * An expired window exits non-zero. `--json` is NDJSON: a "pairing_started" line (so scripts
- * can read the code — pe1) then the final success object. Shapes are the product's canonical
- * pairing contract.
+ * can surface the complete QR approval payload — pe1) then the final success object. Shapes are
+ * the product's canonical pairing contract.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -41,8 +41,10 @@ const CONFIRM_YES = {
   hasControllingTerminal: () => false,
   promptLine: () => Promise.resolve("y"),
 };
-// The canonical qr_payload shape the backend mints (https link carrying ONLY the short code).
-const QR_PAYLOAD = "https://birdybeep.com/pair?code=AB-1234";
+// The canonical qr_payload shape the backend mints: the display code plus the high-entropy
+// approval secret live in the fragment so the complete QR/link is required for approval.
+const APPROVAL_SECRET = "ab".repeat(32);
+const QR_PAYLOAD = `https://birdybeep.com/pair#code=AB-1234&s=${APPROVAL_SECRET}`;
 
 let sandbox: Sandbox | undefined;
 afterEach(() => {
@@ -170,8 +172,10 @@ describe("birdybeep pair", () => {
     });
 
     expect(code).toBe(EXIT.OK);
-    expect(out.text()).toContain("AB-1234"); // user code shown (manual path)
-    expect(out.text()).toContain(QR_PAYLOAD); // qr_payload link shown
+    expect(out.text()).toContain(QR_PAYLOAD); // complete qr_payload link shown
+    expect(out.text()).toContain("Session code (display only; cannot approve by itself):  AB-1234");
+    expect(out.text()).toMatch(/scan this QR or open the complete link/i);
+    expect(out.text()).not.toMatch(/(?:enter|type) (?:the )?(?:short )?code/i);
     expect(out.text()).toMatch(/Paired/);
 
     expect(await getToken(FILE_ONLY)).toBe(MACHINE_TOKEN); // token in the secure store
@@ -204,8 +208,8 @@ describe("birdybeep pair", () => {
     // so we assert encode-equivalence; live scan verification is the xrepo E2E's job.)
     expect(out.text()).toContain(renderQrMatrix(QR_PAYLOAD));
     expect(out.text()).toMatch(/[█▀▄]/); // half-block matrix actually present
-    expect(out.text()).toContain(QR_PAYLOAD); // link fallback still printed
-    expect(out.text()).toContain("AB-1234"); // manual code still printed
+    expect(out.text()).toContain(QR_PAYLOAD); // complete link fallback still printed
+    expect(out.text()).toContain("Session code (display only; cannot approve by itself)");
   });
 
   it("prints NO matrix when stdout is not a TTY (piped/CI output stays greppable)", async () => {
@@ -227,8 +231,8 @@ describe("birdybeep pair", () => {
 
     expect(code).toBe(EXIT.OK);
     expect(out.text()).not.toMatch(/[█▀▄]/); // no half-block art in pipes
-    expect(out.text()).toContain(QR_PAYLOAD); // plain link + code remain
-    expect(out.text()).toContain("AB-1234");
+    expect(out.text()).toContain(QR_PAYLOAD); // complete plain link remains
+    expect(out.text()).toContain("Session code (display only; cannot approve by itself)");
   });
 
   it("sends machine_label + os + cli_version on POST /v1/pair/start (s0o7)", async () => {
@@ -264,7 +268,7 @@ describe("birdybeep pair", () => {
     expect(startBody?.cli_version).not.toBeNull();
   });
 
-  it("--json emits NDJSON: pairing_started (code up front) then the paired result (pe1)", async () => {
+  it("--json emits NDJSON: pairing_started (complete QR payload up front) then paired (pe1)", async () => {
     sandbox = createSandbox();
     const cmd = createPairCommand({
       fetchImpl: stubPairing(),
@@ -287,8 +291,8 @@ describe("birdybeep pair", () => {
       .filter((l) => l.trim().length > 0)
       .map((l) => JSON.parse(l) as Record<string, unknown>);
     expect(lines.length).toBe(2);
-    // Line 1: the pairing info a script needs to approve (previously never emitted → the
-    // operator could not learn the code and json-mode pair always timed out).
+    // Line 1: the complete pairing payload a script must surface for approval. The short
+    // user_code is identification only; approval requires the qr_payload's fragment secret.
     expect(lines[0]).toMatchObject({
       status: "pairing_started",
       user_code: "AB-1234",
@@ -507,6 +511,8 @@ describe("birdybeep pair", () => {
     });
     expect(code).toBe(EXIT.ERROR);
     expect(out.text()).toMatch(/timed out/);
+    expect(out.text()).toMatch(/scan a fresh QR or open its complete link/i);
+    expect(out.text()).not.toMatch(/(?:enter|type) (?:the )?(?:short )?code/i);
     expect(await getToken(FILE_ONLY)).toBeNull(); // no token on failure
   });
 });

@@ -371,9 +371,15 @@ async function pairMachine(userToken) {
     body: { machine_label: "copilot-live-rig", os: "macos", cli_version: "0.2.0" },
   });
   assert(started.status === 200 || started.status === 201, `pair/start failed: ${started.status}`);
+  const pairParams = new URLSearchParams(new URL(started.body.qr_payload).hash.slice(1));
+  const approvalSecret = pairParams.get("s");
+  assert(
+    typeof approvalSecret === "string" && approvalSecret.length > 0,
+    "QR approval secret missing",
+  );
   const approved = await api("POST", "/v1/pair/approve", {
     token: userToken,
-    body: { user_code: started.body.user_code },
+    body: { user_code: started.body.user_code, approval_secret: approvalSecret },
   });
   assert(approved.body?.approved === true, `pair/approve failed: ${approved.status}`);
   const token = await api("POST", "/v1/pair/token", {

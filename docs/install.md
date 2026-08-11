@@ -69,13 +69,13 @@ Pairing links this machine to your BirdyBeep account so events can be delivered 
 birdybeep pair
 ```
 
-This uses a device-flow pairing handshake. The CLI prints a scannable QR (on a terminal), a short
-link, and a code, then waits:
+This uses a device-flow pairing handshake. The CLI prints a scannable QR (on a terminal), its
+complete link, and a display-only session code, then waits:
 
 ```text
-To pair this machine, open the BirdyBeep app, tap “pair a machine”, and scan this QR (or enter the code):
-   Scan or open:  https://birdybeep.com/pair#code=WXYZ-1234
-   Code:  WXYZ-1234
+To pair this machine, open the BirdyBeep app, tap “pair a machine”, and scan this QR or open the complete link:
+   Scan or open:  https://birdybeep.com/pair#code=WXYZ-1234&s=<short-lived-approval-secret>
+   Session code (display only; cannot approve by itself):  WXYZ-1234
 Waiting for you to approve this machine in the app…
 ```
 

@@ -300,15 +300,16 @@ Paired:  no — run `birdybeep pair`
 birdybeep pair
 ```
 
-`pair` runs a device-flow pairing: it shows a short URL and a code, then polls until you approve it from
-the mobile app. On success it stores the machine token in the OS keychain (or, where there is no keychain,
-a strict-permission file in your user config directory). The token is **never** written into harness
-config or any repo file.
+`pair` runs a device-flow pairing: it shows a QR and its complete link, then polls until you approve
+it from the mobile app. The displayed session code is identification only and cannot approve by
+itself. On success the CLI stores the machine token in the OS keychain (or, where there is no
+keychain, a strict-permission file in your user config directory). The token is **never** written
+into harness config or any repo file.
 
 > The pairing endpoints are provisional and may change in a future release.
 
-**If your pairing code expired or was already used**, just run `birdybeep pair` again to get a fresh
-code — codes are short-lived and single-use.
+**If your pairing session expired or was already used**, run `birdybeep pair` again to get a fresh
+QR/link — pairing proofs are short-lived and single-use.
 
 **If you revoked the machine from the mobile app**, the stored token stops working. Tokens are shown once
 and can be revoked at any time; the server only ever stores token _hashes_. Re-pair with `birdybeep pair`.

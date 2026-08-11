@@ -316,9 +316,12 @@ async function pairMachine(userToken, label) {
   const start = await api("POST", "/v1/pair/start", {
     body: { machine_label: label, os: "linux", cli_version: "0.4.2" },
   });
+  const pairParams = new URLSearchParams(new URL(start.body.qr_payload).hash.slice(1));
+  const approvalSecret = pairParams.get("s");
+  if (!approvalSecret) throw new Error("pair/start QR approval secret missing");
   const appr = await api("POST", "/v1/pair/approve", {
     token: userToken,
-    body: { user_code: start.body.user_code },
+    body: { user_code: start.body.user_code, approval_secret: approvalSecret },
   });
   if (appr.body?.approved !== true) throw new Error(`pair/approve ${appr.status}`);
   const tok = await api("POST", "/v1/pair/token", {
