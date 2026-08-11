@@ -1,0 +1,74 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Copilot generated hook snapshot > writes the exact dedicated hook file 1`] = `
+"{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "birdybeep hook copilot sessionStart",
+        "powershell": "birdybeep hook copilot sessionStart",
+        "timeoutSec": 10
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "birdybeep hook copilot userPromptSubmitted",
+        "powershell": "birdybeep hook copilot userPromptSubmitted",
+        "timeoutSec": 10
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "birdybeep hook copilot preToolUse",
+        "powershell": "birdybeep hook copilot preToolUse",
+        "timeoutSec": 10
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "birdybeep hook copilot postToolUse",
+        "powershell": "birdybeep hook copilot postToolUse",
+        "timeoutSec": 10
+      }
+    ],
+    "agentStop": [
+      {
+        "type": "command",
+        "bash": "birdybeep hook copilot agentStop",
+        "powershell": "birdybeep hook copilot agentStop",
+        "timeoutSec": 10
+      }
+    ],
+    "subagentStop": [
+      {
+        "type": "command",
+        "bash": "birdybeep hook copilot subagentStop",
+        "powershell": "birdybeep hook copilot subagentStop",
+        "timeoutSec": 10
+      }
+    ],
+    "errorOccurred": [
+      {
+        "type": "command",
+        "bash": "birdybeep hook copilot errorOccurred",
+        "powershell": "birdybeep hook copilot errorOccurred",
+        "timeoutSec": 10
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "birdybeep hook copilot sessionEnd",
+        "powershell": "birdybeep hook copilot sessionEnd",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}
+"
+`;

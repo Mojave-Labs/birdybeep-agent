@@ -45,8 +45,9 @@ followed by an indented `→` fix:
 Some checks failed — see fixes above.
 ```
 
-Per-harness checks are prefixed with the harness name (`Claude Code:`, `Codex:`, `OpenCode:`). For a
-shorter snapshot of just pairing + per-harness status + queue depth, use:
+Per-harness checks are prefixed with the harness name (`Claude Code:`, `Codex:`, `OpenCode:`,
+`Cursor:`, `GitHub Copilot CLI:`). For a shorter snapshot of just pairing + per-harness status +
+queue depth, use:
 
 ```bash
 birdybeep status
@@ -82,6 +83,9 @@ The equivalent for the other harnesses:
 
 ✗  Cursor: Cursor installed — Cursor was not found on this machine.
      → Install Cursor, then re-run `birdybeep agent install cursor`.
+
+✗  GitHub Copilot CLI: GitHub Copilot CLI installed — The `copilot` CLI and configuration directory were not found.
+     → Install GitHub Copilot CLI, then run `birdybeep agent install copilot`.
 ```
 
 **Fix** — BirdyBeep could not detect the harness binary. Install (or fix the `PATH` for) the harness,
@@ -159,6 +163,9 @@ to `installed`:
 
 ✗  Cursor: BirdyBeep hooks installed — BirdyBeep hooks are not installed.
      → Run `birdybeep agent install cursor` to (re)install the hooks.
+
+✗  GitHub Copilot CLI: BirdyBeep hooks installed — BirdyBeep's Copilot hook file is not installed.
+     → Run `birdybeep agent install copilot` to install the current hooks.
 ```
 
 **Fix** — the harness is detected, but BirdyBeep's managed entries are not present. Run the matching
@@ -185,6 +192,9 @@ A harness reports `error` when its config is corrupt or only half-configured. Th
 
 ✗  Cursor: hooks.json is valid JSON — ~/.cursor/hooks.json is not valid JSON.
      → Fix the JSON in ~/.cursor/hooks.json (or delete it), then run `birdybeep agent install cursor`.
+
+✗  GitHub Copilot CLI: BirdyBeep hook file valid JSON — ~/.copilot/hooks/birdybeep.json is not valid JSON.
+     → Repair or remove the file, then run `birdybeep agent install copilot`.
 ```
 
 BirdyBeep will not write into a config file it cannot parse (that would risk destroying your settings).
@@ -199,10 +209,10 @@ it with a `.birdybeep-backup` suffix — and the `→ fix` line points straight 
        (or delete the malformed file), then run `birdybeep agent install cursor`.
 ```
 
-All four adapters print the same two shapes against their own config file
+All five adapters print the same two shapes against their own config file
 (`~/.claude/settings.json`, `~/.codex/config.toml`, `~/.config/opencode/opencode.json`,
-`~/.cursor/hooks.json`) — the backup line only appears when that `.birdybeep-backup` file actually
-exists, so you are never told to restore something you never had.
+`~/.cursor/hooks.json`, `~/.copilot/hooks/birdybeep.json`) — the backup line only appears when that
+`.birdybeep-backup` file actually exists, so you are never told to restore something you never had.
 
 **Partial install** — only some of the managed entries are present:
 
@@ -211,8 +221,9 @@ exists, so you are never told to restore something you never had.
      → Run `birdybeep agent install claude` to (re)install the hooks.
 ```
 
-Codex reports the same partial state across its `notify` line and lifecycle hooks. Re-running install
-repairs it.
+Codex and Cursor report the same partial state across their managed lifecycle hooks. Copilot reports
+`error` if its dedicated managed file has drifted from the current exact format. Re-running the
+matching install repairs it while preserving the one-time backup.
 
 **Read-only config** — BirdyBeep cannot write the file:
 
@@ -221,8 +232,8 @@ repairs it.
      → Fix file permissions so BirdyBeep can update Claude Code settings.
 ```
 
-(Codex and OpenCode print the analogous `config.toml writable` / `opencode.json writable` checks.) Fix
-the file/directory permissions so BirdyBeep can update — and later cleanly uninstall — the config.
+(Codex, OpenCode, Cursor, and Copilot print the analogous config-path writable checks.) Fix the
+file/directory permissions so BirdyBeep can update — and later cleanly uninstall — the config.
 
 ---
 
@@ -395,5 +406,7 @@ birdybeep test
 3. Re-run the relevant `birdybeep agent install <harness>` — it is idempotent and non-destructive.
 4. For Codex, remember it stays `needs_trust` until the **first event after** you run `/hooks`; for
    OpenCode, `needs_restart` until the **first event after** a restart. Trigger one event in the harness
-   and re-check. Claude Code and Cursor have no such gate — they read their config live, so they report
-   `installed` as soon as the install finishes.
+   and re-check.
+5. Claude Code, Cursor, and GitHub Copilot CLI require no trust or restart step. If their config is present but
+   status is not `installed`, re-run the matching install command and inspect the reported config
+   path for malformed or manually edited managed entries.

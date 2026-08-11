@@ -1,0 +1,42 @@
+name: Staging E2E
+
+# Secret-bearing code never runs from a pull-request checkout. The matrix runs only from the
+# reviewed default branch (automatically after merge) or by an explicit maintainer dispatch.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: staging-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  staging:
+    name: staging e2e (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
+      STAGING_AGENT_TOKEN: ${{ secrets.STAGING_AGENT_TOKEN }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: ./.github/actions/setup
+      - name: Require the staging-only Actions secrets
+        run: |
+          test -n "$STAGING_API_URL" || { echo '::error::STAGING_API_URL is not configured'; exit 1; }
+          test -n "$STAGING_AGENT_TOKEN" || { echo '::error::STAGING_AGENT_TOKEN is not configured'; exit 1; }
+      - name: Build the exact CLI and adapters under test
+        run: pnpm build
+      - name: Install all adapters and send real lifecycle payloads to staging
+        run: pnpm test:staging

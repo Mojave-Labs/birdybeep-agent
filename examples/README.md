@@ -11,12 +11,13 @@ differs by so much as a byte.
 
 ## Index
 
-| Harness                                | Config file                                    | Installs to                                                   |
-| -------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------- |
-| [Claude Code](./claude-code/README.md) | [`settings.json`](./claude-code/settings.json) | `~/.claude/settings.json`                                     |
-| [Codex](./codex/README.md)             | [`config.toml`](./codex/config.toml)           | `~/.codex/config.toml` (or `$CODEX_HOME`)                     |
-| [OpenCode](./opencode/README.md)       | [`opencode.json`](./opencode/opencode.json)    | `~/.config/opencode/opencode.json` (honors `XDG_CONFIG_HOME`) |
-| [Cursor](./cursor/README.md)           | [`hooks.json`](./cursor/hooks.json)            | `~/.cursor/hooks.json`                                        |
+| Harness                                   | Config file                                    | Installs to                                                   |
+| ----------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------- |
+| [Claude Code](./claude-code/README.md)    | [`settings.json`](./claude-code/settings.json) | `~/.claude/settings.json`                                     |
+| [Codex](./codex/README.md)                | [`config.toml`](./codex/config.toml)           | `~/.codex/config.toml` (or `$CODEX_HOME`)                     |
+| [OpenCode](./opencode/README.md)          | [`opencode.json`](./opencode/opencode.json)    | `~/.config/opencode/opencode.json` (honors `XDG_CONFIG_HOME`) |
+| [Cursor](./cursor/README.md)              | [`hooks.json`](./cursor/hooks.json)            | `~/.cursor/hooks.json`                                        |
+| [GitHub Copilot CLI](./copilot/README.md) | [`birdybeep.json`](./copilot/birdybeep.json)   | `~/.copilot/hooks/birdybeep.json` (honors `COPILOT_HOME`)     |
 
 Each example shows the **from-scratch** case — a brand-new config containing nothing but BirdyBeep's
 managed entries — so the managed footprint is unmistakable. On an existing config, the installer
@@ -40,6 +41,8 @@ merges these entries in and leaves everything else untouched. Per-harness README
 - **Cursor** takes effect immediately too — it reads `hooks.json` live. Its payloads carry
   `user_email` and `transcript_path`, both of which the adapter drops outright (see the
   [Cursor example](./cursor/README.md#privacy-note-specific-to-cursor)).
+- **GitHub Copilot CLI** takes effect immediately and combines BirdyBeep's dedicated hook file with
+  any other files in its hooks directory.
 
 ## Learn more
 

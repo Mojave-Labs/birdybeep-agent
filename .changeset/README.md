@@ -3,8 +3,8 @@
 This repo uses [Changesets](https://github.com/changesets/changesets) to version the public
 packages and generate their changelogs. The published packages are a **fixed group** — they
 share one version and release together: `@birdybeep/cli`, `@birdybeep/agent-core`,
-`@birdybeep/claude-code`, `@birdybeep/codex`, `@birdybeep/opencode`. (`@birdybeep/test-harness`
-is private and ignored.)
+`@birdybeep/claude-code`, `@birdybeep/codex`, `@birdybeep/opencode`, `@birdybeep/cursor`, and
+`@birdybeep/copilot`. (`@birdybeep/test-harness` is private and ignored.)
 
 ## Contributor flow
 
@@ -21,7 +21,7 @@ is private and ignored.)
 3. CI runs `pnpm changeset:status` and fails if you changed a publishable package without a
    changeset, so versions never drift out of someone's head.
 
-## Release flow (maintainers — see `scripts/release.ts`)
+## Release flow (maintainers — see `scripts/release.mjs`)
 
 ```bash
 pnpm changeset:version   # consume changesets → bump versions + cascade ranges + write CHANGELOGs

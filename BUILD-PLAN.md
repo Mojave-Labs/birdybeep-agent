@@ -1,6 +1,6 @@
 # BirdyBeep build plan — `birdybeep-agent`
 
-_public, MIT — @birdybeep/cli + Claude Code / Codex / OpenCode adapters_
+_public, MIT — @birdybeep/cli + Claude Code / Codex / OpenCode / Cursor / Copilot adapters_
 
 **69 beads** in this repo: 9 epics · 60 work tickets (2 human-required). This file is a human-orchestrator snapshot — **beads is the live source of truth** (`bd ready`, `bd show <id>`, `bd dep tree <id>`).
 
@@ -22,7 +22,7 @@ Work flows along the dependency graph: `bd ready` only surfaces a ticket once it
 
 ## The testing mandate (non-negotiable)
 
-Every feature ticket carries a **Testing (mandatory — agentic-first)** section. No code is pushed until the real thing is run and observed green; a pre-push hook + CI hard-block it. Rigs: **real installs into a temp `HOME`** firing actual Claude Code / Codex / OpenCode events against a live `wrangler dev` backend, on the macOS/Linux/Windows matrix, with config snapshot tests.
+Every feature ticket carries a **Testing (mandatory — agentic-first)** section. No code is pushed until the real thing is run and observed green; a pre-push hook + CI hard-block it. Rigs: **real installs into a temp `HOME`** firing actual Claude Code / Codex / OpenCode / Cursor / Copilot events against a live `wrangler dev` backend, on the macOS/Linux/Windows matrix, with config snapshot tests.
 
 ## Phase roadmap
 
@@ -120,15 +120,15 @@ _PRD: §16.3, §16.4_
 - `P1` **docs/security.md** (feature, phase 3)
 - `P1` **docs/troubleshooting.md** (feature, phase 3)
 - `P2` **docs/adapter-development.md** (feature, phase 3)
-- `P2` **examples/{claude-code,codex,opencode}** (feature, phase 3)
+- `P2` **examples/{claude-code,codex,opencode,cursor,copilot}** (feature, phase 3)
 
 ### Release tooling  ·  `epic:a-release`  ·  4 tickets
 _PRD: §16.3_
 
 - `P2` **Build/bundle + package exports + bin** (task, phase 3)
 - `P2` **Versioning (changesets)** (chore, phase 3)
-- `P2` **scripts/release.ts** (task, phase 3)
-- `P2` **scripts/smoke-test.ts** (task, phase 3)
+- `P2` **scripts/release.mjs** (task, phase 3)
+- `P2` **scripts/smoke-test.mjs** (task, phase 3)
 
 ### Manual — HUMAN REQUIRED (publish & repo)  ·  `epic:human-agent`  ·  2 tickets
 _PRD: §16.3_
@@ -140,5 +140,5 @@ _PRD: §16.3_
 
 Agents prepare everything up to these; a human performs the real-account / secret / billing / store / production action. They are wired late in the dependency graph.
 
-- **[HUMAN] npm org @birdybeep + publish tokens + first publish** — Create npm org @birdybeep; publish tokens; first publish of @birdybeep/cli + packages. Agent prepares release.ts; human runs with credentials.
+- **[HUMAN] npm org @birdybeep + publish tokens + first publish** — Create npm org @birdybeep; publish tokens; first publish of @birdybeep/cli + packages. Agent prepares release.mjs; human runs with credentials.
 - **[HUMAN] Public repo settings + CI secrets + protection** — Configure public GitHub repo: branch protection, CODEOWNERS, issue/PR templates, CI secrets (staging API URL/token for E2E).

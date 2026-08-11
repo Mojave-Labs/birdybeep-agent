@@ -1,0 +1,7 @@
+{
+  "sessionId": "copilot-session-fixture",
+  "timestamp": 1786075913937,
+  "cwd": "/home/user/project",
+  "transcriptPath": "/home/user/.copilot/session-state/copilot-session-fixture/events.jsonl",
+  "stopReason": "end_turn"
+}
