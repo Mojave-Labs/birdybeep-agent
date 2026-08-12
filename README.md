@@ -1,5 +1,11 @@
 # BirdyBeep
 
+[![CI](https://img.shields.io/github/actions/workflow/status/Mojave-Labs/birdybeep-agent/ci.yml?branch=main&label=CI&logo=github&logoColor=white)](https://github.com/Mojave-Labs/birdybeep-agent/actions/workflows/ci.yml?query=branch%3Amain)
+[![npm](https://img.shields.io/npm/v/%40birdybeep%2Fcli?logo=npm&label=%40birdybeep%2Fcli)](https://www.npmjs.com/package/@birdybeep/cli)
+[![node](https://img.shields.io/node/v/%40birdybeep%2Fcli?logo=node.js&logoColor=white&label=node)](https://nodejs.org)
+[![platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-informational)](https://github.com/Mojave-Labs/birdybeep-agent/actions/workflows/ci.yml?query=branch%3Amain)
+[![license](https://img.shields.io/npm/l/%40birdybeep%2Fcli?color=blue)](./LICENSE)
+
 **Mobile notifications for your AI coding agent.** When Claude Code, Codex, OpenCode, Cursor, or
 GitHub Copilot CLI needs you — an approval, some input, a finished run, an idle session, a failure —
 BirdyBeep sends a push to your phone so you can walk away from the terminal and still know the
