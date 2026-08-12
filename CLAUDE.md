@@ -2,7 +2,7 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
-`birdybeep-agent` is the **public, MIT-licensed** half of BirdyBeep: the open-source CLI (`@birdybeep/cli`) and the agent adapters (Claude Code, Codex, OpenCode, Cursor, GitHub Copilot CLI) that run inside developers' coding harnesses, normalize lifecycle events, and ship them to the BirdyBeep backend. It is auditable on purpose — this code runs in users' dev environments, so trust and transparency are features. The private app/backend lives in the sibling repo **`birdybeep`**.
+`birdybeep-agent` is the CLI (`@birdybeep/cli`) and the agent adapters (Claude Code, Codex, OpenCode, Cursor, GitHub Copilot CLI) that run inside developers' coding harnesses, normalize lifecycle events, and ship them to the BirdyBeep backend. The app/backend lives in the sibling repo **`birdybeep`**.
 
 ---
 
@@ -158,7 +158,28 @@ node scripts/smoke-test.mjs          # post-build smoke (install published-shape
 
 (Exact scripts firm up as `A-*` / `REL-*` tickets land; keep this current.)
 
+## ✍️ Writing style for user-facing text
+
+Applies to READMEs, `docs/`, npm `description` fields, CLI output, and error messages. The reader
+came to get something done. Answer that, then stop.
+
+**Never write, in any user-facing file:**
+- What this repo *is* relative to the product — that it is public, open-source, MIT-licensed, auditable, "the client half", or that a separate/private repo holds the app and backend. Nobody reading the install docs needs the org chart.
+- Why a design decision was made. Rationale goes on the beads ticket, not in front of users.
+- Self-congratulatory framing: "deliberately", "carefully", "on purpose", "by design", "robust", "comprehensive", "seamless", "small-footprint", "first-class".
+- Reassurance the reader didn't ask for ("don't worry", "it's safe", "trust and transparency are features"). State what the code does; let the reader draw conclusions.
+- The same fact repeated across documents. Each fact lives in exactly one place; link to it.
+
+**Do:**
+- Lead with the command, the answer, or the concrete behavior.
+- Prefer a table or list over a paragraph when the content is a set of facts.
+- Keep an intro to one sentence saying what the thing does. No intro at all is usually better.
+- Write privacy and security docs as specifics ("`cwd` is hashed with SHA-256; prompts are dropped"), never as claims ("we take privacy seriously").
+
+**Code comments:** explain non-obvious *why* in one or two lines. If a comment needs a paragraph, it
+belongs on the ticket, with the ticket id in the comment.
+
 ## Conventions
-- **MIT, public, auditable.** Clear docs for install, uninstall, exactly what data is sent, and how tokens are stored. Reversible, non-destructive installs.
+- Document install, uninstall, exactly what data is sent, and how tokens are stored. Installs are reversible and non-destructive.
 - Keep adapter code isolated and easy to patch — harness APIs change (`§21.1`). Version docs against harness versions.
 - Codex is not "installed" until the first event arrives (one-time `/hooks` trust); surface that as `needs_trust`. OpenCode needs a restart to load its plugin; surface `needs_restart`. Claude Code and Cursor read their config live (no trust/restart gate), so they report `installed` as soon as the managed entries are present.

@@ -11,19 +11,12 @@ GitHub Copilot CLI needs you — an approval, some input, a finished run, an idl
 BirdyBeep sends a push to your phone so you can walk away from the terminal and still know the
 moment your agent is waiting on you.
 
-This repository is the **public, [MIT-licensed](./LICENSE), auditable** half of BirdyBeep: the
-open-source CLI (`@birdybeep/cli`) and the per-harness adapters that run inside your coding
-agent. This code installs into your dev environment and watches your agents, so it is open on
-purpose — you can read exactly what it touches and exactly what leaves your machine. The mobile
-app and backend live in a separate private repo.
-
 ---
 
 ## How it works
 
-You install BirdyBeep once per machine and pair it with the mobile app. From then on, each
-supported agent emits lifecycle events (session started, approval required, completed, failed,
-and so on) through a small local hook:
+Install once per machine and pair it with the mobile app. Each supported agent then emits
+lifecycle events through a local hook:
 
 ```text
 Harness hook/plugin
@@ -33,86 +26,80 @@ Harness hook/plugin
     → queues locally on failure, then returns fast
 ```
 
-There is **no background daemon**. The hook runs only when your agent fires an event, does its
-work in a few milliseconds, and gets out of the way. If delivery fails (you're offline), the
-event lands in a small local retry queue and is sent later — it never blocks or slows your
-harness.
+There is no background daemon. The hook runs only when your agent fires an event and completes in
+a few milliseconds. If delivery fails, the event lands in a local retry queue and is sent later; it
+never blocks your harness.
 
 ## What it touches on your machine
-
-BirdyBeep is deliberately small-footprint and reversible. It only ever touches:
 
 - **Per-harness config in your home directory** — e.g. `~/.claude/settings.json`,
   `~/.codex/config.toml`, `~/.config/opencode/opencode.json`, `~/.cursor/hooks.json`, and
   `~/.copilot/hooks/birdybeep.json`. Installs are idempotent, back up the original once, and add
-  **only** BirdyBeep-managed entries. (See [Per-harness details](#per-harness-details).)
-- **A local event queue** — best-effort, ~24h retention, strict file permissions. It exists
-  only to retry events that couldn't be delivered immediately. It is **not** a durable audit
-  log, and you can clear it any time.
-- **One machine token** — stored in your **OS keychain** when available, otherwise a
-  strict-permission (`0600`) file in your user config directory. The token is **never** written
-  into harness config or any repo file.
+  only BirdyBeep-managed entries. (See [Per-harness details](#per-harness-details).)
+- **A local event queue** — best-effort, ~24h retention, strict file permissions. It holds only
+  events that couldn't be delivered immediately. It is not an audit log, and `birdybeep queue clear`
+  empties it.
+- **One machine token** — stored in your OS keychain when available, otherwise a strict-permission
+  (`0600`) file in your user config directory. It is never written into harness config or any repo
+  file.
 
 ## Install
-
-Install the CLI, pair the machine, then wire up your agents.
 
 ```bash
 npm install -g @birdybeep/cli   # or pnpm add -g / yarn global add
 
 birdybeep pair                  # device-flow pairing: scan its QR or open the complete link,
-                                # then asks you to confirm the account that approved it
+                                # then confirm the account that approved it
 birdybeep agent install all     # detect installed agents and wire them up
                                 # (or one of: claude | codex | opencode | cursor | copilot)
 birdybeep status                # confirm machine, pairing, and per-harness integration state
 ```
 
-`agent install` is **idempotent** — re-running it produces the same result. It backs up any
-existing config, adds only BirdyBeep-managed entries, prints the files it changed and any action
-you still need to take, and installs at the **user/global** level. It never writes a token into
-config.
+`agent install` is idempotent — re-running it produces the same result. It backs up existing
+config, adds only BirdyBeep-managed entries, prints the files it changed and any action you still
+need to take, and installs at the user/global level.
 
 Some harnesses need one extra step after install — see [Per-harness details](#per-harness-details).
 
-## Uninstall (fully reversible)
+## Uninstall
 
 ```bash
 birdybeep agent uninstall all   # or: claude | codex | opencode | cursor | copilot
 birdybeep logout                # remove the machine token (idempotent)
 ```
 
-Uninstall removes **only** BirdyBeep-managed entries and restores your config from the backup,
-so your settings come back exactly as they were. `logout` clears the local token from both the
-keychain and the file fallback.
+Uninstall removes only BirdyBeep-managed entries and restores your config from the backup, so your
+settings come back exactly as they were. `logout` clears the local token from both the keychain and
+the file fallback.
 
 ## Commands
 
-The CLI surface (run `birdybeep <command> --help` for per-command help):
+Run `birdybeep <command> --help` for per-command help.
 
 | Command                                                                     | What it does                                                                                                                                                                          |
 | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `birdybeep pair`                                                            | Device-flow pairing — scan the QR or open its complete link, confirm the approving account, then store the machine token securely.                                                    |
+| `birdybeep pair`                                                            | Device-flow pairing — scan the QR or open its complete link, confirm the approving account, then store the machine token.                                                             |
 | `birdybeep logout`                                                          | Removes the machine token (keychain + file fallback). Idempotent. Same as `unpair`.                                                                                                   |
 | `birdybeep unpair`                                                          | Unpairs this machine — removes the machine token (keychain + file fallback). Idempotent. Same as `logout`.                                                                            |
 | `birdybeep status`                                                          | Machine + pairing state, per-harness integration status, and queue depth. Drains the queue opportunistically; exits non-zero if not paired.                                           |
 | `birdybeep test`                                                            | Sends a test event through the real sender path and reports whether it was delivered or queued.                                                                                       |
 | `birdybeep doctor`                                                          | Checks the token, each adapter (`needs_trust` / `needs_restart` / `error`), the queue, and backend reachability; prints a fix per failure; drains the queue; non-zero on any failure. |
 | `birdybeep agent install [all\|claude\|codex\|opencode\|cursor\|copilot]`   | Detect + install per harness (idempotent, backs up, managed entries only, no token).                                                                                                  |
-| `birdybeep agent uninstall [all\|claude\|codex\|opencode\|cursor\|copilot]` | Remove only managed entries and restore from backup (reversible).                                                                                                                     |
+| `birdybeep agent uninstall [all\|claude\|codex\|opencode\|cursor\|copilot]` | Remove only managed entries and restore from backup.                                                                                                                                  |
 | `birdybeep queue clear`                                                     | Drop all locally-queued events (debug).                                                                                                                                               |
 
-Two internal commands are invoked by BirdyBeep itself, not by you:
+Two commands are invoked by BirdyBeep itself, not by you:
 
 - `birdybeep hook <claude\|codex\|opencode\|cursor\|copilot>` — the hook the installed harness
   config calls. It reads the event payload, normalizes and redacts it, sends with a short timeout,
-  queues on failure, and **always returns fast and exits 0**. Copilot's managed commands also pass
-  the event name as a final argument because its payload does not contain one.
+  queues on failure, and always returns fast and exits 0. Copilot's managed commands also pass the
+  event name as a final argument because its payload does not contain one.
 - `birdybeep report-status` — posts each adapter's pre-event integration status to the backend.
 
 ### Update notices
 
-There's no `update` command — the CLI tells you on its own. When you run a command, it prints a
-one-line notice to **stderr** if a newer `@birdybeep/cli` has been published:
+There's no `update` command. When you run a command, the CLI prints a one-line notice to stderr if
+a newer `@birdybeep/cli` has been published:
 
 ```text
 a new version of birdybeep is available: 0.1.0 → 0.2.0
@@ -120,12 +107,10 @@ upgrade with: npm install -g @birdybeep/cli@latest
 ```
 
 The check is cached (refreshed from the npm registry at most once a day), never runs on the `hook`
-hot path, and is skipped for `--json`, `--non-interactive`, non-TTY output, and CI. Silence it
-entirely with `NO_UPDATE_NOTIFIER=1` (or `BIRDYBEEP_NO_UPDATE_NOTIFIER=1`).
+hot path, and is skipped for `--json`, `--non-interactive`, non-TTY output, and CI. Silence it with
+`NO_UPDATE_NOTIFIER=1` (or `BIRDYBEEP_NO_UPDATE_NOTIFIER=1`).
 
 ### Global flags & exit codes
-
-Available on the root command and per command:
 
 | Flag                | Effect                                        |
 | ------------------- | --------------------------------------------- |
@@ -136,7 +121,7 @@ Available on the root command and per command:
 
 Exit codes: **`0`** ok · **`1`** error · **`2`** usage.
 
-`birdybeep pair` adds two of its own (run `birdybeep pair --help`):
+`birdybeep pair` adds two of its own:
 
 | Flag                    | Effect                                                                                  |
 | ----------------------- | --------------------------------------------------------------------------------------- |
@@ -144,102 +129,78 @@ Exit codes: **`0`** ok · **`1`** error · **`2`** usage.
 | `--expect-email <addr>` | Only trust the pairing if this account approved it — otherwise fail and store no token. |
 
 After the backend mints a machine token, `pair` shows the account that approved the machine and
-asks `Pair this machine to <email>? [y/N]` **before** storing anything. Decline and no token is
+asks `Pair this machine to <email>? [y/N]` before storing anything. Decline and no token is
 written. The question is read from stdin when stdin is a terminal, and on macOS/Linux otherwise from
-the controlling terminal (`/dev/tty`) — so a pipe-backed shell still gets prompted; with neither
+the controlling terminal (`/dev/tty`), so a pipe-backed shell still gets prompted. With neither
 available (a script, CI, `--non-interactive`, or any Windows shell without a real TTY) it fails
 closed instead of hanging. See
 [`docs/pairing.md`](./docs/pairing.md#confirming-the-approving-account).
 
 ## Per-harness details
 
-| Harness         | Target     | Status      | Config it patches                  | Extra step              |
-| --------------- | ---------- | ----------- | ---------------------------------- | ----------------------- |
-| **Claude Code** | `claude`   | **shipped** | `~/.claude/settings.json`          | none — live immediately |
-| **Codex**       | `codex`    | **shipped** | `~/.codex/config.toml`             | one-time `/hooks` trust |
-| **OpenCode**    | `opencode` | **shipped** | `~/.config/opencode/opencode.json` | restart OpenCode once   |
-| **Cursor**      | `cursor`   | **shipped** | `~/.cursor/hooks.json`             | none — live immediately |
-
-Harnesses we surveyed and did **not** ship an adapter for (and why), plus the bar a new one has to
-clear, are in [`docs/install.md`](./docs/install.md#harness-support--roadmap). The exact generated
-config for every harness is committed under [`examples/`](./examples/README.md).
+| Harness            | Target     | Config it patches                  | After install                                      | Verified against                                               |
+| ------------------ | ---------- | ---------------------------------- | -------------------------------------------------- | -------------------------------------------------------------- |
+| Claude Code        | `claude`   | `~/.claude/settings.json`          | `installed` immediately                            | Live harness E2E                                               |
+| Codex              | `codex`    | `~/.codex/config.toml`             | `needs_trust` until a trusted lifecycle hook fires | Live harness E2E                                               |
+| OpenCode           | `opencode` | `~/.config/opencode/opencode.json` | `needs_restart` until the restarted plugin emits   | Live harness E2E; event shapes reconciled with OpenCode 1.18.1 |
+| Cursor             | `cursor`   | `~/.cursor/hooks.json`             | `installed` immediately                            | Cursor Agent 2026.07.09 fixtures; Cursor IDE 3.14.27 live E2E  |
+| GitHub Copilot CLI | `copilot`  | `~/.copilot/hooks/birdybeep.json`  | `installed` immediately                            | CLI 1.0.70 BYOK + 1.0.78 GitHub OAuth live E2E (2026-08-07)    |
 
 All installs are idempotent, back up the original once, add only BirdyBeep-managed entries, and
 write no token.
 
-| Harness            | Support   | After install                                      | Verification baseline                                          |
-| ------------------ | --------- | -------------------------------------------------- | -------------------------------------------------------------- |
-| Claude Code        | Supported | `installed` immediately                            | Live harness E2E                                               |
-| Codex              | Supported | `needs_trust` until a trusted lifecycle hook fires | Live harness E2E                                               |
-| OpenCode           | Supported | `needs_restart` until the restarted plugin emits   | Live harness E2E; event shapes reconciled with OpenCode 1.18.1 |
-| Cursor             | Supported | `installed` immediately                            | Cursor Agent 2026.07.09 fixtures; Cursor IDE 3.14.27 live E2E  |
-| GitHub Copilot CLI | Supported | `installed` immediately                            | CLI 1.0.70 BYOK + 1.0.78 GitHub OAuth live E2E (2026-08-07)    |
-
 - **Claude Code** — patches the hooks in `~/.claude/settings.json` to invoke
-  `birdybeep hook claude`. Claude Code reads its config live, so the integration is **active
-  immediately** — no restart needed.
+  `birdybeep hook claude`. Claude Code reads its config live, so the integration is active
+  immediately.
 - **Codex** — patches `~/.codex/config.toml`: a top-level `notify` program plus `[[hooks.X]]`
   lifecycle hooks (SessionStart, PermissionRequest, PostToolUse, SubagentStart, SubagentStop),
-  all invoking `birdybeep hook codex`. Codex requires a **one-time hook trust**: open Codex and
-  run `/hooks`. Until a trusted **lifecycle hook** actually fires (a turn-complete beep via the
-  ungated `notify` program does not count), status shows **`needs_trust`**.
+  all invoking `birdybeep hook codex`. Codex requires a one-time hook trust: open Codex and run
+  `/hooks`. Until a trusted lifecycle hook actually fires — a turn-complete beep via the ungated
+  `notify` program does not count — status shows `needs_trust`.
 - **OpenCode** — adds `@birdybeep/opencode` to the `plugin` array in
   `~/.config/opencode/opencode.json` (honors `XDG_CONFIG_HOME`). OpenCode loads plugins only at
-  startup, so **restart OpenCode**. Until the first event after restart, status shows
-  **`needs_restart`**.
+  startup, so restart OpenCode. Until the first event after restart, status shows `needs_restart`.
 - **Cursor** — patches `~/.cursor/hooks.json` (adding the `"version": 1` scaffold only if absent)
   with an entry per consumed hook event — `sessionStart`, `sessionEnd`, `beforeShellExecution`,
   `preToolUse`, `postToolUse`, `stop`, `subagentStart`, `subagentStop`, plus three registered for
   forward-compatibility — each invoking `birdybeep hook cursor`. Cursor reads `hooks.json` live, so
-  it is **active immediately**. Headless `cursor-agent -p` fires only `sessionStart`/`sessionEnd`
+  it is active immediately. Headless `cursor-agent -p` fires only `sessionStart`/`sessionEnd`
   today, so a completed `sessionEnd` is the CLI user's "finished" Beep. Cursor payloads carry
-  `user_email` and `transcript_path`; the adapter drops **both**.
+  `user_email` and `transcript_path`; the adapter drops both.
 - **GitHub Copilot CLI** — writes the dedicated `~/.copilot/hooks/birdybeep.json` file (honors
   `COPILOT_HOME`) without touching other files in the hooks directory. Each event invokes
-  `birdybeep hook copilot <event-name>`. Copilot combines hook files live, so status is
-  **`installed`** immediately.
+  `birdybeep hook copilot <event-name>`. Copilot combines hook files live, so status is `installed`
+  immediately.
 
-`birdybeep status` and `birdybeep doctor` surface these states and tell you exactly what to do.
+`birdybeep status` and `birdybeep doctor` surface these states and tell you what to do.
+
+Harnesses we surveyed and did not ship an adapter for, plus the bar a new one has to clear, are in
+[`docs/install.md`](./docs/install.md#harness-support--roadmap). The exact generated config for
+every harness is committed under [`examples/`](./examples/README.md).
 
 ## Security & privacy
 
-BirdyBeep is designed so that **as little as possible leaves your machine**, and what does is
-scrubbed first. Before any event is sent, the local hook:
+Before an event is sent, the local hook:
 
 - **Hashes absolute paths** to opaque `h_<16-hex>` tokens (your `cwd` is always hashed).
-- **Redacts secret-shaped strings** — AWS / GitHub / OpenAI / Slack keys, JWTs, and
-  `key=value` secrets become `[redacted]`.
+- **Redacts secret-shaped strings** — AWS / GitHub / OpenAI / Slack keys, JWTs, and `key=value`
+  secrets become `[redacted]`.
 - **Truncates** long fields (title 200, body 2000, metadata-value 500 chars) under a 16 KB cap.
-- **Drops raw user/assistant content by design** — Codex drops input messages, the last assistant
-  message, and tool input; OpenCode drops tool args, permission titles, and error messages; Cursor
-  drops prompts, email, transcript paths, and tool data; Copilot drops prompts, tool arguments and
-  results, transcripts, subagent responses, and error details. Only safe discriminators (tool name,
-  status) ever flow.
+- **Drops raw user and assistant content.** Codex drops input messages, the last assistant message,
+  and tool input; OpenCode drops tool args, permission titles, and error messages; Cursor drops
+  prompts, email, transcript paths, and tool data; Copilot drops prompts, tool arguments and
+  results, transcripts, subagent responses, and error details. Only tool name and status flow
+  through.
 
-The canonical event carries an event id and type, timestamp, harness, session id, machine label
+The event carries an event id and type, timestamp, harness, session id, machine label, OS, a hashed
+workspace, status, a short title/body, and optional metadata. The backend does not persist
+notification title/body by default — only metadata, hashes, and delivery + session status.
 
-- OS, a hashed workspace, status, a short title/body, and optional metadata. The backend does
-  **not** persist notification title/body by default — only metadata, hashes, and delivery +
-  session status.
+Tokens live in your OS keychain (or a strict-permission file fallback) and are never written into
+harness config or any repo file. The server stores only token hashes; the token is shown once and
+can be revoked or rotated from the mobile app.
 
-**Tokens** live in your OS keychain (or a strict-permission file fallback) and are never written
-into harness config or any repo file. The server stores only token **hashes**; the token is
-shown once and can be revoked or rotated from the mobile app.
-
-Full details, including the exact redaction patterns and the wire schema, are in
-[`docs/security.md`](./docs/security.md).
-
-## Why you can trust it
-
-This package edits real config in your home directory and hooks into your coding agents, so it
-earns trust by being **open and auditable**:
-
-- **MIT-licensed and public** — read every line that runs on your machine.
-- **Reversible, non-destructive installs** — back up once, add only managed entries, restore
-  byte-for-byte on uninstall.
-- **No durable secrets in config or repos** — tokens stay in the keychain only.
-- **Privacy enforced before delivery** — hashing, redaction, and truncation run locally, in
-  this code, before anything is sent.
+Exact redaction patterns and the wire schema are in [`docs/security.md`](./docs/security.md).
 
 ## Documentation
 

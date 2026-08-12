@@ -103,10 +103,9 @@ checks appear.
      → Open Codex and run /hooks to trust the BirdyBeep hooks.
 ```
 
-**Why** — Codex is special. Writing the config (`notify` + the lifecycle hooks in `~/.codex/config.toml`)
-is **not** enough to count as installed: Codex requires a **one-time trust** of those hooks. Until a
-trusted **lifecycle hook** actually fires, BirdyBeep deliberately reports `needs_trust` rather than
-`installed`. (Turn-complete beeps arriving via the ungated `notify` program do **not** count — they
+**Why** — writing the config (`notify` + the lifecycle hooks in `~/.codex/config.toml`) is **not**
+enough to count as installed: Codex requires a **one-time trust** of those hooks. Until a trusted
+**lifecycle hook** actually fires, BirdyBeep reports `needs_trust` rather than `installed`. (Turn-complete beeps arriving via the ungated `notify` program do **not** count — they
 work without trust, so they are no proof the approval hooks are trusted.)
 
 **Fix** — open Codex and run:
@@ -268,7 +267,7 @@ read, so using it would hang instead of refusing.
   which attaches a real console — stdin becomes a TTY and the prompt appears normally. PowerShell,
   `cmd`, Windows Terminal, and the VS Code terminal all provide a real TTY and never hit this.
 
-- Note that `--non-interactive` always takes this branch by design, whatever terminal is attached.
+- `--non-interactive` always takes this branch, whatever terminal is attached.
 
 ---
 

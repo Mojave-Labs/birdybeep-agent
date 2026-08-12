@@ -1,12 +1,9 @@
 # Security & privacy
 
-BirdyBeep runs inside your coding harness, watches lifecycle events, and ships small notifications to
-your phone. This package is MIT-licensed and public on purpose: the code that touches your machine is
-meant to be read. This page documents, precisely and against the code, what leaves your machine, what
-is hashed/redacted/truncated before it does, and where your token lives.
+What leaves your machine, what is hashed/redacted/truncated before it does, and where your token
+lives. Every claim below cites the file that enforces it.
 
-If you find a gap between this page and the code, the code wins — please open an issue. Every claim
-below cites the file that enforces it.
+If you find a gap between this page and the code, the code wins — please open an issue.
 
 ## TL;DR
 
@@ -62,7 +59,7 @@ example, every "finished" event sends the literal string `Turn complete`; an app
 ([claude-code](../packages/claude-code/src/normalize.ts),
 [codex](../packages/codex/src/normalize.ts), [opencode](../packages/opencode/src/normalize.ts),
 [cursor](../packages/cursor/src/normalize.ts), [copilot](../packages/copilot/src/normalize.ts))
-deliberately do **not** copy raw user/assistant content into the event:
+do **not** copy raw user/assistant content into the event:
 
 - **Codex** drops `input-messages`, `last-assistant-message`, and `tool_input`. Only safe identifiers
   (tool name, turn id, client, model, source) flow as metadata.
@@ -206,8 +203,6 @@ name as a separate argument), runs everything above, and always returns fast and
 never hang your session.
 
 ## Verify it yourself
-
-This is the point of a public, auditable package — don't take our word for it:
 
 - Read [`normalize.ts`](../packages/agent-core/src/normalize.ts) for the exact regexes, caps, and the
   16 KB shrink logic.

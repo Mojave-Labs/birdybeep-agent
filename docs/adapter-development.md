@@ -5,11 +5,9 @@ implement one interface — `AgentAdapter` — and the `@birdybeep/cli` detects,
 checks, diagnoses, and ships events for your harness with no special-casing. Nothing in the CLI
 changes when a new harness plugs in.
 
-This repo is **MIT-licensed, public, and auditable on purpose** — it runs inside developers' dev
-environments, so trust and transparency are features. Adapters edit real config files in users'
-home directories and hook into real agents, so the bar is high: installs are reversible and
-non-destructive, no raw secrets or absolute paths ever leave the machine, and **every adapter is
-proven end-to-end against a real harness payload before it ships.**
+Adapters edit real config files in users' home directories and hook into real agents, so the bar is
+high: installs are reversible and non-destructive, no raw secrets or absolute paths ever leave the
+machine, and **every adapter is proven end-to-end against a real harness payload before it ships.**
 
 Throughout, the **Codex adapter** (`packages/codex`) is the worked example. It is the most
 interesting one because it carries a one-time hook-trust caveat — a good template for any harness
@@ -298,10 +296,10 @@ case "PermissionRequest": {
 }
 ```
 
-**Deliberately drop raw user/assistant content.** Codex never persists input messages, the
-last-assistant message, or `tool_input` — only the tool name and status flow through. (OpenCode
-likewise drops tool args, permission titles, and error messages.) The mapped `body` is a fixed,
-safe string, not raw content. This is a hard requirement, not a nicety.
+**Drop raw user/assistant content.** Codex never persists input messages, the last-assistant
+message, or `tool_input` — only the tool name and status flow through. (OpenCode likewise drops
+tool args, permission titles, and error messages.) The mapped `body` is a fixed, safe string, not
+raw content. This is a hard requirement.
 
 **Throw on an unknown payload.** An unmappable shape must raise a typed error (Codex throws
 `CodexMappingError`) — never a malformed event. The hook pipeline catches it and `skip`s the fire so
@@ -319,7 +317,7 @@ adapters only Claude Code has a genuine name — `session_title`, which the user
 (or a `/rename` that lands before the next session starts) — and because it rides only the
 `SessionStart` payload, and is never replayed, it is parked in a small disk store
 ([`session-names.ts`](../packages/claude-code/src/session-names.ts)) so later hooks can report it
-too. Codex, Cursor and OpenCode deliberately send nothing; each adapter's file header records why.
+too. Codex, Cursor and OpenCode send nothing; each adapter's file header records why.
 
 ### Step 2 — build a draft and call the shared normalizer
 
@@ -369,9 +367,9 @@ Before any of it leaves the machine, the normalizer:
 
 Because the normalizer owns all of this, an adapter's only privacy duty is **never to put raw
 content into the draft in the first place** — map to safe discriminators and let the shared layer be
-the backstop. The backend, by design, does not persist notification `title`/`body` — only metadata,
-hashes, delivery, and session status — but the local redaction rules are what keep secrets and paths
-on the machine regardless.
+the backstop. The backend does not persist notification `title`/`body` — only metadata, hashes,
+delivery, and session status — but the local redaction rules are what keep secrets and paths on the
+machine regardless.
 
 ---
 

@@ -2,7 +2,7 @@
   "name": "@birdybeep/test-harness",
   "version": "0.0.0",
   "private": true,
-  "description": "Internal E2E test harness: hermetic temp-HOME sandbox, swappable event sink, real-shaped harness fixtures, and contract assertions. Never published; the spine every adapter E2E hangs off.",
+  "description": "Internal E2E test harness: hermetic temp-HOME sandbox, swappable event sink, real-shaped harness fixtures, and contract assertions. Not published.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",

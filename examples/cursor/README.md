@@ -57,14 +57,14 @@ before the first change.
 
 ## No token here
 
-There is **no token in this file**, and there never will be. `birdybeep hook cursor` reads your
-machine token from the OS keychain (or a strict-permission file) at event time. Tokens are never
+There is **no token in this file**. `birdybeep hook cursor` reads your machine token from the OS
+keychain (or a strict-permission file) at event time. Tokens are never
 written into harness config or any repo file. See [`docs/security.md`](../../docs/security.md).
 
 ## Privacy note specific to Cursor
 
-Cursor's hook payloads carry two things BirdyBeep deliberately drops: `user_email` (your account
-address) and `transcript_path` (a local filesystem path). Neither is ever copied into the event —
+Cursor's hook payloads carry two things BirdyBeep drops: `user_email` (your account address) and
+`transcript_path` (a local filesystem path). Neither is ever copied into the event —
 not the title, body, metadata, session id, or workspace. The only path touched is
 `workspace_roots[0]`, which is **hashed** like every other path.
 

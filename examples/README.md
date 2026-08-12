@@ -1,13 +1,11 @@
 # Examples — generated config per harness
 
-BirdyBeep edits real config files in your home directory, so we keep a committed, **byte-for-byte**
-copy of exactly what each installer writes. An auditor (or you) can read these before running
-anything and see the complete footprint BirdyBeep adds to a coding harness.
+A committed, **byte-for-byte** copy of exactly what each installer writes, so you can read the full
+footprint before running anything.
 
-These are not hand-written approximations — each file is the same artifact the adapter's snapshot
-tests assert against, and a drift guard (`packages/cli/src/examples.test.ts`) re-runs the real
-`birdybeep agent install <harness>` into a temp HOME on every CI run and fails if the committed file
-differs by so much as a byte.
+Each file is the same artifact the adapter's snapshot tests assert against. A drift guard
+(`packages/cli/src/examples.test.ts`) re-runs the real `birdybeep agent install <harness>` into a
+temp HOME on every CI run and fails if the committed file differs by a byte.
 
 ## Index
 
@@ -19,9 +17,9 @@ differs by so much as a byte.
 | [Cursor](./cursor/README.md)              | [`hooks.json`](./cursor/hooks.json)            | `~/.cursor/hooks.json`                                        |
 | [GitHub Copilot CLI](./copilot/README.md) | [`birdybeep.json`](./copilot/birdybeep.json)   | `~/.copilot/hooks/birdybeep.json` (honors `COPILOT_HOME`)     |
 
-Each example shows the **from-scratch** case — a brand-new config containing nothing but BirdyBeep's
-managed entries — so the managed footprint is unmistakable. On an existing config, the installer
-merges these entries in and leaves everything else untouched. Per-harness READMEs walk through both.
+Each example shows the **from-scratch** case: a brand-new config containing nothing but BirdyBeep's
+managed entries. On an existing config, the installer merges these entries in and leaves everything
+else untouched. Per-harness READMEs walk through both.
 
 ## Invariants every example demonstrates
 

@@ -58,7 +58,7 @@ a test Beep, or `birdybeep status` to check integration state.
    secret in its URL fragment), and an **`expires_at`** for the pairing session.
 2. **Confirm.** You scan the QR or open the complete link in the BirdyBeep mobile app. The app
    submits both the display code and approval secret, then shows an approval screen for this
-   machine. The display code alone is deliberately insufficient.
+   machine. The display code alone is not sufficient.
 3. **Poll.** Meanwhile the CLI polls `POST /v1/pair/token` with the device code (and a stable,
    non-reversible machine fingerprint). Until you approve, the backend replies with a
    `validation_failed`/4xx, which the CLI treats as "not yet — keep polling".
