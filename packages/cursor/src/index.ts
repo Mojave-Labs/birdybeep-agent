@@ -6,6 +6,7 @@
  * `birdybeep hook cursor` reads stdin — matching the other stdin-based adapters.
  */
 export { CURSOR_HARNESS_ID, cursorAdapter } from "./adapter";
+export { CURSOR_HOOK_EVENTS, isCursorHookEventName, isCursorHookPayload } from "./bridge";
 export { detectCursor, type DetectOptions } from "./detect";
 export { runCursorHook } from "./hook";
 export {

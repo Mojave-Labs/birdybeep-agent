@@ -11,7 +11,13 @@ import { basename, join } from "node:path";
 import { birdyBeepAgentEventSchema, SESSION_NAME_METADATA_KEY } from "@birdybeep/agent-core";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ClaudeCodeMappingError, normalizeClaudeCodeEvent } from "./normalize";
+import { BIRDYBEEP_HOOK_EVENTS } from "./install";
+import {
+  CLAUDE_CODE_HOOK_EVENTS,
+  ClaudeCodeMappingError,
+  isClaudeCodeHookPayload,
+  normalizeClaudeCodeEvent,
+} from "./normalize";
 import { SESSION_NAME_MAX_CHARS } from "./session-names";
 
 const DET = { now: () => "2026-06-14T00:00:00.000Z", generateId: () => "evt_fixed" };
@@ -193,6 +199,40 @@ describe("garbled payloads reject (typed error, never a malformed event)", () =>
     await expect(
       normalizeClaudeCodeEvent({ ...base, hook_event_name: "Bogus" }),
     ).rejects.toBeInstanceOf(ClaudeCodeMappingError);
+  });
+
+  // birdybeep-agent-gcgp.1: Cursor desktop's Claude bridge runs `birdybeep hook claude` with
+  // Cursor's own LOWERCASE step names. This normalizer must keep rejecting them (they are not
+  // Claude Code events) — and `isClaudeCodeHookPayload` must say so, which is what lets the CLI
+  // route them to the Cursor adapter instead of dropping them with a silent exit 0.
+  it("rejects Cursor's lowercase step names and does not claim them as Claude Code's", async () => {
+    for (const name of ["sessionStart", "stop", "sessionEnd", "preToolUse", "beforeSubmitPrompt"]) {
+      const payload = { ...base, hook_event_name: name, cursor_version: "3.14.27" };
+      await expect(
+        normalizeClaudeCodeEvent(payload),
+        `expected ${name} to reject`,
+      ).rejects.toBeInstanceOf(ClaudeCodeMappingError);
+      expect(isClaudeCodeHookPayload(payload), `${name} is not a Claude Code event`).toBe(false);
+    }
+  });
+});
+
+describe("isClaudeCodeHookPayload (gcgp.1)", () => {
+  it("accepts every hook event Claude Code fires, including ones we don't map", () => {
+    for (const name of CLAUDE_CODE_HOOK_EVENTS) {
+      expect(isClaudeCodeHookPayload({ ...base, hook_event_name: name }), name).toBe(true);
+    }
+    // The events the installer registers are a subset of what Claude Code can fire.
+    for (const name of BIRDYBEEP_HOOK_EVENTS) expect(CLAUDE_CODE_HOOK_EVENTS).toContain(name);
+    // Unmapped-but-real events are recognized, so they stay a QUIET skip.
+    expect(isClaudeCodeHookPayload({ ...base, hook_event_name: "PreCompact" })).toBe(true);
+  });
+
+  it("rejects non-payloads and unknown names", () => {
+    for (const value of [undefined, null, 42, "Stop", [], {}, { hook_event_name: 7 }]) {
+      expect(isClaudeCodeHookPayload(value)).toBe(false);
+    }
+    expect(isClaudeCodeHookPayload({ ...base, hook_event_name: "Bogus" })).toBe(false);
   });
 });
 

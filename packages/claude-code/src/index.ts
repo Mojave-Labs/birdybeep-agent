@@ -14,7 +14,12 @@ export {
   isBirdyBeepEntry,
   mergeBirdyBeepHooks,
 } from "./install";
-export { ClaudeCodeMappingError, normalizeClaudeCodeEvent } from "./normalize";
+export {
+  CLAUDE_CODE_HOOK_EVENTS,
+  ClaudeCodeMappingError,
+  isClaudeCodeHookPayload,
+  normalizeClaudeCodeEvent,
+} from "./normalize";
 export { claudeConfigDir, claudeSettingsPath } from "./paths";
 export {
   CLAUDE_CODE_ADAPTER_VERSION,

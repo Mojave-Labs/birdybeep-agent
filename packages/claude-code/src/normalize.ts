@@ -67,6 +67,34 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+/**
+ * Every hook event name Claude Code itself fires — a superset of the events the installer
+ * registers (`BIRDYBEEP_HOOK_EVENTS`), because a user may wire more of them by hand.
+ * Callers use {@link isClaudeCodeHookPayload} to tell a Claude Code payload we deliberately
+ * don't map (PreToolUse, PreCompact, …) from a payload that isn't Claude Code's at all — the
+ * latter is a misconfiguration and must never be dropped silently (birdybeep-agent-gcgp.1).
+ */
+export const CLAUDE_CODE_HOOK_EVENTS: readonly string[] = [
+  "Notification",
+  "PermissionRequest",
+  "PostToolUse",
+  "PreCompact",
+  "PreToolUse",
+  "SessionEnd",
+  "SessionStart",
+  "Stop",
+  "StopFailure",
+  "SubagentStart",
+  "SubagentStop",
+  "UserPromptSubmit",
+];
+
+/** Does this payload carry a hook event name Claude Code actually fires? */
+export function isClaudeCodeHookPayload(input: unknown): boolean {
+  const name = asRecord(input)["hook_event_name"];
+  return typeof name === "string" && CLAUDE_CODE_HOOK_EVENTS.includes(name);
+}
+
 /** Longest one-line completion body we compose before the normalizer's own caps take over. */
 const SUMMARY_MAX_CHARS = 200;
 
@@ -232,6 +260,9 @@ function mapHookEvent(payload: Record<string, unknown>): MappedEvent {
       };
     }
     default:
+      // Callers must not swallow this: an event name Claude Code never fires means something
+      // else is driving this hook (birdybeep-agent-gcgp.1 — Cursor's Claude bridge sends its
+      // own lowercase step names here). The CLI routes those and reports what it cannot.
       throw new ClaudeCodeMappingError(
         `unsupported Claude Code hook event: ${JSON.stringify(name)}`,
       );

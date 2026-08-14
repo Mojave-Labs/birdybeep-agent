@@ -373,6 +373,110 @@ describe("hook command dispatch (full CLI path)", () => {
   });
 });
 
+/**
+ * birdybeep-agent-gcgp.1 — Cursor desktop's Claude Code compatibility bridge reads
+ * `~/.claude/settings.json` and runs `birdybeep hook claude` with a CURSOR payload. Both
+ * payloads below are the ones captured verbatim from Cursor 3.14.27's own hook log (redacted
+ * for PII/paths; canonical copies live in `packages/cursor/src/__fixtures__/bridge-claude-*.json`),
+ * where each produced `exit code: 0` and delivered nothing.
+ */
+const BRIDGE_SESSION_START = {
+  conversation_id: "00000000-0000-4000-8000-000000000002",
+  generation_id: "",
+  model: "cursor-grok-4.5-high-fast",
+  model_id: "grok-4.5",
+  model_params: [
+    { id: "effort", value: "high" },
+    { id: "fast", value: "true" },
+  ],
+  is_background_agent: false,
+  composer_mode: "agent",
+  session_id: "00000000-0000-4000-8000-000000000002",
+  hook_event_name: "sessionStart",
+  cursor_version: "3.14.27",
+  workspace_roots: [RAW_CWD],
+  user_email: "leak@example.com",
+  transcript_path: null,
+};
+const BRIDGE_STOP = {
+  ...BRIDGE_SESSION_START,
+  generation_id: "00000000-0000-4000-8000-000000000003",
+  status: "completed",
+  loop_count: 0,
+  input_tokens: 22448,
+  output_tokens: 41,
+  hook_event_name: "stop",
+  transcript_path: "/Users/dev/.cursor/transcripts/x.jsonl",
+};
+
+describe("Cursor's Claude bridge (gcgp.1): `hook claude` fed a Cursor payload", () => {
+  async function fire(payload: unknown): Promise<{ code: number; text: string; err: string }> {
+    sink = await StubEventSink.start();
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const sinkUrl = sink.url;
+    const cmd = createHookCommand({
+      createSender: () => createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY }),
+      readStdin: () => Promise.resolve(JSON.stringify(payload)),
+    });
+    const out = capture();
+    const err = capture();
+    const code = await runCli(["hook", "claude", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: err.writer,
+      ensureConfig: false,
+    });
+    return { code, text: out.text(), err: err.text() };
+  }
+
+  for (const [name, payload, eventType] of [
+    ["sessionStart", BRIDGE_SESSION_START, "session_started"],
+    ["stop", BRIDGE_STOP, "agent_completed"],
+  ] as const) {
+    it(`delivers the bridged ${name} as a cursor event instead of dropping it`, async () => {
+      const { code, text, err } = await fire(payload);
+      expect(code).toBe(EXIT.OK);
+      expect(JSON.parse(text)).toMatchObject({
+        harness: "cursor", // attributed honestly — never masquerading as claude_code
+        routedFrom: "claude",
+        outcome: "delivered",
+        eventType,
+      });
+      expect(err).toBe("");
+      expect(sink!.received()).toHaveLength(1); // the regression: this used to be 0
+      const delivered = sink!.received()[0]!;
+      expect((delivered.body as { harness: string }).harness).toBe("cursor");
+      // Cursor's privacy invariants still hold on the bridged path.
+      assertPathsHashed(delivered, [RAW_CWD, sandbox!.home, sandbox!.realHome]);
+      assertNoAbsolutePaths(delivered);
+      expect(JSON.stringify(delivered.body)).not.toContain("leak@example.com");
+    });
+  }
+
+  it("a payload no adapter recognizes fails LOUDLY instead of exiting 0 in silence", async () => {
+    const { code, text, err } = await fire({ hook_event_name: "someFutureStep", cwd: RAW_CWD });
+    expect(code).toBe(EXIT.ERROR); // non-zero: harnesses log this; silence is what hid gcgp.1
+    expect(JSON.parse(text)).toMatchObject({ harness: "claude", outcome: "skipped" });
+    expect(err).toContain("someFutureStep");
+    expect(err).toContain("not a claude hook event");
+    expect(sink!.received()).toHaveLength(0);
+  });
+
+  it("a real Claude Code event we don't map stays a quiet skip (exit 0, no noise)", async () => {
+    const { code, text, err } = await fire({
+      hook_event_name: "PreCompact",
+      session_id: "sess-c",
+      cwd: RAW_CWD,
+      trigger: "auto",
+    });
+    expect(code).toBe(EXIT.OK);
+    expect(JSON.parse(text)).toMatchObject({ harness: "claude", outcome: "skipped" });
+    expect(err).toBe("");
+    expect(sink!.received()).toHaveLength(0);
+  });
+});
+
 describe("helpers", () => {
   it("isHarnessName guards all five harnesses", () => {
     expect(HOOK_HARNESSES).toEqual(["claude", "codex", "opencode", "cursor", "copilot"]);
