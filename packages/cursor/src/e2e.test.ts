@@ -37,6 +37,7 @@ import {
 } from "@birdybeep/test-harness";
 import { afterEach, describe, expect, it } from "vitest";
 
+import beforeMCPExecutionFixture from "./__fixtures__/beforeMCPExecution.json";
 import sessionEndFixture from "./__fixtures__/sessionEnd.json";
 import sessionStartFixture from "./__fixtures__/sessionStart.json";
 import { cursorAdapter } from "./adapter";
@@ -144,6 +145,37 @@ describe("CUR-E2E: install → fire the REAL captured fixtures → assert delive
   it("status is installed immediately after install (no trust/restart gate)", async () => {
     await setUp();
     expect(await cursorAdapter.status()).toBe("installed");
+  });
+
+  // gcgp.9 — the product's core use case for Cursor MCP: the user is blocked on a permission
+  // prompt, so a Beep must go out. Before this ticket the event was not even registered.
+  it("delivers an approval_required Beep for an MCP permission gate", async () => {
+    const { sb, fire } = await setUp();
+    const outcome = await fire(beforeMCPExecutionFixture);
+    expect(outcome).toBe("delivered");
+
+    const delivered = findByType(sink!.received(), "approval_required");
+    expect(delivered).toBeDefined();
+    const body = delivered!.body as Record<string, unknown>;
+    expect(body["status"]).toBe("waiting_for_approval");
+    expect(body["harness"]).toBe("cursor");
+    expect(body["harness_version"]).toBe("3.15.6");
+    expect(body["body"]).toBe("Approve MCP tool execute_sql?");
+    expect((body["metadata"] as Record<string, unknown>)["mcp_server"]).toBe("supabase");
+    assertPathsHashed(delivered!, [FIXTURE_CWD, sb.home, sb.realHome]);
+    assertNoAbsolutePaths(delivered!);
+    assertWithinSizeCap(delivered!);
+    expect(deliveredBearerToken(delivered!)).toBe(TOKEN);
+  });
+
+  it("the MCP gate leaks NEITHER the tool arguments NOR the server's credentialed launch line", async () => {
+    const { fire } = await setUp();
+    await fire(beforeMCPExecutionFixture);
+    const mcp = beforeMCPExecutionFixture as { tool_input: string; command: string };
+    assertNoRawValues(sink!.received()[0]!, [mcp.tool_input, mcp.command, FIXTURE_EMAIL]);
+    const all = JSON.stringify(sink!.received());
+    expect(all).not.toContain("sbp_TESTONLY_secret"); // the MCP server's access token
+    expect(all).not.toContain("select * from users");
   });
 
   it("an unmappable Cursor payload is skipped (never delivered, never throws)", async () => {

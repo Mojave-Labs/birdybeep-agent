@@ -16,8 +16,15 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 
 import { installClaudeCode } from "./install";
-import { BIRDYBEEP_HOOK_COMMAND, BIRDYBEEP_HOOK_EVENTS, isBirdyBeepEntry } from "./install";
+import {
+  BIRDYBEEP_HOOK_COMMAND,
+  BIRDYBEEP_HOOK_EVENTS,
+  installedBirdyBeepCommands,
+  isBirdyBeepEntry,
+  resolveClaudeHookCommand,
+} from "./install";
 import { claudeSettingsPath } from "./paths";
+import { uninstallClaudeCode } from "./uninstall";
 
 let sandbox: Sandbox | undefined;
 afterEach(() => {
@@ -111,6 +118,83 @@ describe("install over realistic pre-existing config", () => {
     const r2 = await installClaudeCode({}, sandbox.home);
     expect(r2.changed).toBe(false);
     assertTreesEqual(afterFirst, captureTree(sandbox.path(".claude")), "second install is a no-op");
+  });
+});
+
+// gcgp.9 — `~/.claude/settings.json` is also loaded by Cursor as a "claude-user" hook source and
+// executed with the launchd PATH; that is where `birdybeep hook claude` was logged at exit 127.
+describe("hook command resolution (gcgp.9 — the exit-127 fix)", () => {
+  const ABSOLUTE = '"/opt/node/bin/node" "/opt/pnpm/birdybeep" hook claude';
+
+  it("writes the absolute command it is given, for every registered event", async () => {
+    sandbox = createSandbox();
+    const r = await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+    expect(r.changed).toBe(true);
+    const parsed = readSettings(claudeSettingsPath(sandbox.home));
+    expect(installedBirdyBeepCommands(parsed)).toEqual([ABSOLUTE]);
+    for (const event of BIRDYBEEP_HOOK_EVENTS) {
+      expect(entriesFor(parsed, event)).toEqual([
+        { matcher: "", hooks: [{ type: "command", command: ABSOLUTE, timeout: 10 }] },
+      ]);
+    }
+  });
+
+  it("REPAIRS a legacy bare entry in place — never leaves two hooks firing", async () => {
+    sandbox = createSandbox();
+    await installClaudeCode({ hookCommand: "birdybeep hook claude" }, sandbox.home);
+    const r = await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+    expect(r.changed).toBe(true);
+    const parsed = readSettings(claudeSettingsPath(sandbox.home));
+    expect(installedBirdyBeepCommands(parsed)).toEqual([ABSOLUTE]);
+    for (const event of BIRDYBEEP_HOOK_EVENTS) {
+      expect(entriesFor(parsed, event)).toHaveLength(1);
+    }
+  });
+
+  it("preserves a user's own hook while repairing ours", async () => {
+    sandbox = createSandbox();
+    const settings = claudeSettingsPath(sandbox.home);
+    seedSettings(settings, {
+      hooks: { Stop: [{ matcher: "", hooks: [{ type: "command", command: "my-own-hook" }] }] },
+    });
+    await installClaudeCode({ hookCommand: "birdybeep hook claude" }, sandbox.home);
+    await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+    const stop = entriesFor(readSettings(settings), "Stop");
+    expect(stop).toHaveLength(2);
+    expect(JSON.stringify(stop[0])).toContain("my-own-hook");
+    expect(stop[1]).toEqual({
+      matcher: "",
+      hooks: [{ type: "command", command: ABSOLUTE, timeout: 10 }],
+    });
+  });
+
+  it("re-installing the SAME command is still a no-op (idempotent)", async () => {
+    sandbox = createSandbox();
+    await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+    const after = captureTree(sandbox.path(".claude"));
+    const r = await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+    expect(r.changed).toBe(false);
+    assertTreesEqual(
+      after,
+      captureTree(sandbox.path(".claude")),
+      "same-command install is a no-op",
+    );
+  });
+
+  it("uninstall removes an absolute-command entry as cleanly as a bare one", async () => {
+    sandbox = createSandbox();
+    const settings = claudeSettingsPath(sandbox.home);
+    const original = seedSettings(settings, {
+      hooks: { Stop: [{ matcher: "", hooks: [{ type: "command", command: "my-own-hook" }] }] },
+    });
+    await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+    await uninstallClaudeCode({}, sandbox.home);
+    expect(readFileSync(settings, "utf8")).toBe(original);
+  });
+
+  it("defaults to the portable command when the installer is not the CLI", () => {
+    expect(resolveClaudeHookCommand()).toBe(BIRDYBEEP_HOOK_COMMAND);
+    expect(BIRDYBEEP_HOOK_COMMAND).toBe("birdybeep hook claude");
   });
 });
 

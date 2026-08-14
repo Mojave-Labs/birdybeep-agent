@@ -8,10 +8,20 @@
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 
-import type { DetectionResult, DoctorResult, IntegrationStatus } from "@birdybeep/agent-core";
+import {
+  type DetectionResult,
+  type DoctorResult,
+  type IntegrationStatus,
+  staleHookCommandPaths,
+} from "@birdybeep/agent-core";
 
 import { detectClaudeCode } from "./detect";
-import { backupPathFor, BIRDYBEEP_HOOK_EVENTS, isBirdyBeepEntry } from "./install";
+import {
+  backupPathFor,
+  BIRDYBEEP_HOOK_EVENTS,
+  installedBirdyBeepCommands,
+  isBirdyBeepEntry,
+} from "./install";
 import { claudeConfigDir, claudeSettingsPath } from "./paths";
 
 /** Adapter version surfaced in the status report / backend integration record. */
@@ -35,17 +45,24 @@ interface HookState {
   /** Count of BIRDYBEEP_HOOK_EVENTS that carry a well-formed BirdyBeep entry. */
   present: number;
   total: number;
+  /**
+   * Absolute paths referenced by the installed BirdyBeep commands that no longer exist —
+   * the CLI moved, or the Node it was installed under is gone (gcgp.9). The harness fails
+   * these hooks with exit 127 and nothing else looks wrong.
+   */
+  stalePaths: string[];
 }
 
 function inspectHooks(home: string): HookState {
   const path = claudeSettingsPath(home);
   const total = BIRDYBEEP_HOOK_EVENTS.length;
-  if (!existsSync(path)) return { exists: false, parseable: true, present: 0, total };
+  const empty = { present: 0, total, stalePaths: [] };
+  if (!existsSync(path)) return { exists: false, parseable: true, ...empty };
   let parsed: Record<string, unknown>;
   try {
     parsed = asRecord(JSON.parse(readFileSync(path, "utf8")));
   } catch {
-    return { exists: true, parseable: false, present: 0, total };
+    return { exists: true, parseable: false, ...empty };
   }
   const hooks = asRecord(parsed["hooks"]);
   let present = 0;
@@ -53,7 +70,14 @@ function inspectHooks(home: string): HookState {
     const entries = hooks[event];
     if (Array.isArray(entries) && entries.some(isBirdyBeepEntry)) present += 1;
   }
-  return { exists: true, parseable: true, present, total };
+  const stalePaths = [
+    ...new Set(
+      installedBirdyBeepCommands(parsed).flatMap((command) =>
+        staleHookCommandPaths(command, existsSync),
+      ),
+    ),
+  ];
+  return { exists: true, parseable: true, present, total, stalePaths };
 }
 
 function resolveDetect(opts: StatusOptions): Promise<DetectionResult> {
@@ -141,6 +165,23 @@ export async function claudeCodeDoctor(opts: StatusOptions = {}): Promise<Doctor
               remedy: "Run `birdybeep agent install claude` to (re)install the hooks.",
             },
       );
+
+      // gcgp.9: a stale absolute path is the failure that produces exit 127 with NO other
+      // symptom — the hooks still read as fully installed and silently deliver nothing.
+      if (hooks.present > 0) {
+        checks.push(
+          hooks.stalePaths.length === 0
+            ? { name: "Hook command resolves", ok: true }
+            : {
+                name: "Hook command resolves",
+                ok: false,
+                status: "error",
+                detail: `The installed hook command points at ${hooks.stalePaths.join(", ")}, which no longer exists — the harness fails these hooks with exit 127.`,
+                remedy:
+                  "Run `birdybeep agent install claude` to rewrite the hook command for the current CLI.",
+              },
+        );
+      }
     }
 
     // Writability: a read-only settings file (or config dir) blocks install/uninstall.

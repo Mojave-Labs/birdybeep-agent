@@ -14,6 +14,7 @@ export * from "./dedup";
 export * from "./event";
 export * from "./fingerprint";
 export * from "./hook";
+export * from "./hook-command";
 export * from "./integrations";
 export * from "./normalize";
 export * from "./pairing";

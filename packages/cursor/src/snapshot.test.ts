@@ -73,6 +73,20 @@ describe("generated config snapshots (§21.1)", () => {
     expectNoSecrets(out);
   });
 
+  // gcgp.9: what a REAL install writes — the resolved absolute launcher, not the portable form
+  // above. Pinned to a fixed fake path so the shape (quoting, both absolutes, one entry per
+  // event) is locked without depending on where the CLI happens to live on this machine.
+  it("a resolved install writes the absolute launcher into every event", async () => {
+    sandbox = createSandbox();
+    await installCursor(
+      { hookCommand: '"/opt/node-22/bin/node" "/opt/pnpm/bin/birdybeep" hook cursor' },
+      sandbox.home,
+    );
+    const out = readFileSync(cursorHooksPath(sandbox.home), "utf8");
+    expect(out).toMatchSnapshot();
+    expectNoSecrets(out);
+  });
+
   it("double-install is idempotent (second output identical to first)", async () => {
     sandbox = createSandbox();
     const first = await installAndRead(sandbox);

@@ -171,6 +171,18 @@ the harness version detected on the current machine so API drift is visible in d
 Every install backs up the original file once (a `.birdybeep-backup` sibling) before its first
 change, adds only BirdyBeep-managed entries, and writes no token.
 
+The snippets below show the portable form of the hook command. What the installer actually writes is
+the absolute path of the Node and the `birdybeep` entry point it is running under — e.g.
+`"/usr/local/bin/node" "/usr/local/bin/birdybeep" hook cursor`. Harnesses that run hooks from a GUI
+process (Cursor, and Cursor's reading of `~/.claude/settings.json`) get the `PATH` the OS gave the
+app rather than your shell's, so a bare command exits 127 with `command not found`. Two consequences:
+
+- Set `BIRDYBEEP_HOOK_COMMAND` before installing to write a different launcher —
+  `BIRDYBEEP_HOOK_COMMAND="mise exec -- birdybeep" birdybeep agent install all`.
+- Move the CLI, or switch Node versions, and the written path stops resolving. `birdybeep doctor`
+  reports the stale path; `birdybeep agent install <harness>` rewrites the entry in place (it
+  replaces the managed entry rather than adding a second one).
+
 #### Claude Code
 
 - **File:** `~/.claude/settings.json`
@@ -217,10 +229,11 @@ A managed hook entry looks like this:
 - **File:** `~/.cursor/hooks.json`
 - **Change:** ensures the `"version": 1` scaffold Cursor requires (only if absent — an existing
   value is left alone) and appends a BirdyBeep-managed entry to each consumed hook event:
-  `sessionStart`, `sessionEnd`, `beforeShellExecution`, `preToolUse`, `postToolUse`, `stop`,
-  `subagentStart`, `subagentStop`, plus `beforeSubmitPrompt`, `postToolUseFailure`, and
-  `afterAgentResponse` (registered for forward-compatibility; they have no mapping today and the
-  hook returns `skipped`). Each entry runs `birdybeep hook cursor`. Your own hooks are preserved.
+  `sessionStart`, `sessionEnd`, `beforeShellExecution`, `beforeMCPExecution`, `preToolUse`,
+  `postToolUse`, `stop`, `subagentStart`, `subagentStop`, plus `beforeSubmitPrompt`,
+  `postToolUseFailure`, and `afterAgentResponse` (registered for forward-compatibility; they have no
+  mapping today and the hook returns `skipped`). Each entry runs `birdybeep hook cursor`. Your own
+  hooks are preserved.
 - **Status:** `installed`. Cursor reads `hooks.json` live — no restart, no trust step.
 
 ```json
@@ -233,7 +246,8 @@ A managed hook entry looks like this:
 Headless `cursor-agent -p` fires only `sessionStart`/`sessionEnd` **as of `cursor-agent
 2026.07.09`** (empirically captured 2026-07-15; it is a version-dependent subset), so on the CLI a
 completed `sessionEnd` is your "agent finished" Beep; the IDE additionally fires `stop`, the tool
-events, and the `beforeShellExecution` approval gate. Cursor's payloads include `user_email` and
+events, and the `beforeShellExecution` / `beforeMCPExecution` approval gates — a shell command and
+an MCP tool call both Beep as "needs your approval". Cursor's payloads include `user_email` and
 `transcript_path` — the adapter drops **both** outright and hashes the workspace root like every
 other path.
 

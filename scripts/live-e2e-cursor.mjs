@@ -72,7 +72,9 @@ const work = join(sandbox, "work");
 const bin = join(sandbox, "bin");
 for (const d of [home, work, bin]) mkdirSync(d, { recursive: true });
 
-// birdybeep on PATH — the hooks.json command is the bare name `birdybeep hook cursor`.
+// birdybeep on PATH so the PORTABLE (bare) form of the managed command also resolves. gcgp.9:
+// running the CLI as `node <bin.js>` makes install fall back to that portable form, so this rig
+// covers the fallback; the absolute-launcher path is proved in packages/cursor's hook-exec E2E.
 writeFileSync(join(bin, "birdybeep"), `#!/bin/sh\nexec node "${CLI_BIN}" "$@"\n`);
 chmodSync(join(bin, "birdybeep"), 0o755);
 
@@ -169,9 +171,10 @@ try {
   const hooks = JSON.parse(readFileSync(hooksPath, "utf8"));
   assert(hooks.version === 1, `hooks.json version !== 1 (${hooks.version})`);
   const hasBirdy = Object.values(hooks.hooks ?? {}).some(
-    (arr) => Array.isArray(arr) && arr.some((e) => e?.command === "birdybeep hook cursor"),
+    // gcgp.9: the launcher prefix is machine-resolved, so match the managed TAIL, not the whole string.
+    (arr) => Array.isArray(arr) && arr.some((e) => /(^|\s)hook cursor$/.test(e?.command ?? "")),
   );
-  assert(hasBirdy, "hooks.json has no `birdybeep hook cursor` entry");
+  assert(hasBirdy, "hooks.json has no `… hook cursor` BirdyBeep entry");
   log(`hooks.json events: ${Object.keys(hooks.hooks ?? {}).join(", ")}`);
 
   // ── 3. real cursor-agent session (no tools → no approval gate dropped) ─────

@@ -20,9 +20,12 @@ import {
   BIRDYBEEP_HOOK_EVENTS,
   CURSOR_HOOKS_VERSION,
   installCursor,
+  installedBirdyBeepCommands,
   isBirdyBeepEntry,
+  resolveCursorHookCommand,
 } from "./install";
 import { cursorHooksPath } from "./paths";
+import { uninstallCursor } from "./uninstall";
 
 let sandbox: Sandbox | undefined;
 afterEach(() => {
@@ -116,6 +119,104 @@ describe("install over realistic pre-existing hooks config", () => {
     const r2 = await installCursor({}, sandbox.home);
     expect(r2.changed).toBe(false);
     assertTreesEqual(afterFirst, captureTree(sandbox.path(".cursor")), "second install is a no-op");
+  });
+});
+
+describe("hook command resolution (gcgp.9 — the exit-127 fix)", () => {
+  const ABSOLUTE = '"/opt/node/bin/node" "/opt/pnpm/birdybeep" hook cursor';
+
+  it("registers beforeMCPExecution alongside its beforeShellExecution sibling", async () => {
+    sandbox = createSandbox();
+    await installCursor({}, sandbox.home);
+    const parsed = readHooks(cursorHooksPath(sandbox.home));
+    expect(entriesFor(parsed, "beforeMCPExecution").some(isBirdyBeepEntry)).toBe(true);
+    // Same entry shape as the shell gate it mirrors.
+    expect(entriesFor(parsed, "beforeMCPExecution")).toEqual(
+      entriesFor(parsed, "beforeShellExecution"),
+    );
+  });
+
+  it("writes the absolute command it is given, for every registered event", async () => {
+    sandbox = createSandbox();
+    const r = await installCursor({ hookCommand: ABSOLUTE }, sandbox.home);
+    expect(r.changed).toBe(true);
+    const parsed = readHooks(cursorHooksPath(sandbox.home));
+    expect(installedBirdyBeepCommands(parsed)).toEqual([ABSOLUTE]);
+    for (const event of BIRDYBEEP_HOOK_EVENTS) {
+      expect(entriesFor(parsed, event)).toEqual([{ command: ABSOLUTE, timeout: 30 }]);
+    }
+  });
+
+  it("REPAIRS a legacy bare entry in place — never leaves two hooks firing", async () => {
+    sandbox = createSandbox();
+    const hooks = cursorHooksPath(sandbox.home);
+    // Exactly what an older BirdyBeep wrote (and what hit exit 127 in Cursor's own log).
+    await installCursor({ hookCommand: "birdybeep hook cursor" }, sandbox.home);
+
+    const r = await installCursor({ hookCommand: ABSOLUTE }, sandbox.home);
+    expect(r.changed).toBe(true);
+    const parsed = readHooks(hooks);
+    expect(installedBirdyBeepCommands(parsed)).toEqual([ABSOLUTE]); // rewritten, not appended
+    for (const event of BIRDYBEEP_HOOK_EVENTS) {
+      expect(entriesFor(parsed, event)).toHaveLength(1);
+    }
+  });
+
+  it("repairs a STALE absolute entry (CLI reinstalled elsewhere / node switched)", async () => {
+    sandbox = createSandbox();
+    await installCursor(
+      { hookCommand: '"/gone/node-v20/bin/node" "/gone/birdybeep" hook cursor' },
+      sandbox.home,
+    );
+    await installCursor({ hookCommand: ABSOLUTE }, sandbox.home);
+    const parsed = readHooks(cursorHooksPath(sandbox.home));
+    expect(installedBirdyBeepCommands(parsed)).toEqual([ABSOLUTE]);
+  });
+
+  it("still preserves a user's own hook while repairing ours", async () => {
+    sandbox = createSandbox();
+    const hooks = cursorHooksPath(sandbox.home);
+    seedHooks(hooks, {
+      version: 1,
+      hooks: { sessionStart: [{ command: "superconductor-hook", timeout: 10 }] },
+    });
+    await installCursor({ hookCommand: "birdybeep hook cursor" }, sandbox.home);
+    await installCursor({ hookCommand: ABSOLUTE }, sandbox.home);
+    const start = entriesFor(readHooks(hooks), "sessionStart");
+    expect(start).toHaveLength(2);
+    expect(start[0]).toEqual({ command: "superconductor-hook", timeout: 10 });
+    expect(start[1]).toEqual({ command: ABSOLUTE, timeout: 30 });
+  });
+
+  it("re-installing the SAME command is still a no-op (idempotent)", async () => {
+    sandbox = createSandbox();
+    await installCursor({ hookCommand: ABSOLUTE }, sandbox.home);
+    const after = captureTree(sandbox.path(".cursor"));
+    const r = await installCursor({ hookCommand: ABSOLUTE }, sandbox.home);
+    expect(r.changed).toBe(false);
+    assertTreesEqual(
+      after,
+      captureTree(sandbox.path(".cursor")),
+      "same-command install is a no-op",
+    );
+  });
+
+  it("uninstall removes an absolute-command entry as cleanly as a bare one", async () => {
+    sandbox = createSandbox();
+    const hooks = cursorHooksPath(sandbox.home);
+    const original = seedHooks(hooks, {
+      version: 1,
+      hooks: { sessionStart: [{ command: "superconductor-hook", timeout: 10 }] },
+    });
+    await installCursor({ hookCommand: ABSOLUTE }, sandbox.home);
+    await uninstallCursor({}, sandbox.home);
+    expect(readFileSync(hooks, "utf8")).toBe(original);
+  });
+
+  it("defaults to the portable command when the installer is not the CLI", () => {
+    // Under vitest, argv[1] is the test runner — resolution must NOT bake that in.
+    expect(resolveCursorHookCommand()).toBe(BIRDYBEEP_HOOK_COMMAND);
+    expect(BIRDYBEEP_HOOK_COMMAND).toBe("birdybeep hook cursor");
   });
 });
 

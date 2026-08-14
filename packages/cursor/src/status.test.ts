@@ -76,7 +76,10 @@ describe("statusReport()", () => {
   });
 });
 
-function failingCheck(checks: { name: string; ok: boolean; remedy?: string }[], namePart: string) {
+function failingCheck(
+  checks: { name: string; ok: boolean; detail?: string; remedy?: string }[],
+  namePart: string,
+) {
   return checks.find((c) => !c.ok && c.name.includes(namePart));
 }
 
@@ -138,6 +141,49 @@ describe("doctor()", () => {
     const check = failingCheck(result.checks, "valid JSON");
     expect(check?.remedy).toContain(backupPath);
     expect(check?.remedy).toContain("birdybeep agent install cursor");
+  });
+
+  // gcgp.9: the whole point of writing an absolute path is that it can go stale (CLI reinstalled
+  // elsewhere, node version switched). Cursor then fails the hook with exit 127 and nothing else
+  // looks wrong — hooks.json still lists a full, well-formed BirdyBeep entry — so doctor is the
+  // ONLY place the user can learn about it.
+  it("flags a STALE absolute hook command and offers the repair", async () => {
+    sandbox = createSandbox();
+    await installCursor(
+      { hookCommand: '"/gone/node-v20/bin/node" "/gone/bin/birdybeep" hook cursor' },
+      sandbox.home,
+    );
+    const result = await cursorDoctor({ home: sandbox.home, detect: present() });
+    const check = failingCheck(result.checks, "resolves");
+    expect(check).toBeDefined();
+    expect(check?.detail).toContain("/gone/node-v20/bin/node");
+    expect(check?.detail).toContain("127");
+    expect(check?.remedy).toContain("birdybeep agent install cursor");
+    expect(result.ok).toBe(false);
+    // …and the hooks themselves still read as fully installed, which is exactly why this check
+    // has to exist as its own signal.
+    expect(await cursorStatus({ home: sandbox.home, detect: present() })).toBe("installed");
+  });
+
+  it("does not flag a resolvable absolute hook command", async () => {
+    sandbox = createSandbox();
+    const bin = sandbox.path("birdybeep");
+    writeFileSync(bin, "#!/usr/bin/env node\n");
+    await installCursor(
+      { hookCommand: `"${process.execPath}" "${bin}" hook cursor` },
+      sandbox.home,
+    );
+    const result = await cursorDoctor({ home: sandbox.home, detect: present() });
+    expect(failingCheck(result.checks, "resolves")).toBeUndefined();
+    expect(result.ok).toBe(true);
+  });
+
+  it("does not flag the portable bare command (no absolute path to go stale)", async () => {
+    sandbox = createSandbox();
+    await installCursor({ hookCommand: "birdybeep hook cursor" }, sandbox.home);
+    const result = await cursorDoctor({ home: sandbox.home, detect: present() });
+    expect(failingCheck(result.checks, "resolves")).toBeUndefined();
+    expect(result.ok).toBe(true);
   });
 
   it("flags a read-only hooks file (POSIX)", async () => {

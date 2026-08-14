@@ -16,12 +16,18 @@
  *   sessionEnd {other}                    → session_ended    (terminal, non-notifying)
  *   stop                                  → agent_completed  (IDE turn-complete)
  *   beforeShellExecution                  → approval_required (shell command permission gate)
+ *   beforeMCPExecution                    → approval_required (MCP tool permission gate)
  *   preToolUse                            → tool_started
  *   postToolUse                           → tool_finished
  *   subagentStart                         → subagent_started
  *   subagentStop                          → subagent_completed
  *   anything else (beforeSubmitPrompt / postToolUseFailure / afterAgentResponse / unknown)
  *                                         → throw CursorMappingError → the hook returns "skipped"
+ *
+ * CRITICAL PRIVACY, MCP (gcgp.9): the `beforeMCPExecution` payload carries `tool_input` (the
+ * full tool arguments) and `command` / `mcp_server_url` (the server's launch line, which can
+ * contain API keys). None of those are read here. Only `tool_name` + `mcp_server_name` — the
+ * same class of safe identifier `preToolUse` already carries — are used.
  *
  * WHY sessionEnd-completed → agent_completed (not session_ended): headless `cursor-agent -p`
  * fires ONLY sessionStart + sessionEnd — it never fires `stop`. So for CLI users, a
@@ -142,6 +148,22 @@ function mapCursorEvent(payload: Record<string, unknown>, name: string): MappedE
         body: "Approve shell command?",
         metadata: {},
       };
+    case "beforeMCPExecution": {
+      // The MCP permission gate (gcgp.9) — the same blocking pre-execution hook as
+      // beforeShellExecution, so it earns the same beep. tool_name / mcp_server_name are safe
+      // identifiers (same class as preToolUse's tool_name); `tool_input`, `mcp_server_url` and
+      // `command` (the server's launch line, which can carry credentials) are content and are
+      // NEVER copied out.
+      const tool = str(payload["tool_name"]);
+      const server = str(payload["mcp_server_name"]);
+      return {
+        eventType: "approval_required",
+        status: "waiting_for_approval",
+        title: "Cursor needs approval",
+        body: tool ? `Approve MCP tool ${tool}?` : "Approve MCP tool?",
+        metadata: { tool, mcp_server: server },
+      };
+    }
     case "preToolUse": {
       // tool_name is a safe identifier (e.g. "Edit"); tool arguments are content — never persisted.
       const tool = str(payload["tool_name"]);

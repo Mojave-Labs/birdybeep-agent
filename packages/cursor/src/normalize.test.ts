@@ -85,6 +85,20 @@ const cases: Case[] = [
     status: "waiting_for_approval",
   },
   {
+    // gcgp.9 — the MCP permission gate, sibling of beforeShellExecution.
+    name: "beforeMCPExecution",
+    payload: {
+      ...base,
+      hook_event_name: "beforeMCPExecution",
+      tool_name: "execute_sql",
+      tool_input: '{"query":"select 1"}',
+      mcp_server_name: "supabase",
+      command: "npx -y @supabase/mcp-server --access-token sbp_TESTONLY_secret",
+    },
+    eventType: "approval_required",
+    status: "waiting_for_approval",
+  },
+  {
     name: "preToolUse",
     payload: { ...base, hook_event_name: "preToolUse", tool_name: "Edit" },
     eventType: "tool_started",
@@ -151,6 +165,36 @@ describe("§9.x → §10.1 mapping", () => {
     expect(NOTIFY_DEFAULT[ev.event_type]).toBe(false);
   });
 
+  it("beforeMCPExecution beeps exactly like beforeShellExecution (gcgp.9)", async () => {
+    const mcp = await normalizeCursorEvent(
+      {
+        ...base,
+        hook_event_name: "beforeMCPExecution",
+        tool_name: "execute_sql",
+        mcp_server_name: "supabase",
+      },
+      DET,
+    );
+    const shell = await normalizeCursorEvent(
+      { ...base, hook_event_name: "beforeShellExecution", command: "terraform apply" },
+      DET,
+    );
+    expect(mcp.event_type).toBe(shell.event_type); // both approval_required
+    expect(mcp.status).toBe(shell.status); // both waiting_for_approval
+    expect(mcp.title).toBe(shell.title);
+    expect(NOTIFY_DEFAULT[mcp.event_type]).toBe(true); // …and it beeps
+    expect(mcp.body).toBe("Approve MCP tool execute_sql?");
+    const metadata = mcp.metadata as Record<string, unknown>;
+    expect(metadata["tool"]).toBe("execute_sql");
+    expect(metadata["mcp_server"]).toBe("supabase");
+  });
+
+  it("beforeMCPExecution without a tool name still produces a usable approval beep", async () => {
+    const ev = await normalizeCursorEvent({ ...base, hook_event_name: "beforeMCPExecution" }, DET);
+    expect(ev.event_type).toBe("approval_required");
+    expect(ev.body).toBe("Approve MCP tool?");
+  });
+
   it("carries a safe tool identifier into metadata for preToolUse", async () => {
     const ev = await normalizeCursorEvent(
       { ...base, hook_event_name: "preToolUse", tool_name: "Bash" },
@@ -200,5 +244,28 @@ describe("privacy — cwd hashed, user_email + transcript_path DROPPED (delegate
     expect(serialized).not.toContain(RAW_TRANSCRIPT);
     expect(serialized).not.toContain(".jsonl"); // no transcript path fragment survives
     expect(ev.workspace.cwd).toMatch(/^h_[0-9a-f]{16}$/); // cwd is hashed
+  });
+
+  it("beforeMCPExecution drops tool_input and the MCP server launch line (gcgp.9)", async () => {
+    // Cursor hands this hook the full tool arguments AND the server's command line, which
+    // routinely carries an access token. Neither may be read, let alone sent.
+    const ev = await normalizeCursorEvent(
+      {
+        ...base,
+        hook_event_name: "beforeMCPExecution",
+        tool_name: "execute_sql",
+        tool_input: '{"query":"select * from users where email = \'a@b.c\'"}',
+        mcp_server_name: "supabase",
+        mcp_server_url: "https://mcp.internal.example.com/sse?key=SECRETKEY",
+        command: "npx -y @supabase/mcp-server --access-token sbp_TESTONLY_secret",
+      },
+      DET,
+    );
+    const serialized = JSON.stringify(ev);
+    expect(serialized).not.toContain("sbp_TESTONLY_secret");
+    expect(serialized).not.toContain("SECRETKEY");
+    expect(serialized).not.toContain("mcp.internal.example.com");
+    expect(serialized).not.toContain("select * from users");
+    expect(serialized).not.toContain("a@b.c");
   });
 });
