@@ -1,9 +1,7 @@
 # Releasing `@birdybeep/*`
 
-The public packages are published to npm with the **Changesets "Version PR" flow** — the
-de-facto standard for open-source npm monorepos (Turborepo, Astro, tRPC, Radix, and many
-others release the same way). Merging a bot-generated PR is the release switch, so **ordinary
-commits to `main` never publish** — only a deliberate merge does.
+Packages are published to npm with the **Changesets "Version PR" flow**. Merging a bot-generated PR
+is the release switch, so **ordinary commits to `main` never publish**.
 
 ## The published packages
 

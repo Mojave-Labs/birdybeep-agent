@@ -1,11 +1,7 @@
 # Installing BirdyBeep
 
-This is the canonical walkthrough for getting BirdyBeep running in your coding harness: install the
-CLI, pair your machine, install the agent adapters, and verify that events flow. The whole thing
-takes a couple of minutes, and every step is reversible.
-
-BirdyBeep is open source (MIT) and auditable on purpose — this code runs in your dev environment, so
-you can read exactly what it does. The short version of the trust story:
+Install the CLI, pair your machine, install the agent adapters, and verify that events flow. Every
+step is reversible.
 
 - **Installs are non-destructive.** Each adapter adds only BirdyBeep-managed entries to your existing
   config, backs up the original once before its first change, and is fully reversible.
@@ -16,12 +12,13 @@ you can read exactly what it does. The short version of the trust story:
 
 ## Supported harnesses
 
-| Harness         | Target     | Status      | Config it patches                                              | Extra step              |
-| --------------- | ---------- | ----------- | -------------------------------------------------------------- | ----------------------- |
-| **Claude Code** | `claude`   | **shipped** | `~/.claude/settings.json`                                      | none — live immediately |
-| **Codex**       | `codex`    | **shipped** | `~/.codex/config.toml` (honors `$CODEX_HOME`)                  | one-time `/hooks` trust |
-| **OpenCode**    | `opencode` | **shipped** | `~/.config/opencode/opencode.json` (honors `$XDG_CONFIG_HOME`) | restart OpenCode once   |
-| **Cursor**      | `cursor`   | **shipped** | `~/.cursor/hooks.json`                                         | none — live immediately |
+| Harness            | Target     | Config it patches                                              | Extra step              |
+| ------------------ | ---------- | -------------------------------------------------------------- | ----------------------- |
+| Claude Code        | `claude`   | `~/.claude/settings.json`                                      | none — live immediately |
+| Codex              | `codex`    | `~/.codex/config.toml` (honors `$CODEX_HOME`)                  | one-time `/hooks` trust |
+| OpenCode           | `opencode` | `~/.config/opencode/opencode.json` (honors `$XDG_CONFIG_HOME`) | restart OpenCode once   |
+| Cursor             | `cursor`   | `~/.cursor/hooks.json`                                         | none — live immediately |
+| GitHub Copilot CLI | `copilot`  | `~/.copilot/hooks/birdybeep.json` (honors `$COPILOT_HOME`)     | none — live immediately |
 
 Anything not in that table is not supported today — see
 [Harness support & roadmap](#harness-support--roadmap) for what we looked at and why. Each harness's
@@ -332,15 +329,15 @@ queue as it goes and exits non-zero if anything is wrong.
 
 ## 6. Staying up to date
 
-You don't have to check for updates — the CLI does it for you. When you run any command, it prints a
-one-line notice to **stderr** if a newer `@birdybeep/cli` has been published:
+When you run any command, the CLI prints a one-line notice to **stderr** if a newer
+`@birdybeep/cli` has been published:
 
 ```text
 a new version of birdybeep is available: 0.1.0 → 0.2.0
 upgrade with: npm install -g @birdybeep/cli@latest
 ```
 
-The notice is **non-intrusive by design**:
+The notice is:
 
 - **Cached.** The registry is checked at most once a day; every other run reads a small cache in your
   config dir, so there's no per-command network hit.
@@ -437,8 +434,8 @@ Before anything leaves your machine, the hook sanitizes the payload:
   `key=value` secrets.
 - **Strings are truncated** (title ~200, body ~2000, metadata values ~500 chars) under a 16 KB total
   cap.
-- The adapters deliberately do **not** forward raw user or assistant content — only safe
-  discriminators like a tool name or status flow through.
+- **Raw user and assistant content is not forwarded** — only safe discriminators like a tool name
+  or status flow through.
 
 The hook always returns fast and never blocks your harness. If a send fails, the event goes to a
 best-effort local retry queue (24h retention, strict permissions) that's drained opportunistically

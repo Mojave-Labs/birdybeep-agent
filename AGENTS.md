@@ -28,6 +28,17 @@ bd close <id>         # Complete work
 bd dolt push          # Push beads data to remote
 ```
 
+## ✍️ Writing style for user-facing text
+
+Full rules in `CLAUDE.md`. The short version, for READMEs, `docs/`, npm descriptions, CLI output,
+and error messages: answer what the reader is trying to do, then stop.
+
+Never explain what this repo is relative to the product (public, open-source, MIT, auditable, "the
+client half", or that a separate repo holds the app/backend). Never explain why a design decision
+was made — that goes on the beads ticket. Cut "deliberately", "carefully", "by design", "robust",
+"comprehensive", "seamless". State behavior in specifics rather than reassurance. Each fact lives
+in exactly one document; link to it from anywhere else.
+
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.

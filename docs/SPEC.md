@@ -1,10 +1,8 @@
 # BirdyBeep — Agent Integration Spec
 
-> **Scope & provenance.** This is a **public excerpt** of BirdyBeep's product PRD, limited to the parts that describe what the open-source CLI and agent adapters in this repo actually do — the integration strategy, the CLI surface, the per-harness event mappings, the normalized event model, and exactly what data leaves your machine and how tokens are stored. Business details (pricing, metrics, roadmap, backend internals) live in the private product repo and are intentionally not reproduced here. The mobile app's design system does not apply to this repo (this is a headless CLI).
->
-> This file is the normative reference for building and auditing the code in `birdybeep-agent`. The canonical wire schema is the runnable source of truth: the product repo's `packages/schemas` (mirrored here by `agent-core`'s `CORE-SCHEMA`).
+> **Scope.** The integration contract: strategy, CLI surface, per-harness event mappings, the normalized event model, and what data leaves the machine and how tokens are stored. This file is the normative reference for building and auditing `birdybeep-agent`. The canonical wire schema is the runnable source of truth: `packages/schemas` in the product repo, mirrored here by `agent-core`'s `CORE-SCHEMA`.
 
-BirdyBeep is a mobile notification layer for AI coding agents: when Claude Code, Codex, OpenCode, Cursor, or GitHub Copilot CLI needs you (approval, input, finished, idle, failed), it sends a push to your phone. This repo is the part that runs in your dev environment — install once per machine, and supported agent sessions surface automatically as they emit lifecycle events.
+BirdyBeep is a mobile notification layer for AI coding agents: when Claude Code, Codex, OpenCode, Cursor, or GitHub Copilot CLI needs you (approval, input, finished, idle, failed), it sends a push to your phone. Install once per machine, and supported agent sessions surface automatically as they emit lifecycle events.
 
 ---
 
@@ -292,7 +290,7 @@ type BirdyBeepEventType =
 > is never replayed to hooks, so it only takes effect from the next session). Codex and
 > Cursor expose no session name at all — only opaque ids — and OpenCode's Session `title` is
 > conversation-derived rather than user-given, so forwarding it would leak prompt content; those
-> three deliberately send nothing. It is a name a human typed, never an id and never path-derived,
+> three send nothing. It is a name a human typed, never an id and never path-derived,
 > and it is redacted/scrubbed/truncated by the normalizer exactly like the title it mirrors.
 
 The event is sent to the BirdyBeep API (`POST /v1/agent-events`), authenticated by the machine installation token. The endpoint validates the schema, enforces a max payload size, and returns quickly. Title/body are used only for delivering the push notification — they are **not** persisted server-side by default.

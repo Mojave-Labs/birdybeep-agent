@@ -1,8 +1,7 @@
 # Contributing to BirdyBeep
 
-Thanks for helping improve the public CLI and adapters. This code edits real user configuration,
-handles a machine credential, and runs on every agent lifecycle event, so reproducibility and privacy
-are part of correctness.
+This code edits real user configuration, handles a machine credential, and runs on every agent
+lifecycle event, so reproducibility and privacy are part of correctness.
 
 ## Before opening a change
 
