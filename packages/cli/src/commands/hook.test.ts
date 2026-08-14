@@ -475,6 +475,35 @@ describe("Cursor's Claude bridge (gcgp.1): `hook claude` fed a Cursor payload", 
     expect(err).toBe("");
     expect(sink!.received()).toHaveLength(0);
   });
+
+  // birdybeep-agent-gcgp.12: the loud path must fire for FOREIGN payloads only. SPEC §5 defers
+  // TaskCreated/TaskCompleted — real Claude Code events whose §10.1 targets don't exist yet —
+  // so wiring one has to stay a silent exit 0, while Cursor's lowercase shape (the payload that
+  // actually is from another tool) still routes or fails loudly. Both halves, side by side.
+  for (const name of ["TaskCreated", "TaskCompleted"]) {
+    it(`a deferred-but-real event (${name}) is a quiet exit 0, never a per-fire error`, async () => {
+      const { code, text, err } = await fire({
+        hook_event_name: name,
+        session_id: "sess-c",
+        cwd: RAW_CWD,
+      });
+      expect(code).toBe(EXIT.OK);
+      expect(JSON.parse(text)).toMatchObject({ harness: "claude", outcome: "skipped" });
+      expect(err).toBe(""); // the defect: this used to be an error line on EVERY fire
+      expect(sink!.received()).toHaveLength(0); // still unmapped — quiet, not invented
+    });
+  }
+
+  it("SubagentStart is Codex's, not Claude Code's, so it still fails loudly", async () => {
+    const { code, err } = await fire({
+      hook_event_name: "SubagentStart",
+      session_id: "sess-c",
+      cwd: RAW_CWD,
+    });
+    expect(code).toBe(EXIT.ERROR);
+    expect(err).toContain("SubagentStart");
+    expect(sink!.received()).toHaveLength(0);
+  });
 });
 
 describe("helpers", () => {
