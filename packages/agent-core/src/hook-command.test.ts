@@ -165,6 +165,127 @@ describe("tokenizeCommand", () => {
 
   it("round-trips what shellQuote writes, including escapes", () => {
     const quoted = shellQuote('/home/a$b/"c"/birdybeep', "darwin");
-    expect(tokenizeCommand(quoted)).toEqual(['/home/a$b/"c"/birdybeep']);
+    expect(tokenizeCommand(quoted, "darwin")).toEqual(['/home/a$b/"c"/birdybeep']);
+  });
+});
+
+/**
+ * gcgp.9 FOLLOW-UP — cross-platform regression. The first cut of the tokenizer ate `\` inside
+ * quotes as a POSIX escape, which shreds every Windows path: `"C:\Users\x\npm\birdybeep.cmd"`
+ * became `C:UsersxnpmbirdybeepG.cmd`. Consequences on Windows were worse than the bug being
+ * fixed — `doctor` called every healthy install stale, and the matcher stopped recognizing our
+ * own entry so `install` would append a duplicate hook instead of rewriting in place.
+ *
+ * These cases build BOTH platform shapes as literal strings and pass `platform` explicitly, so
+ * they exercise Windows semantics on macOS/Linux too. The local pre-push gate is macOS-only —
+ * without this, the next such defect would again only surface in CI.
+ */
+describe("cross-platform command shapes (run on EVERY host)", () => {
+  // Exactly what a Windows install writes: `process.execPath` + the npm `.cmd` shim.
+  const WIN_NODE = "C:\\Program Files\\nodejs\\node.exe";
+  const WIN_BIN = "C:\\Users\\x\\AppData\\Roaming\\npm\\birdybeep.cmd";
+  const WIN_COMMAND = `"${WIN_NODE}" "${WIN_BIN}" hook cursor`;
+  // …and what the CI runner that caught this actually had.
+  const CI_NODE = "C:\\hostedtoolcache\\windows\\node\\22.22.3\\x64\\node.exe";
+
+  const POSIX_NODE = "/usr/local/bin/node";
+  const POSIX_BIN = "/usr/local/bin/birdybeep";
+  const POSIX_COMMAND = `"${POSIX_NODE}" "${POSIX_BIN}" hook cursor`;
+
+  it("tokenizes the Windows shape without eating path separators", () => {
+    expect(tokenizeCommand(WIN_COMMAND, "win32")).toEqual([WIN_NODE, WIN_BIN, "hook", "cursor"]);
+    expect(tokenizeCommand(`"${CI_NODE}" hook cursor`, "win32")).toEqual([
+      CI_NODE,
+      "hook",
+      "cursor",
+    ]);
+  });
+
+  it("tokenizes the POSIX shape and still un-escapes what a POSIX shell would", () => {
+    expect(tokenizeCommand(POSIX_COMMAND, "linux")).toEqual([
+      POSIX_NODE,
+      POSIX_BIN,
+      "hook",
+      "cursor",
+    ]);
+    expect(tokenizeCommand('"/home/a\\$b/birdybeep" hook cursor', "linux")).toEqual([
+      "/home/a$b/birdybeep",
+      "hook",
+      "cursor",
+    ]);
+  });
+
+  it("keeps Windows-only path shapes intact — UNC and a `$` directory", () => {
+    // These are precisely the cases the POSIX branch could NOT get right, which is why
+    // tokenizeCommand takes a platform rather than relying on one lenient rule.
+    expect(tokenizeCommand('"\\\\server\\share\\birdybeep.cmd" hook cursor', "win32")).toEqual([
+      "\\\\server\\share\\birdybeep.cmd",
+      "hook",
+      "cursor",
+    ]);
+    expect(tokenizeCommand('"C:\\$Recycle.Bin\\birdybeep.cmd" hook cursor', "win32")).toEqual([
+      "C:\\$Recycle.Bin\\birdybeep.cmd",
+      "hook",
+      "cursor",
+    ]);
+  });
+
+  it("decodes the doubled quote cmd/PowerShell use for a literal quote", () => {
+    expect(tokenizeCommand('"C:\\a""b\\birdybeep.cmd" hook cursor', "win32")).toEqual([
+      'C:\\a"b\\birdybeep.cmd',
+      "hook",
+      "cursor",
+    ]);
+  });
+
+  it("round-trips shellQuote on BOTH platforms", () => {
+    for (const [platform, value] of [
+      ["win32", WIN_BIN],
+      ["win32", "C:\\$Recycle.Bin\\birdybeep.cmd"],
+      ["darwin", POSIX_BIN],
+      ["darwin", '/home/a$b/`c`/"d"/birdybeep'],
+    ] as [NodeJS.Platform, string][]) {
+      expect(
+        tokenizeCommand(shellQuote(value, platform), platform),
+        `${platform}: ${value}`,
+      ).toEqual([value]);
+    }
+  });
+
+  it("RECOGNIZES our own Windows entry — otherwise install appends a duplicate hook", () => {
+    expect(isBirdyBeepHookCommand(WIN_COMMAND, "cursor", [], "win32")).toBe(true);
+    expect(isBirdyBeepHookCommand(POSIX_COMMAND, "cursor", [], "linux")).toBe(true);
+    // The `.cmd` shim and the package entry the shim re-invokes both count as the CLI.
+    expect(
+      isBirdyBeepHookCommand(
+        '"C:\\Program Files\\nodejs\\node.exe" "C:\\p\\node_modules\\@birdybeep\\cli\\dist\\bin.js" hook claude',
+        "claude",
+        [],
+        "win32",
+      ),
+    ).toBe(true);
+    // …and a foreign Windows hook is still never claimed.
+    expect(
+      isBirdyBeepHookCommand('"C:\\tools\\superconductor.exe" hook cursor', "cursor", [], "win32"),
+    ).toBe(false);
+  });
+
+  it("reports Windows absolute paths for stale detection, and calls a live one healthy", () => {
+    expect(hookCommandPaths(WIN_COMMAND, "win32")).toEqual([WIN_NODE, WIN_BIN]);
+    expect(hookCommandPaths(POSIX_COMMAND, "linux")).toEqual([POSIX_NODE, POSIX_BIN]);
+    // The CI failure in one line: a healthy Windows command must report NOTHING stale.
+    expect(staleHookCommandPaths(WIN_COMMAND, () => true, "win32")).toEqual([]);
+    expect(staleHookCommandPaths(WIN_COMMAND, (p) => p !== WIN_BIN, "win32")).toEqual([WIN_BIN]);
+  });
+
+  it("a Windows path survives the POSIX branch too (defence in depth)", () => {
+    // Not a supported configuration — a Windows config is only ever read on Windows — but the
+    // POSIX rule is deliberately narrow enough that drive paths are not mangled if it happens.
+    expect(tokenizeCommand(`"${CI_NODE}" hook cursor`, "linux")).toEqual([
+      CI_NODE,
+      "hook",
+      "cursor",
+    ]);
+    expect(isBirdyBeepHookCommand(WIN_COMMAND, "cursor", [], "linux")).toBe(true);
   });
 });

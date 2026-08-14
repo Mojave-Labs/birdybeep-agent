@@ -20,6 +20,28 @@
  * Resolution is deliberately conservative — override, then the running CLI, then the portable
  * bare command. There is no PATH scan: guessing a `birdybeep` that is not the one being run
  * would silently pin a different install.
+ *
+ * QUOTING SEMANTICS — {@link shellQuote} and {@link tokenizeCommand} MUST agree, per platform,
+ * because we write a command string and later read our own paths back out of it:
+ *
+ *   POSIX  the harness runs the command through `sh`/`zsh -c`. Inside double quotes those shells
+ *          honor `\` as an escape before exactly `\ " $` and a backtick, and treat it as a
+ *          LITERAL character before anything else. shellQuote escapes exactly that set, and the
+ *          tokenizer un-escapes exactly that set.
+ *   win32  `cmd.exe` and PowerShell do NOT treat `\` as an escape inside double quotes — it is an
+ *          ordinary path separator. A literal quote is written by doubling it (`""`). So on
+ *          Windows the tokenizer never consumes a backslash.
+ *
+ * Getting this wrong is not cosmetic (gcgp.9 follow-up): a tokenizer that ate `\` everywhere
+ * turned `"C:\Users\x\npm\birdybeep.cmd"` into `C:UsersxnpmbirdybeepG.cmd`, which made
+ * {@link hookCommandPaths} report a healthy command as stale AND made
+ * {@link isBirdyBeepHookCommand} fail to recognize our own entry — so `doctor` flagged every
+ * correct Windows install and `install` would have appended a duplicate hook instead of
+ * rewriting in place.
+ *
+ * The POSIX branch is additionally chosen so a Windows-shaped path survives it unharmed
+ * (`\h`, `\U`, `\n` … are not POSIX escapes). That is defence in depth only — the `platform`
+ * argument is what makes UNC paths (`\\server\share`) and `C:\$Recycle.Bin` correct.
  */
 import { basename, isAbsolute } from "node:path";
 
@@ -134,20 +156,39 @@ export function resolveHookCommand(
   return hookCommand(harness, args, resolveHookLauncher(options).launcher);
 }
 
-/** Split a command string into tokens, honoring double quotes (what we write). */
-export function tokenizeCommand(command: string): string[] {
+/** The only characters a POSIX shell un-escapes after `\` inside double quotes. */
+const POSIX_ESCAPABLE = new Set(["\\", '"', "$", "`"]);
+
+/**
+ * Split a command string into tokens, honoring double quotes — the inverse of
+ * {@link shellQuote} for `platform`. See the file header for why the escape rules differ by
+ * platform; the default is the host, which is always the machine that owns the config.
+ */
+export function tokenizeCommand(
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const windows = platform === "win32";
   const tokens: string[] = [];
   let current = "";
   let quoted = false;
   let started = false;
   for (let i = 0; i < command.length; i += 1) {
     const char = command[i]!;
-    if (char === "\\" && quoted && i + 1 < command.length) {
-      current += command[i + 1]!;
+    const next = command[i + 1];
+    // POSIX only, and only for the four characters a shell actually un-escapes: everywhere else
+    // `\` is a literal character (crucially, a Windows path separator).
+    if (!windows && char === "\\" && quoted && next !== undefined && POSIX_ESCAPABLE.has(next)) {
+      current += next;
       i += 1;
       continue;
     }
     if (char === '"') {
+      if (windows && quoted && next === '"') {
+        current += '"'; // cmd/PowerShell write a literal quote as ""
+        i += 1;
+        continue;
+      }
       quoted = !quoted;
       started = true;
       continue;
@@ -175,9 +216,10 @@ export function isBirdyBeepHookCommand(
   command: unknown,
   harness: string,
   args: readonly string[] = [],
+  platform: NodeJS.Platform = process.platform,
 ): boolean {
   if (typeof command !== "string") return false;
-  const tokens = tokenizeCommand(command);
+  const tokens = tokenizeCommand(command, platform);
   const tail = ["hook", harness, ...args];
   if (tokens.length < tail.length + 1) return false;
   const suffix = tokens.slice(tokens.length - tail.length);
@@ -188,8 +230,11 @@ export function isBirdyBeepHookCommand(
 }
 
 /** The absolute paths a command depends on (empty for the portable bare form). */
-export function hookCommandPaths(command: string): string[] {
-  return tokenizeCommand(command).filter(isAbsolutePath);
+export function hookCommandPaths(
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  return tokenizeCommand(command, platform).filter(isAbsolutePath);
 }
 
 /**
@@ -200,6 +245,7 @@ export function hookCommandPaths(command: string): string[] {
 export function staleHookCommandPaths(
   command: string,
   exists: (path: string) => boolean,
+  platform: NodeJS.Platform = process.platform,
 ): string[] {
-  return hookCommandPaths(command).filter((path) => !exists(path));
+  return hookCommandPaths(command, platform).filter((path) => !exists(path));
 }

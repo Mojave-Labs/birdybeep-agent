@@ -213,6 +213,41 @@ describe("hook command resolution (gcgp.9 — the exit-127 fix)", () => {
     expect(readFileSync(hooks, "utf8")).toBe(original);
   });
 
+  // gcgp.9 follow-up: the tokenizer defect made the matcher blind to our own Windows entry, so
+  // install would have APPENDED a second hook (double events) instead of rewriting in place.
+  // Built as a literal Windows string so it runs on every host — the pre-push gate is macOS-only.
+  it("recognizes a WINDOWS-shaped managed entry and repairs it instead of duplicating", async () => {
+    sandbox = createSandbox();
+    const windowsCommand =
+      '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\x\\AppData\\Roaming\\npm\\birdybeep.cmd" hook cursor';
+    await installCursor({ hookCommand: windowsCommand }, sandbox.home);
+    expect(installedBirdyBeepCommands(readHooks(cursorHooksPath(sandbox.home)))).toEqual([
+      windowsCommand,
+    ]);
+
+    await installCursor({ hookCommand: ABSOLUTE }, sandbox.home);
+    const parsed = readHooks(cursorHooksPath(sandbox.home));
+    expect(installedBirdyBeepCommands(parsed)).toEqual([ABSOLUTE]); // rewritten, not appended
+    for (const event of BIRDYBEEP_HOOK_EVENTS) {
+      expect(entriesFor(parsed, event)).toHaveLength(1);
+    }
+  });
+
+  it("uninstall removes a WINDOWS-shaped managed entry too", async () => {
+    sandbox = createSandbox();
+    const hooks = cursorHooksPath(sandbox.home);
+    const original = seedHooks(hooks, {
+      version: 1,
+      hooks: { sessionStart: [{ command: "superconductor-hook", timeout: 10 }] },
+    });
+    await installCursor(
+      { hookCommand: '"C:\\Program Files\\nodejs\\node.exe" "C:\\npm\\birdybeep.cmd" hook cursor' },
+      sandbox.home,
+    );
+    await uninstallCursor({}, sandbox.home);
+    expect(readFileSync(hooks, "utf8")).toBe(original);
+  });
+
   it("defaults to the portable command when the installer is not the CLI", () => {
     // Under vitest, argv[1] is the test runner — resolution must NOT bake that in.
     expect(resolveCursorHookCommand()).toBe(BIRDYBEEP_HOOK_COMMAND);
