@@ -248,6 +248,31 @@ describe("hook command resolution (gcgp.9 — the exit-127 fix)", () => {
     expect(readFileSync(hooks, "utf8")).toBe(original);
   });
 
+  // gcgp.9 follow-up. Cursor entries are FLAT (one command each), so unlike Claude Code there is
+  // no sibling command an entry-level repair could delete. But Cursor accepts `matcher`,
+  // `loop_limit` and `failClosed` on an entry, so the repair must still edit rather than rebuild.
+  it("repair preserves a customized timeout and unknown fields on our entry", async () => {
+    sandbox = createSandbox();
+    const hooks = cursorHooksPath(sandbox.home);
+    seedHooks(hooks, {
+      version: 1,
+      hooks: {
+        sessionStart: [
+          { command: "birdybeep hook cursor", timeout: 90, failClosed: false, matcher: "*" },
+        ],
+      },
+    });
+    await installCursor({ hookCommand: ABSOLUTE }, sandbox.home);
+    const start = entriesFor(readHooks(hooks), "sessionStart");
+    expect(start).toHaveLength(1);
+    expect(start[0]).toEqual({
+      command: ABSOLUTE, // only the command changed
+      timeout: 90, // NOT reset to our default 30
+      failClosed: false,
+      matcher: "*",
+    });
+  });
+
   it("defaults to the portable command when the installer is not the CLI", () => {
     // Under vitest, argv[1] is the test runner — resolution must NOT bake that in.
     expect(resolveCursorHookCommand()).toBe(BIRDYBEEP_HOOK_COMMAND);

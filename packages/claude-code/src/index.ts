@@ -13,6 +13,7 @@ export {
   installClaudeCode,
   installedBirdyBeepCommands,
   isBirdyBeepEntry,
+  isBirdyBeepHook,
   mergeBirdyBeepHooks,
   resolveClaudeHookCommand,
 } from "./install";

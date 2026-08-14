@@ -73,7 +73,7 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-/** A single BirdyBeep-managed matcher entry for one event. */
+/** A single BirdyBeep-managed matcher entry, for INSERTING a new one. */
 function birdyBeepEntry(command: string): Record<string, unknown> {
   return {
     matcher: "",
@@ -81,15 +81,47 @@ function birdyBeepEntry(command: string): Record<string, unknown> {
   };
 }
 
+/** Is this INNER hook (`{type, command, …}`) the BirdyBeep-managed one? */
+export function isBirdyBeepHook(hook: unknown): boolean {
+  return isBirdyBeepHookCommand(asRecord(hook)["command"], "claude");
+}
+
 /**
- * Is this matcher-entry one of ours? Matches ANY command shape we have ever written (bare,
- * absolute, or a since-moved absolute) so uninstall removes it and install repairs it — while
- * never claiming a third party's hook.
+ * Does this matcher-entry CONTAIN our hook? Matches ANY command shape we have ever written
+ * (bare, absolute, or a since-moved absolute) so uninstall removes it and install repairs it —
+ * while never claiming a third party's hook.
+ *
+ * NOTE the asymmetry, and why the callers below are careful: a Claude matcher entry is
+ * `{matcher, hooks: [{type, command}, …]}` and can hold SEVERAL commands, so "this entry
+ * contains ours" does NOT mean "this entry is ours". Repairing or removing at entry
+ * granularity would delete a user's sibling command that happens to share the matcher.
  */
 export function isBirdyBeepEntry(entry: unknown): boolean {
   const hooks = asRecord(entry)["hooks"];
   if (!Array.isArray(hooks)) return false;
-  return hooks.some((h) => isBirdyBeepHookCommand(asRecord(h)["command"], "claude"));
+  return hooks.some(isBirdyBeepHook);
+}
+
+/**
+ * Rewrite ONLY our inner hook's command, leaving the matcher entry otherwise byte-identical:
+ * the user's sibling commands, the `matcher` itself, our hook's own `timeout`, and any field
+ * either object carries that we do not know about all survive. Returns the original object
+ * (not a copy) when nothing needs changing, so an unchanged entry is preserved exactly.
+ */
+function repairEntryCommand(entry: unknown, command: string): { entry: unknown; changed: boolean } {
+  const record = asRecord(entry);
+  const hooks = record["hooks"];
+  if (!Array.isArray(hooks)) return { entry, changed: false };
+  let changed = false;
+  const nextHooks = (hooks as unknown[]).map((hook): unknown => {
+    if (!isBirdyBeepHook(hook)) return hook; // a user's sibling command — never touched
+    const inner = asRecord(hook);
+    if (inner["command"] === command) return hook;
+    changed = true;
+    return { ...inner, command }; // preserve type/timeout/unknown fields on OUR hook
+  });
+  if (!changed) return { entry, changed: false };
+  return { entry: { ...record, hooks: nextHooks }, changed: true };
 }
 
 /** The BirdyBeep-managed commands currently installed (one per event that carries ours). */
@@ -114,9 +146,12 @@ export function installedBirdyBeepCommands(settings: Record<string, unknown>): s
 
 /**
  * Merge BirdyBeep entries into a parsed settings object, preserving everything else. An existing
- * managed entry whose command has drifted (an older bare install, or an absolute path from a CLI
+ * managed hook whose command has drifted (an older bare install, or an absolute path from a CLI
  * that has since moved) is REWRITTEN IN PLACE — never duplicated — so re-running install repairs
  * it. Returns the merged object and whether anything changed (idempotency signal).
+ *
+ * The repair is surgical at the INNER-HOOK level, not the matcher entry: a user may have added
+ * their own command to the same matcher entry as ours, and replacing the entry would delete it.
  */
 export function mergeBirdyBeepHooks(
   settings: Record<string, unknown>,
@@ -134,11 +169,13 @@ export function mergeBirdyBeepHooks(
     if (existing < 0) {
       current.push(birdyBeepEntry(command)); // append — never overwrite a user's own hook
       changed = true;
-    } else if (
-      JSON.stringify(current[existing]) !== JSON.stringify(birdyBeepEntry(command)) // stale/legacy
-    ) {
-      current[existing] = birdyBeepEntry(command); // repair in place
-      changed = true;
+    } else {
+      // Repair OUR command only. Everything else in that entry is somebody else's.
+      const repaired = repairEntryCommand(current[existing], command);
+      if (repaired.changed) {
+        current[existing] = repaired.entry;
+        changed = true;
+      }
     }
     nextHooks[event] = current;
   }

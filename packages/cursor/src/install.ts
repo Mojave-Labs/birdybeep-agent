@@ -95,7 +95,7 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-/** A single BirdyBeep-managed hook entry for one Cursor event. */
+/** A single BirdyBeep-managed hook entry, for INSERTING a new one. */
 function birdyBeepEntry(command: string): Record<string, unknown> {
   return { command, timeout: HOOK_TIMEOUT_SECONDS };
 }
@@ -104,6 +104,11 @@ function birdyBeepEntry(command: string): Record<string, unknown> {
  * Is this hook entry one of ours? Matches ANY command shape we have ever written (bare,
  * absolute, or a since-moved absolute) so uninstall removes it and install repairs it —
  * while never claiming a third party's hook.
+ *
+ * Unlike Claude Code, a Cursor entry is FLAT — `{command, timeout}`, exactly one command — so an
+ * entry that matches is wholly ours and there is no sibling command to lose. Repair still edits
+ * rather than rebuilds (below), because Cursor accepts `matcher` / `loop_limit` / `failClosed`
+ * on an entry and a user may have set one on ours.
  */
 export function isBirdyBeepEntry(entry: unknown): boolean {
   return isBirdyBeepHookCommand(asRecord(entry)["command"], "cursor");
@@ -158,7 +163,9 @@ export function mergeBirdyBeepHooks(
       current.push(birdyBeepEntry(command)); // append — never overwrite a user's own hook
       changed = true;
     } else if (asRecord(current[existing])["command"] !== command) {
-      current[existing] = birdyBeepEntry(command); // repair in place (stale/legacy command)
+      // Repair the command ONLY — a customized timeout, or any field we do not know about,
+      // stays exactly as the user left it.
+      current[existing] = { ...asRecord(current[existing]), command };
       changed = true;
     }
     nextHooks[event] = current;

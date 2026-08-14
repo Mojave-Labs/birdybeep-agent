@@ -168,6 +168,76 @@ describe("hook command resolution (gcgp.9 — the exit-127 fix)", () => {
     });
   });
 
+  // gcgp.9 follow-up (P1, silent data loss). A Claude matcher entry holds a LIST of commands, so
+  // a user can put their own command in the same entry as ours — `isBirdyBeepEntry` is a `.some()`
+  // and matches it. Repairing at ENTRY granularity replaced the whole object, deleting the user's
+  // sibling command, resetting `matcher`, and dropping unknown fields. It fires only on the repair
+  // path, i.e. exactly the users the PATH fix is meant to help, and the one-time backup may
+  // predate their edit, so it cannot reliably be undone.
+  describe("a matcher entry shared with a user's own command", () => {
+    /** Ours FIRST, so a whole-entry replace cannot accidentally look correct. */
+    const shared = (ourCommand: string) => ({
+      hooks: {
+        Stop: [
+          {
+            matcher: "Bash",
+            description: "user note — an unknown field we must not drop",
+            hooks: [
+              { type: "command", command: ourCommand, timeout: 10 },
+              { type: "command", command: "/usr/local/bin/my-audit-hook --stop", timeout: 30 },
+            ],
+          },
+        ],
+      },
+    });
+
+    it("repair keeps the user's sibling command, the matcher, and unknown fields", async () => {
+      sandbox = createSandbox();
+      const settings = claudeSettingsPath(sandbox.home);
+      seedSettings(settings, shared("birdybeep hook claude")); // legacy bare → will be repaired
+      await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+
+      const stop = entriesFor(readSettings(settings), "Stop");
+      expect(stop).toHaveLength(1); // still ONE entry — not duplicated
+      expect(stop[0]).toEqual({
+        matcher: "Bash", // not reset to ""
+        description: "user note — an unknown field we must not drop",
+        hooks: [
+          { type: "command", command: ABSOLUTE, timeout: 10 }, // only the command changed
+          { type: "command", command: "/usr/local/bin/my-audit-hook --stop", timeout: 30 },
+        ],
+      });
+      expect(installedBirdyBeepCommands(readSettings(settings))).toEqual([ABSOLUTE]);
+    });
+
+    it("uninstall removes ONLY our command, keeping the entry and the user's hook", async () => {
+      sandbox = createSandbox();
+      const settings = claudeSettingsPath(sandbox.home);
+      seedSettings(settings, shared(ABSOLUTE));
+      await uninstallClaudeCode({}, sandbox.home);
+
+      const stop = entriesFor(readSettings(settings), "Stop");
+      expect(stop).toHaveLength(1); // the entry survives — it was not wholly ours
+      expect(stop[0]).toEqual({
+        matcher: "Bash",
+        description: "user note — an unknown field we must not drop",
+        hooks: [{ type: "command", command: "/usr/local/bin/my-audit-hook --stop", timeout: 30 }],
+      });
+      expect(installedBirdyBeepCommands(readSettings(settings))).toEqual([]);
+    });
+
+    it("uninstall still drops an entry that held nothing but ours", async () => {
+      sandbox = createSandbox();
+      const settings = claudeSettingsPath(sandbox.home);
+      const original = seedSettings(settings, {
+        hooks: { Stop: [{ matcher: "", hooks: [{ type: "command", command: "my-own-hook" }] }] },
+      });
+      await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+      await uninstallClaudeCode({}, sandbox.home);
+      expect(readFileSync(settings, "utf8")).toBe(original); // byte-for-byte
+    });
+  });
+
   it("re-installing the SAME command is still a no-op (idempotent)", async () => {
     sandbox = createSandbox();
     await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
