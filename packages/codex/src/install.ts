@@ -79,9 +79,19 @@ export function isBirdyBeepHookEntry(entry: unknown): boolean {
   return hooks.some((h) => asRecord(h)["command"] === BIRDYBEEP_HOOK_COMMAND);
 }
 
-/** Is this `notify` value the argv an older BirdyBeep wrote (i.e. ours to remove)? */
+/**
+ * Is this `notify` value the argv an older BirdyBeep wrote (i.e. ours to remove)?
+ *
+ * Element-wise on purpose: joining the array first collapses argument boundaries, so a
+ * genuinely different foreign value like `["birdybeep hook", "codex"]` compared equal to
+ * ours and was deleted as a leftover.
+ */
 export function notifyIsLegacyBirdyBeep(value: unknown): boolean {
-  return Array.isArray(value) && value.join(" ") === LEGACY_BIRDYBEEP_NOTIFY.join(" ");
+  return (
+    Array.isArray(value) &&
+    value.length === LEGACY_BIRDYBEEP_NOTIFY.length &&
+    value.every((element, i) => element === LEGACY_BIRDYBEEP_NOTIFY[i])
+  );
 }
 
 export interface MergeResult {
@@ -89,19 +99,38 @@ export interface MergeResult {
   changed: boolean;
   /** A `notify` owned by someone else, left exactly as found (reported, never touched). */
   foreignNotify?: unknown;
-  /** True when an older BirdyBeep's own `notify` was removed. */
+  /** A `notify` an older BirdyBeep displaced, handed back to its owner from the backup. */
+  restoredNotify?: unknown;
+  /** True when an older BirdyBeep's own `notify` was cleared (restored or simply removed). */
   removedLegacyNotify: boolean;
 }
 
-/** Merge BirdyBeep's hook entries into a parsed config, preserving everything else. */
-export function mergeCodexConfig(config: Record<string, unknown>): MergeResult {
+/**
+ * Merge BirdyBeep's hook entries into a parsed config, preserving everything else.
+ *
+ * `backup` is the parsed canonical backup, when one exists. It matters only for the legacy
+ * migration: older versions ASSIGNED `notify`, so the program they displaced survives only
+ * in that backup. Vacating the slot instead of restoring it would finish destroying the
+ * third party's integration rather than undoing it.
+ */
+export function mergeCodexConfig(
+  config: Record<string, unknown>,
+  backup?: Record<string, unknown>,
+): MergeResult {
   let changed = false;
   let removedLegacyNotify = false;
+  let restoredNotify: unknown;
   const merged: Record<string, unknown> = { ...config };
 
   const notify = merged["notify"];
   if (notifyIsLegacyBirdyBeep(notify)) {
-    delete merged["notify"]; // vacate the slot we should never have claimed
+    const displaced = backup?.["notify"];
+    if (displaced !== undefined && !notifyIsLegacyBirdyBeep(displaced)) {
+      merged["notify"] = displaced; // give the slot back to whoever we took it from
+      restoredNotify = displaced;
+    } else {
+      delete merged["notify"]; // nothing was displaced — just vacate it
+    }
     removedLegacyNotify = true;
     changed = true;
   }
@@ -119,12 +148,18 @@ export function mergeCodexConfig(config: Record<string, unknown>): MergeResult {
   merged["hooks"] = nextHooks;
 
   const result: MergeResult = { merged, changed, removedLegacyNotify };
+  if (restoredNotify !== undefined) result.restoredNotify = restoredNotify;
   if (notify !== undefined && !removedLegacyNotify) result.foreignNotify = notify;
   return result;
 }
 
-/** What install tells the user about the notify slot it deliberately did not write. */
+/** What install tells the user about the notify slot. */
 function notifyNotes(merge: MergeResult): string[] {
+  if (merge.restoredNotify !== undefined) {
+    return [
+      `Restored the Codex \`notify\` program an earlier BirdyBeep replaced: ${JSON.stringify(merge.restoredNotify)}`,
+    ];
+  }
   if (merge.removedLegacyNotify) {
     return [
       "Removed BirdyBeep's `notify` entry from Codex config; turn-complete now comes from the Stop hook.",
@@ -134,6 +169,17 @@ function notifyNotes(merge: MergeResult): string[] {
   return [
     `Left the existing Codex \`notify\` program in place: ${JSON.stringify(merge.foreignNotify)}`,
   ];
+}
+
+/** Parse the canonical backup, or undefined when it is absent, empty, or unparseable. */
+function readBackup(backupPath: string): Record<string, unknown> | undefined {
+  if (!existsSync(backupPath)) return undefined;
+  try {
+    const raw = readFileSync(backupPath, "utf8");
+    return raw.trim().length > 0 ? asRecord(parse(raw)) : undefined;
+  } catch {
+    return undefined; // a corrupt backup must never block an install
+  }
 }
 
 /** Install BirdyBeep's Codex hooks. Idempotent + non-destructive; returns needs_trust. */
@@ -146,7 +192,7 @@ export function installCodex(
   const existed = existsSync(configPath);
   const raw = existed ? readFileSync(configPath, "utf8") : "";
   const config = raw.trim().length > 0 ? asRecord(parse(raw)) : {};
-  const merge = mergeCodexConfig(config);
+  const merge = mergeCodexConfig(config, readBackup(backupPath));
   const requiredActions = [...TRUST_INSTRUCTIONS, ...notifyNotes(merge)];
   const existingBackups = existsSync(backupPath) ? [backupPath] : [];
 

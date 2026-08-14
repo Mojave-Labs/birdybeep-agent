@@ -154,9 +154,9 @@ write no token.
   immediately.
 - **Codex** — patches `~/.codex/config.toml` with `[[hooks.X]]` lifecycle hooks (SessionStart,
   PermissionRequest, PostToolUse, SubagentStart, SubagentStop, Stop), all invoking
-  `birdybeep hook codex`. The top-level `notify` program is left alone: it holds a single value, so
-  writing it would remove whatever tool already owns it. Codex requires a one-time hook trust: open
-  Codex and run `/hooks`. Until a trusted lifecycle hook actually fires, status shows `needs_trust`.
+  `birdybeep hook codex`. The top-level `notify` program is left alone. Codex requires a one-time
+  hook trust: open Codex and run `/hooks`. Until a trusted lifecycle hook actually fires, status
+  shows `needs_trust`.
 - **OpenCode** — adds `@birdybeep/opencode` to the `plugin` array in
   `~/.config/opencode/opencode.json` (honors `XDG_CONFIG_HOME`). OpenCode loads plugins only at
   startup, so restart OpenCode. Until the first event after restart, status shows `needs_restart`.

@@ -5,7 +5,7 @@
  * BirdyBeep file is removed; uninstall is idempotent + a no-op on a clean config; and
  * the trust marker is cleared.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
@@ -118,21 +118,30 @@ describe("uninstall under third-party notify chaining", () => {
     expect(noBirdyBeepEntriesRemain(path)).toBe(true);
   });
 
-  it("removes an older BirdyBeep's own notify and restores what it displaced", async () => {
+  /**
+   * The migration path end-to-end, on the shape of the owner's real machine: an older
+   * BirdyBeep owns the slot and the canonical backup still holds the third party's original.
+   * Install must give it back, and a LATER uninstall must not take it away again — that
+   * sequence is where the value would otherwise be lost for good (live value already gone,
+   * canonical backup consumed by the uninstall).
+   */
+  it("a displaced third-party notify is restored by install and survives uninstall", async () => {
     sandbox = createSandbox();
-    // A config as an OLD BirdyBeep left it: our argv in the slot, their value in the backup.
+    const original = 'notify = ["other-tool", "turn-ended"]\nmodel = "o3"\n';
     const path = codexConfigFile({ home: sandbox.home });
+    // As an OLD BirdyBeep left it: our argv live, their value preserved in the backup.
     seed(sandbox.home, `notify = ${JSON.stringify([...LEGACY_BIRDYBEEP_NOTIFY])}\nmodel = "o3"\n`);
-    writeFileSync(
-      `${path}.birdybeep-backup`,
-      'notify = ["other-tool", "turn-ended"]\nmodel = "o3"\n',
-    );
-    await installCodex({}, sandbox.home); // migrates: drops our notify, adds the hooks
+    writeFileSync(`${path}.birdybeep-backup`, original);
+
+    await installCodex({}, sandbox.home);
+    const migrated = parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    expect(migrated["notify"]).toEqual(["other-tool", "turn-ended"]); // handed back, not deleted
 
     await uninstallCodex({}, sandbox.home);
     const after = parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-    expect(after["notify"]).toBeUndefined(); // install already vacated the slot
+    expect(after["notify"]).toEqual(["other-tool", "turn-ended"]); // still theirs
     expect(after["model"]).toBe("o3");
+    expect(noBirdyBeepEntriesRemain(path)).toBe(true);
   });
 });
 
@@ -173,6 +182,15 @@ describe("from-scratch + idempotency + trust", () => {
     const r = await uninstallCodex({}, sandbox.home);
     expect(r.changed).toBe(false);
     expect(readFileSync(path, "utf8")).toBe('model = "o3"\n'); // untouched
+  });
+
+  it("leaves no BirdyBeep files behind on the ordinary round-trip", async () => {
+    sandbox = createSandbox();
+    const path = seed(sandbox.home, SEED_WITH_USER_HOOK);
+    await installCodex({}, sandbox.home);
+    await uninstallCodex({}, sandbox.home);
+    const leftovers = readdirSync(dirname(path)).filter((f) => f.includes("birdybeep"));
+    expect(leftovers).toEqual([]);
   });
 
   it("is idempotent — a second uninstall is a no-op", async () => {

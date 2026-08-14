@@ -194,9 +194,9 @@ A managed hook entry looks like this:
 - **File:** `~/.codex/config.toml` (honors `$CODEX_HOME` if set)
 - **Change:** adds `[[hooks.X]]` lifecycle entries for `SessionStart`, `PermissionRequest`,
   `PostToolUse`, `SubagentStart`, `SubagentStop`, and `Stop` (turn complete). Each hook runs
-  `birdybeep hook codex`. Your own config is preserved — including the top-level `notify` program,
-  which BirdyBeep never writes: `notify` holds a single value, so setting it would remove whatever
-  tool already owns it. Install prints the `notify` value it left in place.
+  `birdybeep hook codex`. Your own config is preserved, including the top-level `notify` program,
+  which BirdyBeep never writes — see
+  [`examples/codex/README.md`](../examples/codex/README.md#the-notify-program).
 - **Status:** `needs_trust` — see the gotcha below.
 
 #### OpenCode

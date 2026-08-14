@@ -140,16 +140,25 @@ Launch integration with an expected **one-time hook trust** caveat. Install user
 >   the first hook event proves trust was granted.
 > - **Registered hooks:** `SessionStart`, `PermissionRequest`, `PostToolUse`,
 >   `SubagentStart`, `SubagentStop`, `Stop`.
-> - **BirdyBeep does not write `notify`** (birdybeep-agent-gcgp.2). `notify` is a
+> - **BirdyBeep does not write `notify`** (birdybeep-agent-gcgp.2). This is the canonical
+>   home for that decision; other docs state the behavior and link here. `notify` is a
 >   single-valued scalar — last writer wins — so assigning it removes another tool's
 >   integration; `[[hooks.X]]` is an append-only array. `Stop` carries the same
 >   turn-complete signal, verified firing on both the terminal CLI and the desktop
 >   app-server path against codex-cli 0.147.0-alpha (birdybeep-agent-gcgp.8), so the
->   shared slot buys nothing. `normalizeEvent` still accepts `agent-turn-complete`
->   payloads: configs written by an older BirdyBeep carry them, and third-party `notify`
->   programs may forward to `birdybeep hook codex`. A turn producing both collapses to one
->   beep — the dedup identity (`harness:session:type:content-hash`) matches, because
->   Codex's hook `session_id` and notify `thread-id` are the same value.
+>   shared slot buys nothing. Install therefore: leaves a foreign `notify` untouched and
+>   reports it; and, where the slot still holds BirdyBeep's own legacy argv, **restores the
+>   program the old installer displaced** from the canonical backup, clearing the slot only
+>   when nothing was displaced. Migration must undo the old damage, not complete it —
+>   vacating the slot would delete the third party's program from the last place it exists.
+> - **Legacy `notify` is matched element-wise**, never by joining the array: joining
+>   collapses argument boundaries, so a foreign value such as `["birdybeep hook", "codex"]`
+>   would be misread as ours and deleted.
+> - `normalizeEvent` still accepts `agent-turn-complete` payloads: configs written by an
+>   older BirdyBeep carry them, and third-party `notify` programs may forward to
+>   `birdybeep hook codex`. A turn producing both collapses to one beep — the dedup identity
+>   (`harness:session:type:content-hash`) matches, because Codex's hook `session_id` and
+>   notify `thread-id` are the same value.
 
 Expected post-install message:
 

@@ -412,12 +412,11 @@ export function mergeCodexConfig(config: Record<string, unknown>) {
 }
 ```
 
-> **Only merge into structures that hold more than one value.** A harness key that holds a _single_
-> value — Codex's top-level `notify` program is the example — has exactly one owner, and writing it
-> deletes whatever tool was there. BirdyBeep therefore does not write `notify` at all: turn-complete
-> rides the append-only `[[hooks.Stop]]` array instead, and install reports the `notify` value it
-> left alone (birdybeep-agent-gcgp.2). If a signal is only reachable through a single-slot key,
-> refuse and tell the user what is in the slot; never take it silently.
+> **Only merge into keys that hold more than one value.** A single-valued key has exactly one
+> owner, so writing it deletes whatever tool was there. Prefer a list the harness lets you append
+> to. If a signal is reachable only through a single-valued key, leave the key alone and print what
+> is in it — never claim it silently. Codex's `notify` is the worked example; see
+> [`docs/SPEC.md`](./SPEC.md) §6.
 
 **4. If nothing changed, return early** with `changed: false` — that is the idempotency guarantee
 (`birdybeep agent install` twice is identical to once).
@@ -427,8 +426,7 @@ export function mergeCodexConfig(config: Record<string, unknown>) {
 **6. Back up before every write, then write.** Copy the existing file to a backup (Codex uses a
 `.birdybeep-backup` suffix). The canonical backup keeps the pre-BirdyBeep original; a later write
 whose current bytes differ from that backup gets an additional timestamped copy beside it, so no
-overwrite is ever unrecoverable. Backing up only once left content another tool wrote _after_ the
-first install with no copy anywhere (birdybeep-agent-gcgp.2).
+overwrite is unrecoverable.
 
 **7. Return `changedFiles`, `backupFiles`, `requiredActions`, and the resulting `status`.**
 

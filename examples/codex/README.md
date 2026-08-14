@@ -36,29 +36,29 @@ timeout = 10
 
 `timeout = 10` (seconds) is a hard cap so a slow or offline send can never hang Codex.
 
-## What BirdyBeep does not touch: `notify`
+## The `notify` program
 
-Codex also has a top-level `notify` program that fires on turn completion. BirdyBeep **never writes
-it**. `notify` holds a single value, so setting it removes whatever program was already there —
-Codex Computer Use, a custom script, another notifier. `[[hooks.X]]` entries are lists BirdyBeep
-appends to, so every tool can register at once. `Stop` carries the same turn-complete signal, which
-is why the shared slot is not needed.
+BirdyBeep never writes Codex's top-level `notify`. What install does with it:
 
-If another tool owns `notify`, install prints the value it left in place and changes nothing about
-it. If an older BirdyBeep set `notify` to `["birdybeep", "hook", "codex"]`, install removes that
-entry — the slot goes back to being free, and `Stop` takes over the beep.
+| `notify` holds                   | What install does                                                                              |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- |
+| nothing                          | leaves it unset                                                                                |
+| another tool's program           | leaves it untouched and prints the value                                                       |
+| `["birdybeep", "hook", "codex"]` | hands the slot back to the program an older BirdyBeep replaced, or clears it if there was none |
 
 `birdybeep hook codex` still accepts `agent-turn-complete` payloads, so a `notify` program that
-forwards to BirdyBeep keeps working. A turn that produces both a `Stop` hook and a forwarded
-`notify` is collapsed into one beep.
+forwards to BirdyBeep keeps working. A turn producing both a `Stop` hook and a forwarded `notify`
+is collapsed into one beep.
 
 ## What you keep
 
 Everything else. Other keys — `model`, `approval_policy`, `[tui]`, `[sandbox]`, `notify`, your own
 hooks — are preserved exactly. If you already have a hook on one of these events, BirdyBeep's entry
-is **appended** to that event; your hook is never replaced. The file is backed up to
-`~/.codex/config.toml.birdybeep-backup` before the first change, and any later change that would
-overwrite different content writes an additional timestamped backup beside it.
+is **appended** to that event; your hook is never replaced.
+
+The file is copied to `~/.codex/config.toml.birdybeep-backup` before the first change. If a later
+install would overwrite content that differs from that backup, it writes a second backup beside it
+named with a timestamp; uninstall consumes the first and leaves any timestamped ones for you.
 
 ## One-time trust (important)
 
