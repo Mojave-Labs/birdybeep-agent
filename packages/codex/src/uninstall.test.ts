@@ -9,10 +9,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
-import { parse } from "smol-toml";
+import { parse, stringify } from "smol-toml";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { BIRDYBEEP_NOTIFY, isBirdyBeepHookEntry } from "./install";
+import { isBirdyBeepHookEntry, LEGACY_BIRDYBEEP_NOTIFY } from "./install";
 import { installCodex } from "./install";
 import { codexConfigFile } from "./paths";
 import { hasCodexEventBeenSeen, recordCodexEventSeen } from "./trust";
@@ -56,7 +56,7 @@ function noBirdyBeepEntriesRemain(path: string): boolean {
   const config = parse(readFileSync(path, "utf8")) as Record<string, unknown>;
   const notifyManaged =
     Array.isArray(config["notify"]) &&
-    (config["notify"] as unknown[]).join(" ") === [...BIRDYBEEP_NOTIFY].join(" ");
+    (config["notify"] as unknown[]).join(" ") === [...LEGACY_BIRDYBEEP_NOTIFY].join(" ");
   const hooks = (config["hooks"] ?? {}) as Record<string, unknown>;
   const anyBBHook = Object.values(hooks).some(
     (entries) => Array.isArray(entries) && entries.some(isBirdyBeepHookEntry),
@@ -76,14 +76,55 @@ describe("round-trip restores the original byte-for-byte", () => {
     expect(existsSync(`${path}.birdybeep-backup`)).toBe(false); // backup consumed
   });
 
-  it("restores a user's own single-valued notify that install overwrote", async () => {
+  it("round-trips a config whose notify belongs to another tool, untouched throughout", async () => {
     sandbox = createSandbox();
     const userNotify = ['notify = ["user-notifier", "--flag"]', 'model = "o3"', ""].join("\n");
     const path = seed(sandbox.home, userNotify);
-    await installCodex({}, sandbox.home); // overwrites notify with BirdyBeep's
-    expect(parse(readFileSync(path, "utf8"))["notify"]).toEqual([...BIRDYBEEP_NOTIFY]);
+    await installCodex({}, sandbox.home); // never writes notify (gcgp.2)
+    expect(parse(readFileSync(path, "utf8"))["notify"]).toEqual(["user-notifier", "--flag"]);
     await uninstallCodex({}, sandbox.home);
-    expect(readFileSync(path, "utf8")).toBe(userNotify); // user's notify restored, byte-for-byte
+    expect(readFileSync(path, "utf8")).toBe(userNotify); // byte-for-byte
+  });
+});
+
+/**
+ * birdybeep-agent-gcgp.2 regression: the third party that owns Codex's single `notify` slot
+ * may re-claim it with a DIFFERENT value after our install (the owner's machine, where
+ * Codex Computer Use re-took the slot and chained through to us). Uninstall must not write
+ * a stale backup value over it.
+ */
+describe("uninstall under third-party notify chaining", () => {
+  it("leaves a re-claimed third-party notify exactly as found", async () => {
+    sandbox = createSandbox();
+    const original = ['notify = ["other-tool", "turn-ended"]', 'model = "o3"', ""].join("\n");
+    const path = seed(sandbox.home, original);
+    await installCodex({}, sandbox.home);
+
+    // The third party re-claims the slot with a chained value AFTER our install.
+    const chained = ["other-tool", "turn-ended", "--previous-notify", '["birdybeep","hook","codex"]'];
+    const parsed = parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    parsed["notify"] = chained;
+    writeFileSync(path, `${stringify(parsed)}\n`);
+
+    await uninstallCodex({}, sandbox.home);
+
+    const after = parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    expect(after["notify"]).toEqual(chained); // their CURRENT value, not the backup's
+    expect(noBirdyBeepEntriesRemain(path)).toBe(true);
+  });
+
+  it("removes an older BirdyBeep's own notify and restores what it displaced", async () => {
+    sandbox = createSandbox();
+    // A config as an OLD BirdyBeep left it: our argv in the slot, their value in the backup.
+    const path = codexConfigFile({ home: sandbox.home });
+    seed(sandbox.home, `notify = ${JSON.stringify([...LEGACY_BIRDYBEEP_NOTIFY])}\nmodel = "o3"\n`);
+    writeFileSync(`${path}.birdybeep-backup`, 'notify = ["other-tool", "turn-ended"]\nmodel = "o3"\n');
+    await installCodex({}, sandbox.home); // migrates: drops our notify, adds the hooks
+
+    await uninstallCodex({}, sandbox.home);
+    const after = parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    expect(after["notify"]).toBeUndefined(); // install already vacated the slot
+    expect(after["model"]).toBe("o3");
   });
 });
 

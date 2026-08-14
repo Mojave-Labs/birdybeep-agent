@@ -1,7 +1,7 @@
 /**
  * CX-SNAPSHOT (§21.1 / §16.4): lock the EXACT Codex config.toml BirdyBeep generates and
  * prove non-destructive patching against realistic pre-existing configs (unrelated keys,
- * differing key orders, a user hook, a user single-valued notify). If the generator
+ * differing key orders, a user hook, another tool's single-valued notify). If the generator
  * drifts or Codex's config format changes, these committed snapshots fail loudly.
  * Deterministic config only — the generated TOML carries no machine paths, timestamps,
  * or tokens — so snapshots are stable across machines. No live delivery (that's CX-E2E).
@@ -43,7 +43,7 @@ function expectNoSecrets(content: string): void {
 }
 
 describe("generated Codex config snapshots (§21.1)", () => {
-  it("from-scratch install writes the canonical notify + hooks block", async () => {
+  it("from-scratch install writes the canonical hooks block", async () => {
     sandbox = createSandbox();
     const out = await installAndRead(sandbox);
     expect(out).toMatchSnapshot();
@@ -75,7 +75,7 @@ describe("generated Codex config snapshots (§21.1)", () => {
     expectNoSecrets(out);
   });
 
-  it("overwrites a user's single-valued notify (reversible) and preserves other keys", async () => {
+  it("leaves another tool's single-valued notify intact and preserves other keys", async () => {
     sandbox = createSandbox();
     seed(
       sandbox.home,

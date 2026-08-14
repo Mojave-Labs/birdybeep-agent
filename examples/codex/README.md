@@ -6,31 +6,21 @@ tests assert against — not a hand-written approximation — so what you see he
 produces.
 
 [`config.toml`](./config.toml) shows the **from-scratch** case: a brand-new config with nothing but
-BirdyBeep's `notify` program and lifecycle hooks. If you already have a `config.toml`, the installer
-merges these entries in and leaves everything else untouched (see "Non-destructive" below).
+BirdyBeep's lifecycle hooks. If you already have a `config.toml`, the installer merges these entries
+in and leaves everything else untouched (see "What you keep" below).
 
 ## What BirdyBeep adds
 
-Codex can invoke an external program two ways, and BirdyBeep uses both so every relevant moment is
-covered:
+One `[[hooks.X]]` entry per event BirdyBeep consumes, each running `birdybeep hook codex`:
 
-1. **The top-level `notify` program** — fires on turn completion (`agent-turn-complete`). Codex
-   appends the event JSON as the final argument:
-
-   ```toml
-   notify = [ "birdybeep", "hook", "codex" ]
-   ```
-
-2. **Lifecycle `[[hooks.X]]` entries** — one per event BirdyBeep consumes, each running
-   `birdybeep hook codex`:
-
-   | Hook event          | Why BirdyBeep listens                      |
-   | ------------------- | ------------------------------------------ |
-   | `SessionStart`      | a session began on this machine            |
-   | `PermissionRequest` | a tool/command is waiting on your approval |
-   | `PostToolUse`       | a tool finished running                    |
-   | `SubagentStart`     | a subagent started                         |
-   | `SubagentStop`      | a subagent finished                        |
+| Hook event          | Why BirdyBeep listens                      |
+| ------------------- | ------------------------------------------ |
+| `SessionStart`      | a session began on this machine            |
+| `PermissionRequest` | a tool/command is waiting on your approval |
+| `PostToolUse`       | a tool finished running                    |
+| `SubagentStart`     | a subagent started                         |
+| `SubagentStop`      | a subagent finished                        |
+| `Stop`              | the turn finished — the "it's done" beep   |
 
 Each hook entry looks like this:
 
@@ -44,26 +34,38 @@ command = "birdybeep hook codex"
 timeout = 10
 ```
 
-> There is intentionally **no `Stop` hook**. The `notify` program already signals turn completion,
-> so registering both would double-fire. The `timeout = 10` (seconds) is a hard cap so a slow or
-> offline send can never hang Codex.
+`timeout = 10` (seconds) is a hard cap so a slow or offline send can never hang Codex.
+
+## What BirdyBeep does not touch: `notify`
+
+Codex also has a top-level `notify` program that fires on turn completion. BirdyBeep **never writes
+it**. `notify` holds a single value, so setting it removes whatever program was already there —
+Codex Computer Use, a custom script, another notifier. `[[hooks.X]]` entries are lists BirdyBeep
+appends to, so every tool can register at once. `Stop` carries the same turn-complete signal, which
+is why the shared slot is not needed.
+
+If another tool owns `notify`, install prints the value it left in place and changes nothing about
+it. If an older BirdyBeep set `notify` to `["birdybeep", "hook", "codex"]`, install removes that
+entry — the slot goes back to being free, and `Stop` takes over the beep.
+
+`birdybeep hook codex` still accepts `agent-turn-complete` payloads, so a `notify` program that
+forwards to BirdyBeep keeps working. A turn that produces both a `Stop` hook and a forwarded
+`notify` is collapsed into one beep.
 
 ## What you keep
 
-Everything else. The installer only sets `notify` and adds the five `[[hooks.X]]` events above. Other
-keys — `model`, `approval_policy`, `[tui]`, `[sandbox]`, your own hooks — are preserved exactly. If
-you already have a hook on one of these events, BirdyBeep's entry is **appended** to that event; your
-hook is never replaced. (The one exception: a single-valued `notify` is replaced with the managed
-array — and uninstall restores it.) The original file is backed up once to
-`~/.codex/config.toml.birdybeep-backup` before the first change.
+Everything else. Other keys — `model`, `approval_policy`, `[tui]`, `[sandbox]`, `notify`, your own
+hooks — are preserved exactly. If you already have a hook on one of these events, BirdyBeep's entry
+is **appended** to that event; your hook is never replaced. The file is backed up to
+`~/.codex/config.toml.birdybeep-backup` before the first change, and any later change that would
+overwrite different content writes an additional timestamped backup beside it.
 
 ## One-time trust (important)
 
 Codex skips hooks it does not trust, so after install BirdyBeep reports **`needs_trust`**. To finish:
 
 > **Open Codex and run `/hooks`** to trust the hooks. After trust is granted, Codex sessions on this
-> machine are tracked automatically — the integration goes live on the first trusted lifecycle hook
-> (a turn-complete beep via the ungated `notify` program does not count as proof of trust).
+> machine are tracked automatically — the integration goes live on the first trusted lifecycle hook.
 
 ## No token here
 

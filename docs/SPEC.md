@@ -112,7 +112,7 @@ Highest-priority MVP integration. Install user-level hook config using the comma
 
 ## 6. Codex integration (PRD §9.6, §21.2)
 
-Launch integration with an expected **one-time hook trust** caveat. Install user-level notify command + lifecycle hooks where supported; add only BirdyBeep-managed entries; back up existing config; print trust instructions.
+Launch integration with an expected **one-time hook trust** caveat. Install user-level lifecycle hooks; add only BirdyBeep-managed entries; back up existing config; print trust instructions.
 
 | Codex surface/event | BirdyBeep event | Session effect | Notify default |
 |---|---|---|---|
@@ -139,9 +139,17 @@ Launch integration with an expected **one-time hook trust** caveat. Install user
 >   `notify` is NOT trust-gated. Install therefore surfaces `needs_trust` (CX-TRUST) until
 >   the first hook event proves trust was granted.
 > - **Registered hooks:** `SessionStart`, `PermissionRequest`, `PostToolUse`,
->   `SubagentStart`, `SubagentStop`. The `Stop` hook is intentionally NOT registered
->   (`notify` already covers turn-complete; registering both double-fires) — but
->   `normalizeEvent` still maps a `Stop` payload to `agent_completed` if one arrives.
+>   `SubagentStart`, `SubagentStop`, `Stop`.
+> - **BirdyBeep does not write `notify`** (birdybeep-agent-gcgp.2). `notify` is a
+>   single-valued scalar — last writer wins — so assigning it removes another tool's
+>   integration; `[[hooks.X]]` is an append-only array. `Stop` carries the same
+>   turn-complete signal, verified firing on both the terminal CLI and the desktop
+>   app-server path against codex-cli 0.147.0-alpha (birdybeep-agent-gcgp.8), so the
+>   shared slot buys nothing. `normalizeEvent` still accepts `agent-turn-complete`
+>   payloads: configs written by an older BirdyBeep carry them, and third-party `notify`
+>   programs may forward to `birdybeep hook codex`. A turn producing both collapses to one
+>   beep — the dedup identity (`harness:session:type:content-hash`) matches, because
+>   Codex's hook `session_id` and notify `thread-id` are the same value.
 
 Expected post-install message:
 
@@ -151,7 +159,7 @@ Codex may require one-time hook trust. Open Codex and run /hooks.
 After trust is granted, Codex sessions on this machine will be tracked automatically.
 ```
 
-Do **not** mark Codex fully installed until a trusted **lifecycle hook** fires; surface the state as `needs_trust` until then. A turn-complete beep via the ungated `notify` program is **not** proof of trust and must not flip the state (see birdybeep-agent-qyf).
+Do **not** mark Codex fully installed until a trusted **lifecycle hook** fires; surface the state as `needs_trust` until then. A turn-complete beep arriving via a `notify` program is **not** proof of trust and must not flip the state (see birdybeep-agent-qyf).
 
 ## 7. OpenCode integration (PRD §9.7)
 

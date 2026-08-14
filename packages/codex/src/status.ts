@@ -1,11 +1,12 @@
 /**
  * Codex status() + doctor() (§8.8, §9.6). status() derives a §8.8 value from detection,
- * the state of `~/.codex/config.toml` (is the BirdyBeep notify managed + are all lifecycle
- * hook entries present?), and the trust marker (has a real event been seen?). Codex is
- * unique: writing config is NOT "installed" — hooks are trust-gated, so we report
- * `needs_trust` until a real trusted lifecycle hook flips the marker (CX-TRUST; a
- * turn-complete beep via the ungated notify program does not count). doctor() diagnoses
- * each failure mode with an actionable fix. Both are READ-ONLY: never mutate config.
+ * the state of `~/.codex/config.toml` (are all BirdyBeep lifecycle hook entries present?),
+ * and the trust marker (has a real event been seen?). Codex is unique: writing config is
+ * NOT "installed" — hooks are trust-gated, so we report `needs_trust` until a real trusted
+ * lifecycle hook flips the marker (CX-TRUST). doctor() diagnoses each failure mode with an
+ * actionable fix; every remedy it prints must be safe to run, which is why it can point at
+ * `agent install codex` now that install never writes the shared `notify` slot
+ * (birdybeep-agent-gcgp.2). Both are READ-ONLY: never mutate config.
  */
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -24,8 +25,8 @@ import {
   backupPathFor,
   BIRDYBEEP_HOOK_COMMAND,
   BIRDYBEEP_HOOK_EVENTS,
-  BIRDYBEEP_NOTIFY,
   isBirdyBeepHookEntry,
+  notifyIsLegacyBirdyBeep,
 } from "./install";
 import { codexConfigDir, codexConfigFile } from "./paths";
 import { type CodexTrustOptions, hasCodexEventBeenSeen } from "./trust";
@@ -50,27 +51,24 @@ function asRecord(value: unknown): Record<string, unknown> {
 interface ConfigState {
   exists: boolean;
   parseable: boolean;
-  notifyManaged: boolean;
+  /** An older BirdyBeep's `notify` argv is still squatting the single notify slot. */
+  legacyNotify: boolean;
   /** Count of BIRDYBEEP_HOOK_EVENTS carrying a well-formed BirdyBeep entry. */
   present: number;
   total: number;
-}
-
-function notifyIsManaged(value: unknown): boolean {
-  return Array.isArray(value) && value.join(" ") === [...BIRDYBEEP_NOTIFY].join(" ");
 }
 
 function inspectConfig(home: string): ConfigState {
   const path = codexConfigFile({ home });
   const total = BIRDYBEEP_HOOK_EVENTS.length;
   if (!existsSync(path)) {
-    return { exists: false, parseable: true, notifyManaged: false, present: 0, total };
+    return { exists: false, parseable: true, legacyNotify: false, present: 0, total };
   }
   let parsed: Record<string, unknown>;
   try {
     parsed = asRecord(parse(readFileSync(path, "utf8")));
   } catch {
-    return { exists: true, parseable: false, notifyManaged: false, present: 0, total };
+    return { exists: true, parseable: false, legacyNotify: false, present: 0, total };
   }
   const hooks = asRecord(parsed["hooks"]);
   let present = 0;
@@ -81,7 +79,7 @@ function inspectConfig(home: string): ConfigState {
   return {
     exists: true,
     parseable: true,
-    notifyManaged: notifyIsManaged(parsed["notify"]),
+    legacyNotify: notifyIsLegacyBirdyBeep(parsed["notify"]),
     present,
     total,
   };
@@ -92,9 +90,9 @@ function resolveDetect(opts: CodexStatusOptions): Promise<DetectionResult> {
   return detectCodex(opts.home !== undefined ? { home: opts.home } : {});
 }
 
-/** Both notify and EVERY lifecycle hook are BirdyBeep-managed. */
+/** EVERY lifecycle hook BirdyBeep registers is present (`notify` is not ours to manage). */
 function fullyConfigured(c: ConfigState): boolean {
-  return c.notifyManaged && c.present === c.total;
+  return c.present === c.total;
 }
 
 /** Current §8.8 integration status for Codex. */
@@ -108,7 +106,7 @@ export async function codexStatus(opts: CodexStatusOptions = {}): Promise<Integr
     // Trust-gated: installed only once a real event proves the hooks were trusted.
     return hasCodexEventBeenSeen(opts) ? "installed" : "needs_trust";
   }
-  if (config.notifyManaged || config.present > 0) return "error"; // partial install → re-run
+  if (config.legacyNotify || config.present > 0) return "error"; // partial install → re-run
   return "unknown"; // Codex present, BirdyBeep not installed
 }
 
@@ -169,26 +167,40 @@ export async function codexDoctor(opts: CodexStatusOptions = {}): Promise<Doctor
     } else {
       checks.push({ name: "config.toml is valid TOML", ok: true });
 
-      // 3. BirdyBeep notify + hooks present, pointing at `birdybeep hook codex`?
+      // 3. BirdyBeep hooks present, pointing at `birdybeep hook codex`?
+      // The remedy is safe to follow: install only APPENDS to the `[[hooks.X]]` arrays and
+      // never writes the single-valued `notify` slot (birdybeep-agent-gcgp.2).
       const configured = fullyConfigured(config);
       checks.push(
         configured
-          ? { name: "BirdyBeep notify + hooks installed", ok: true }
+          ? { name: "BirdyBeep hooks installed", ok: true }
           : {
-              name: "BirdyBeep notify + hooks installed",
+              name: "BirdyBeep hooks installed",
               ok: false,
-              status: config.notifyManaged || config.present > 0 ? "error" : "unknown",
+              status: config.legacyNotify || config.present > 0 ? "error" : "unknown",
               detail:
-                config.notifyManaged || config.present > 0
-                  ? `Codex config is partially configured (notify ${config.notifyManaged ? "ok" : "missing"}, ${config.present}/${config.total} hooks). Expected command: \`${BIRDYBEEP_HOOK_COMMAND}\`.`
+                config.legacyNotify || config.present > 0
+                  ? `Codex config is partially configured (${config.present}/${config.total} hooks). Expected command: \`${BIRDYBEEP_HOOK_COMMAND}\`.`
                   : "BirdyBeep is not installed in Codex.",
-              remedy: "Run `birdybeep agent install codex` to (re)install the notify + hooks.",
+              remedy:
+                "Run `birdybeep agent install codex` to (re)install the hooks. It adds only BirdyBeep entries and leaves any other tool's Codex config alone.",
             },
       );
 
-      // 4. Trust granted (a trust-gated lifecycle hook has actually fired)?
-      // NB: turn-complete beeps can already be arriving via the ungated `notify` program
-      // while the hooks are still untrusted — so the detail must not say "no events yet".
+      // 4. Leftover BirdyBeep `notify` from an older version squatting the single slot.
+      if (config.legacyNotify) {
+        checks.push({
+          name: "Codex notify slot is not held by BirdyBeep",
+          ok: false,
+          status: "error",
+          detail:
+            "An older BirdyBeep set Codex's single-valued `notify` program. That slot belongs " +
+            "to whichever tool writes it last, and turn-complete now arrives via the Stop hook.",
+          remedy: "Run `birdybeep agent install codex` to remove the leftover `notify` entry.",
+        });
+      }
+
+      // 5. Trust granted (a trust-gated lifecycle hook has actually fired)?
       if (configured) {
         checks.push(
           hasCodexEventBeenSeen(opts)
@@ -199,15 +211,14 @@ export async function codexDoctor(opts: CodexStatusOptions = {}): Promise<Doctor
                 status: "needs_trust",
                 detail:
                   "BirdyBeep hooks are installed but Codex has not fired a trusted lifecycle hook yet. " +
-                  "Until they are trusted, Codex silently skips them — so approval beeps will NOT arrive " +
-                  "(turn-complete beeps still work: they come from `notify`, which needs no trust).",
+                  "Until they are trusted, Codex silently skips them, so no beeps will arrive.",
                 remedy: "Open Codex and run /hooks to trust the BirdyBeep hooks.",
               },
         );
       }
     }
 
-    // 5. config writable (a read-only file/dir blocks install/uninstall).
+    // 6. config writable (a read-only file/dir blocks install/uninstall).
     const target = existsSync(path) ? path : codexConfigDir({ home });
     let writable = true;
     try {
@@ -228,7 +239,7 @@ export async function codexDoctor(opts: CodexStatusOptions = {}): Promise<Doctor
     );
   }
 
-  // 6. Machine token resolvable?
+  // 7. Machine token resolvable?
   const token = await getToken(opts.tokenOptions ?? {});
   checks.push(
     token !== null && token.length > 0
