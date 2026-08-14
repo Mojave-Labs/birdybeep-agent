@@ -11,8 +11,8 @@ export {
   installCodex,
   isBirdyBeepHookEntry,
   LEGACY_BIRDYBEEP_NOTIFY,
-  type MergeResult,
   mergeCodexConfig,
+  type MergeResult,
   notifyIsLegacyBirdyBeep,
   TRUST_INSTRUCTIONS,
 } from "./install";

@@ -127,10 +127,7 @@ describe("install over a realistic pre-existing config.toml", () => {
  * so BirdyBeep never writes `notify` at all.
  */
 describe("third-party notify is never destroyed (gcgp.2)", () => {
-  const THIRD_PARTY = [
-    "/Applications/OtherTool.app/Contents/MacOS/OtherToolClient",
-    "turn-ended",
-  ];
+  const THIRD_PARTY = ["/Applications/OtherTool.app/Contents/MacOS/OtherToolClient", "turn-ended"];
   const seedWithForeignNotify = [
     'model = "o3"',
     `notify = ${JSON.stringify(THIRD_PARTY)}`,

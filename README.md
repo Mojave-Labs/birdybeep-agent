@@ -152,11 +152,11 @@ write no token.
 - **Claude Code** — patches the hooks in `~/.claude/settings.json` to invoke
   `birdybeep hook claude`. Claude Code reads its config live, so the integration is active
   immediately.
-- **Codex** — patches `~/.codex/config.toml`: a top-level `notify` program plus `[[hooks.X]]`
-  lifecycle hooks (SessionStart, PermissionRequest, PostToolUse, SubagentStart, SubagentStop),
-  all invoking `birdybeep hook codex`. Codex requires a one-time hook trust: open Codex and run
-  `/hooks`. Until a trusted lifecycle hook actually fires — a turn-complete beep via the ungated
-  `notify` program does not count — status shows `needs_trust`.
+- **Codex** — patches `~/.codex/config.toml` with `[[hooks.X]]` lifecycle hooks (SessionStart,
+  PermissionRequest, PostToolUse, SubagentStart, SubagentStop, Stop), all invoking
+  `birdybeep hook codex`. The top-level `notify` program is left alone: it holds a single value, so
+  writing it would remove whatever tool already owns it. Codex requires a one-time hook trust: open
+  Codex and run `/hooks`. Until a trusted lifecycle hook actually fires, status shows `needs_trust`.
 - **OpenCode** — adds `@birdybeep/opencode` to the `plugin` array in
   `~/.config/opencode/opencode.json` (honors `XDG_CONFIG_HOME`). OpenCode loads plugins only at
   startup, so restart OpenCode. Until the first event after restart, status shows `needs_restart`.

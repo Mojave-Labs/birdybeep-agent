@@ -101,7 +101,12 @@ describe("uninstall under third-party notify chaining", () => {
     await installCodex({}, sandbox.home);
 
     // The third party re-claims the slot with a chained value AFTER our install.
-    const chained = ["other-tool", "turn-ended", "--previous-notify", '["birdybeep","hook","codex"]'];
+    const chained = [
+      "other-tool",
+      "turn-ended",
+      "--previous-notify",
+      '["birdybeep","hook","codex"]',
+    ];
     const parsed = parse(readFileSync(path, "utf8")) as Record<string, unknown>;
     parsed["notify"] = chained;
     writeFileSync(path, `${stringify(parsed)}\n`);
@@ -118,7 +123,10 @@ describe("uninstall under third-party notify chaining", () => {
     // A config as an OLD BirdyBeep left it: our argv in the slot, their value in the backup.
     const path = codexConfigFile({ home: sandbox.home });
     seed(sandbox.home, `notify = ${JSON.stringify([...LEGACY_BIRDYBEEP_NOTIFY])}\nmodel = "o3"\n`);
-    writeFileSync(`${path}.birdybeep-backup`, 'notify = ["other-tool", "turn-ended"]\nmodel = "o3"\n');
+    writeFileSync(
+      `${path}.birdybeep-backup`,
+      'notify = ["other-tool", "turn-ended"]\nmodel = "o3"\n',
+    );
     await installCodex({}, sandbox.home); // migrates: drops our notify, adds the hooks
 
     await uninstallCodex({}, sandbox.home);
