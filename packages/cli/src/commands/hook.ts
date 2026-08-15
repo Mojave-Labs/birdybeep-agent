@@ -3,10 +3,14 @@
  * installed adapter config invokes when its harness fires a lifecycle event. It reads the
  * raw payload (from the trailing arg for Codex's notify argv, else from stdin), selects the
  * named harness's `runXHook` (normalize → redact/hash/truncate → dedup → send w/ short
- * timeout → queue-on-fail → opportunistic drain → fast return), and ALWAYS exits 0 so it
- * never errors the harness. The token is read by the sender from the secure store — never
- * from config — and notification content is never persisted (the adapters' normalizers
- * enforce that).
+ * timeout → queue-on-fail → opportunistic drain → fast return). The token is read by the
+ * sender from the secure store — never from config — and notification content is never
+ * persisted (the adapters' normalizers enforce that).
+ *
+ * Exit code is 0 for every normal outcome, including deliberate skips, so a hook fire never
+ * errors the harness. The one exception (birdybeep-agent-gcgp.1) is a payload no adapter
+ * recognizes: that sent nothing, so it exits non-zero with a stderr line instead of
+ * disappearing — a non-blocking error every harness surfaces in its log.
  *
  * Built as a factory so the sender + stdin reader are injectable: tests drive the full
  * dispatch → command → pipeline → stub-sink path hermetically, exactly like the adapter E2Es.
@@ -23,14 +27,14 @@ import {
   resolveOnPath,
   type Sender,
 } from "@birdybeep/agent-core";
-import { runClaudeHook } from "@birdybeep/claude-code";
+import { isClaudeCodeHookPayload, runClaudeHook } from "@birdybeep/claude-code";
 import { runCodexHook } from "@birdybeep/codex";
 import {
   type CopilotHookEventName,
   isCopilotHookEventName,
   runCopilotHook,
 } from "@birdybeep/copilot";
-import { runCursorHook } from "@birdybeep/cursor";
+import { isCursorHookEventName, isCursorHookPayload, runCursorHook } from "@birdybeep/cursor";
 import { runOpenCodeHook } from "@birdybeep/opencode";
 
 import { resolveApiUrl } from "../config";
@@ -92,6 +96,51 @@ export function isHarnessName(value: string | undefined): value is HarnessName {
   );
 }
 
+/**
+ * Which harness's adapter should actually handle this payload.
+ *
+ * birdybeep-agent-gcgp.1: Cursor desktop's Claude Code compatibility bridge reads
+ * `~/.claude/settings.json` and runs `birdybeep hook claude` with a CURSOR payload (lowercase
+ * step names + `cursor_version`/`workspace_roots`). Sending that through the Claude normalizer
+ * hit its `default:` throw, which the pipeline turns into `skipped` — every bridged event was
+ * dropped, exit 0, no output. Route them to the Cursor adapter instead: they normalize
+ * correctly AND are attributed to `harness: "cursor"`, so bridged traffic never masquerades as
+ * Claude Code. Detection keys on fields Claude Code never sends, so a real Claude Code fire
+ * can't be reclassified.
+ */
+export function resolveHookHarness(harness: HarnessName, payload: unknown): HarnessName {
+  return harness === "claude" && isCursorHookPayload(payload) ? "cursor" : harness;
+}
+
+/**
+ * Is this payload one the handling harness actually fires? A payload we recognize but don't
+ * map is a deliberate skip (quiet); one we don't recognize at all means something else is
+ * driving this hook, and dropping it silently is the bug gcgp.1 was. Only the two harnesses
+ * that share a config surface answer this — the rest keep their existing quiet-skip behavior.
+ */
+function recognizesPayload(harness: HarnessName, payload: unknown): boolean {
+  if (harness === "claude") return isClaudeCodeHookPayload(payload);
+  if (harness === "cursor") return isCursorHookEventName(asRecord(payload)["hook_event_name"]);
+  return true;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/**
+ * The payload's `hook_event_name` for a diagnostic line. Length-capped and JSON-quoted: hook
+ * event names are safe identifiers, but this is the one place hook output echoes the payload,
+ * so it never grows unbounded and never reaches past that single field (no titles, no bodies).
+ */
+function describeEventName(payload: unknown): string {
+  const name = asRecord(payload)["hook_event_name"];
+  if (typeof name !== "string") return "(absent)";
+  return JSON.stringify(name.length > 64 ? `${name.slice(0, 63)}…` : name);
+}
+
 /** Run one hook fire: select the harness runner and execute via the shared pipeline. */
 export function runHookCommand(
   harness: HarnessName,
@@ -99,11 +148,12 @@ export function runHookCommand(
   sender: Sender,
   copilotEventName?: CopilotHookEventName,
 ): Promise<HookResult> {
-  if (harness === "copilot") {
+  const handler = resolveHookHarness(harness, payload);
+  if (handler === "copilot") {
     if (copilotEventName === undefined) return Promise.resolve({ outcome: "skipped" });
     return runCopilotHook(copilotEventName, payload, { sender });
   }
-  return RUNNERS[harness](payload, { sender });
+  return RUNNERS[handler](payload, { sender });
 }
 
 /** Read process.stdin to EOF (the harness pipes a small JSON then closes); never throws. */
@@ -313,6 +363,9 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       }
 
       const sender = makeSender(resolveApiUrl());
+      // A foreign payload is handled by the harness it actually came from (see
+      // resolveHookHarness) and reported as such, with `routedFrom` naming the hook that ran.
+      const handler = resolveHookHarness(harness, payload);
       const result = await runHookCommand(harness, payload, sender, copilotEventName);
       // Hot path: human mode is silent; --json emits the outcome for scripts/debugging.
       // Surface the backend's 202 decision (notified/suppressed/deduped) + HTTP status when
@@ -320,13 +373,27 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       // fired from one the backend accepted-but-suppressed, which is exactly the failure mode
       // `doctor` and delivery debugging need to see.
       ctx.io.result({
-        harness,
+        harness: handler,
+        ...(handler !== harness ? { routedFrom: harness } : {}),
         ...(copilotEventName !== undefined ? { event: copilotEventName } : {}),
         outcome: result.outcome,
         eventType: result.eventType,
         ...(result.send?.decision ? { decision: result.send.decision } : {}),
         ...(result.send?.status !== undefined ? { status: result.send.status } : {}),
       });
+      // birdybeep-agent-gcgp.1: a payload no adapter recognizes sent NOTHING, and a silent
+      // exit 0 is what hid the Cursor-bridge drop for months. Say so on stderr (harnesses log
+      // it — Cursor's hook log has a STDERR section, Claude Code shows it to the user) and
+      // exit non-zero so it registers as a failure. Deliberate skips — a recognized event we
+      // don't map, an empty/garbled payload — stay quiet and exit 0 as before, so normal
+      // operation never gets noisier.
+      if (result.outcome === "skipped" && !recognizesPayload(handler, payload)) {
+        ctx.io.errline(
+          `birdybeep hook ${harness}: hook_event_name ${describeEventName(payload)} is not a ` +
+            `${handler} hook event — nothing was sent. Check which tool is running this hook.`,
+        );
+        return EXIT.ERROR;
+      }
       return EXIT.OK; // delivered/queued/deduped/skipped all return fast + non-erroring
     },
   };

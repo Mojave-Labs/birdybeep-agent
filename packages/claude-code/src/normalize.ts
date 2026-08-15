@@ -67,6 +67,63 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+/**
+ * Every hook event name Claude Code itself fires — deliberately a SUPERSET of the events the
+ * installer registers (`BIRDYBEEP_HOOK_EVENTS`), because being *unmapped* is not the same as
+ * being *foreign*. {@link isClaudeCodeHookPayload} draws that line: a real Claude Code event we
+ * don't map is a quiet skip, while a payload that isn't Claude Code's at all is a
+ * misconfiguration the CLI reports loudly (birdybeep-agent-gcgp.1). Dropping a name from this
+ * list therefore turns a legitimate hook fire into an error on EVERY fire — keep it in sync
+ * with `docs/SPEC.md` §5 (the `normalize.test.ts` spec guard fails if it drifts).
+ *
+ * Provenance for every name (birdybeep-agent-gcgp.12):
+ *   - Mapped, from the §5 table: SessionStart, Notification, PermissionRequest, Stop,
+ *     StopFailure, SubagentStop.
+ *   - Mapped, added after §5's table was written: SessionEnd (see `BIRDYBEEP_HOOK_EVENTS`
+ *     and the `case "SessionEnd"` below — the coordinated `session_ended` wire addition).
+ *   - Real but DEFERRED by the §5 reconciliation note: TaskCreated, TaskCompleted. Their
+ *     `task_created` / `task_completed` targets are not in the §10.1 vocabulary yet, so we
+ *     don't map them — but a user who wires them must not get an error per fire.
+ *   - Real but out of scope, per Cursor's shipped Claude Code bridge table (which enumerates
+ *     the Claude events it translates, and which this repo relies on elsewhere for gcgp.1):
+ *     PreToolUse, PostToolUse, UserPromptSubmit, PreCompact.
+ *
+ * `SubagentStart` is deliberately ABSENT: §5 states it "is not a Claude Code hook event", and
+ * Cursor's bridge table omits it too. It IS a Codex event (§6), so a `SubagentStart` payload
+ * arriving at `hook claude` is exactly the foreign-payload case worth shouting about.
+ */
+export const CLAUDE_CODE_HOOK_EVENTS: readonly string[] = [
+  "Notification",
+  "PermissionRequest",
+  "PostToolUse",
+  "PreCompact",
+  "PreToolUse",
+  "SessionEnd",
+  "SessionStart",
+  "Stop",
+  "StopFailure",
+  "SubagentStop",
+  "TaskCompleted",
+  "TaskCreated",
+  "UserPromptSubmit",
+];
+
+/**
+ * Names `docs/SPEC.md` §5 discusses that are NOT Claude Code hook events, and why. Keeps the
+ * spec guard honest: every event name §5 mentions must appear here or in
+ * {@link CLAUDE_CODE_HOOK_EVENTS}, so a new name can't be added to the spec and quietly
+ * ignored by the recognizer.
+ */
+export const CLAUDE_CODE_NON_HOOK_EVENTS: readonly string[] = [
+  "SubagentStart", // §5: "is not a Claude Code hook event → not registered/mapped" (it is Codex's, §6)
+];
+
+/** Does this payload carry a hook event name Claude Code actually fires? */
+export function isClaudeCodeHookPayload(input: unknown): boolean {
+  const name = asRecord(input)["hook_event_name"];
+  return typeof name === "string" && CLAUDE_CODE_HOOK_EVENTS.includes(name);
+}
+
 /** Longest one-line completion body we compose before the normalizer's own caps take over. */
 const SUMMARY_MAX_CHARS = 200;
 
@@ -232,6 +289,9 @@ function mapHookEvent(payload: Record<string, unknown>): MappedEvent {
       };
     }
     default:
+      // Callers must not swallow this: an event name Claude Code never fires means something
+      // else is driving this hook (birdybeep-agent-gcgp.1 — Cursor's Claude bridge sends its
+      // own lowercase step names here). The CLI routes those and reports what it cannot.
       throw new ClaudeCodeMappingError(
         `unsupported Claude Code hook event: ${JSON.stringify(name)}`,
       );

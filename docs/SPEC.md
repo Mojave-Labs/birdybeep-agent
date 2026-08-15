@@ -109,6 +109,12 @@ Highest-priority MVP integration. Install user-level hook config using the comma
 >   `task_created` / `task_completed` are NOT in the §10.1 vocabulary (the PRD marks
 >   Task\* "optional later"). Adding them is a coordinated wire-contract change, made in
 >   the product `packages/schemas` first — not done here.
+>
+> **Deferred ≠ foreign.** Every event name above lives in `CLAUDE_CODE_HOOK_EVENTS`
+> (`packages/claude-code/src/normalize.ts`), except the ones listed there as
+> `CLAUDE_CODE_NON_HOOK_EVENTS`. A deferred-but-real event is skipped quietly; a payload
+> from some other tool exits non-zero. Adding an event name here without adding it there
+> turns that event into a per-fire error — a test fails if the two drift.
 
 ## 6. Codex integration (PRD §9.6, §21.2)
 

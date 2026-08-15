@@ -398,6 +398,35 @@ birdybeep test
 
 ---
 
+### Cursor sends events even though you only installed the Claude Code hooks
+
+Cursor desktop reads `~/.claude/settings.json` and runs the hook commands it finds there, so it fires
+`birdybeep hook claude` with a Cursor payload. Those events are handled by the Cursor adapter and arrive
+as `harness: "cursor"`. `birdybeep hook claude --json` reports them as:
+
+```json
+{ "harness": "cursor", "routedFrom": "claude", "outcome": "delivered" }
+```
+
+Cursor's bridge does not support `Notification` or `PermissionRequest`, so approval beeps never come
+through it. For full coverage install the Cursor adapter as well:
+
+```bash
+birdybeep agent install cursor
+```
+
+Events that arrive twice are collapsed by the dedup ledger, so running both is safe.
+
+---
+
+### A hook fire exits non-zero with "not a … hook event"
+
+The payload piped into `birdybeep hook <harness>` carried a `hook_event_name` that harness never fires,
+so nothing was sent. Check which tool is invoking the hook — usually a hook command copied into another
+harness's config file. Every other outcome, including a deliberately unmapped event, exits 0.
+
+---
+
 ## Still stuck?
 
 1. Run `birdybeep doctor --json` and capture the output (it contains no secrets — no tokens, no

@@ -4,14 +4,29 @@
  * §10.5 notify-default, and schema validity; plus deterministic best-effort session
  * id, typed rejection of garbled payloads, and the privacy invariant (cwd hashed).
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import { birdyBeepAgentEventSchema, SESSION_NAME_METADATA_KEY } from "@birdybeep/agent-core";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ClaudeCodeMappingError, normalizeClaudeCodeEvent } from "./normalize";
+import { BIRDYBEEP_HOOK_EVENTS } from "./install";
+import {
+  CLAUDE_CODE_HOOK_EVENTS,
+  CLAUDE_CODE_NON_HOOK_EVENTS,
+  ClaudeCodeMappingError,
+  isClaudeCodeHookPayload,
+  normalizeClaudeCodeEvent,
+} from "./normalize";
 import { SESSION_NAME_MAX_CHARS } from "./session-names";
 
 const DET = { now: () => "2026-06-14T00:00:00.000Z", generateId: () => "evt_fixed" };
@@ -193,6 +208,107 @@ describe("garbled payloads reject (typed error, never a malformed event)", () =>
     await expect(
       normalizeClaudeCodeEvent({ ...base, hook_event_name: "Bogus" }),
     ).rejects.toBeInstanceOf(ClaudeCodeMappingError);
+  });
+
+  // birdybeep-agent-gcgp.1: Cursor desktop's Claude bridge runs `birdybeep hook claude` with
+  // Cursor's own LOWERCASE step names. This normalizer must keep rejecting them (they are not
+  // Claude Code events) — and `isClaudeCodeHookPayload` must say so, which is what lets the CLI
+  // route them to the Cursor adapter instead of dropping them with a silent exit 0.
+  it("rejects Cursor's lowercase step names and does not claim them as Claude Code's", async () => {
+    for (const name of ["sessionStart", "stop", "sessionEnd", "preToolUse", "beforeSubmitPrompt"]) {
+      const payload = { ...base, hook_event_name: name, cursor_version: "3.14.27" };
+      await expect(
+        normalizeClaudeCodeEvent(payload),
+        `expected ${name} to reject`,
+      ).rejects.toBeInstanceOf(ClaudeCodeMappingError);
+      expect(isClaudeCodeHookPayload(payload), `${name} is not a Claude Code event`).toBe(false);
+    }
+  });
+});
+
+describe("isClaudeCodeHookPayload (gcgp.1)", () => {
+  it("accepts every hook event Claude Code fires, including ones we don't map", () => {
+    for (const name of CLAUDE_CODE_HOOK_EVENTS) {
+      expect(isClaudeCodeHookPayload({ ...base, hook_event_name: name }), name).toBe(true);
+    }
+    // The events the installer registers are a subset of what Claude Code can fire.
+    for (const name of BIRDYBEEP_HOOK_EVENTS) expect(CLAUDE_CODE_HOOK_EVENTS).toContain(name);
+    // Unmapped-but-real events are recognized, so they stay a QUIET skip.
+    expect(isClaudeCodeHookPayload({ ...base, hook_event_name: "PreCompact" })).toBe(true);
+  });
+
+  it("rejects non-payloads and unknown names", () => {
+    for (const value of [undefined, null, 42, "Stop", [], {}, { hook_event_name: 7 }]) {
+      expect(isClaudeCodeHookPayload(value)).toBe(false);
+    }
+    expect(isClaudeCodeHookPayload({ ...base, hook_event_name: "Bogus" })).toBe(false);
+  });
+
+  // birdybeep-agent-gcgp.12: the §5 reconciliation note defers TaskCreated/TaskCompleted —
+  // they are events Claude Code fires whose §10.1 targets don't exist yet. Deferred is not
+  // foreign: leaving them out made every fire of a hand-wired Task hook a per-fire error.
+  it("recognizes the events §5 defers, so they stay a quiet skip and never error", async () => {
+    for (const name of ["TaskCreated", "TaskCompleted"]) {
+      const payload = { ...base, hook_event_name: name };
+      expect(isClaudeCodeHookPayload(payload), `${name} is a real Claude Code event`).toBe(true);
+      // Still unmapped — recognized only means "don't shout", not "invent an event type".
+      await expect(normalizeClaudeCodeEvent(payload), name).rejects.toBeInstanceOf(
+        ClaudeCodeMappingError,
+      );
+    }
+  });
+
+  // §5 states SubagentStart "is not a Claude Code hook event"; it is Codex's (§6). So a
+  // SubagentStart payload at `hook claude` is a genuine foreign payload, not a quiet skip.
+  it("does not claim SubagentStart, which §5 documents as not a Claude Code event", () => {
+    expect(CLAUDE_CODE_NON_HOOK_EVENTS).toContain("SubagentStart");
+    expect(isClaudeCodeHookPayload({ ...base, hook_event_name: "SubagentStart" })).toBe(false);
+  });
+});
+
+/**
+ * The drift guard (birdybeep-agent-gcgp.12). `CLAUDE_CODE_HOOK_EVENTS` decides whether an
+ * unmapped fire is silent or an error, so an event name added to the spec but not to the list
+ * silently becomes a per-fire failure. Read §5 back and require every hook event name it
+ * mentions to be classified — recognized, or explicitly documented as not an event.
+ */
+describe("CLAUDE_CODE_HOOK_EVENTS stays in sync with docs/SPEC.md §5", () => {
+  function specSection5(): string {
+    const spec = readFileSync(new URL("../../../docs/SPEC.md", import.meta.url), "utf8");
+    const start = spec.indexOf("## 5. Claude Code integration");
+    const end = spec.indexOf("## 6.", start);
+    expect(start, "SPEC.md §5 heading not found").toBeGreaterThan(-1);
+    expect(end, "SPEC.md §6 heading not found").toBeGreaterThan(start);
+    return spec.slice(start, end);
+  }
+
+  it("classifies every event name §5 mentions", () => {
+    const mentioned = new Set<string>();
+    // §5 backticks every identifier; hook event names are the PascalCase ones (§10.1 event
+    // types and payload fields are snake_case, so they don't match).
+    for (const [, code] of specSection5().matchAll(/`([^`]+)`/g)) {
+      if (/^[A-Z][A-Za-z]+$/.test(code!)) mentioned.add(code!);
+    }
+    expect(
+      mentioned.size,
+      "extracted no event names from §5 — did its formatting change?",
+    ).toBeGreaterThan(5);
+    const classified = new Set([...CLAUDE_CODE_HOOK_EVENTS, ...CLAUDE_CODE_NON_HOOK_EVENTS]);
+    const unclassified = [...mentioned].filter((name) => !classified.has(name)).sort();
+    expect(
+      unclassified,
+      "docs/SPEC.md §5 names these events but normalize.ts classifies neither as a hook event " +
+        "nor as a non-event — add them to CLAUDE_CODE_HOOK_EVENTS (deferred-but-real) or to " +
+        "CLAUDE_CODE_NON_HOOK_EVENTS (not a Claude Code event)",
+    ).toEqual([]);
+    // The specific names that made gcgp.12 real, asserted by hand so the guard can't pass vacuously.
+    for (const name of ["TaskCreated", "TaskCompleted"]) expect(mentioned).toContain(name);
+  });
+
+  it("does not classify a name as both a hook event and a non-event", () => {
+    for (const name of CLAUDE_CODE_NON_HOOK_EVENTS) {
+      expect(CLAUDE_CODE_HOOK_EVENTS, name).not.toContain(name);
+    }
   });
 });
 
