@@ -26,9 +26,11 @@ exact generated config is committed under [`examples/`](../examples/README.md).
 
 > **Versions this was verified against** (CLAUDE.md §21.1 — harness hook APIs move, so claims are
 > pinned to what was actually exercised): **Cursor** `cursor-agent 2026.07.09` (headless `-p`,
-> captured 2026-07-15 — see `packages/cursor/src/__fixtures__/README.md`). Claude Code, Codex, and
-> OpenCode were verified live over 2026-07-14/15 against the versions then current. A newer harness
-> release can change or add hook events; re-run the adapter's live E2E before trusting the table.
+> captured 2026-07-15 — see `packages/cursor/src/__fixtures__/README.md`) and Cursor IDE `3.14.27`;
+> **GitHub Copilot CLI** `1.0.70` (BYOK, 2026-08-06) and `1.0.78` (GitHub OAuth, 2026-08-07). Claude
+> Code, Codex, and OpenCode were verified live over 2026-07-14/15 against the versions then current.
+> A newer harness release can change or add hook events; re-run the adapter's live E2E before
+> trusting the table.
 
 ---
 
@@ -171,17 +173,22 @@ the harness version detected on the current machine so API drift is visible in d
 Every install backs up the original file once (a `.birdybeep-backup` sibling) before its first
 change, adds only BirdyBeep-managed entries, and writes no token.
 
-The snippets below show the portable form of the hook command. What the installer actually writes is
-the absolute path of the Node and the `birdybeep` entry point it is running under — e.g.
-`"/usr/local/bin/node" "/usr/local/bin/birdybeep" hook cursor`. Harnesses that run hooks from a GUI
-process (Cursor, and Cursor's reading of `~/.claude/settings.json`) get the `PATH` the OS gave the
-app rather than your shell's, so a bare command exits 127 with `command not found`. Two consequences:
+The snippets below show the portable form of the hook command. For **Claude Code and Cursor** the
+installer instead writes the absolute path of the Node and the `birdybeep` entry point it is running
+under — e.g. `"/usr/local/bin/node" "/usr/local/bin/birdybeep" hook cursor`. Both can have their
+hooks executed from a GUI process — Cursor itself, and Cursor desktop's reading of
+`~/.claude/settings.json` — which gets the `PATH` the OS gave the app rather than your shell's, so a
+bare command exits 127 with `command not found`. Two consequences for those two harnesses:
 
 - Set `BIRDYBEEP_HOOK_COMMAND` before installing to write a different launcher —
   `BIRDYBEEP_HOOK_COMMAND="mise exec -- birdybeep" birdybeep agent install all`.
 - Move the CLI, or switch Node versions, and the written path stops resolving. `birdybeep doctor`
   reports the stale path; `birdybeep agent install <harness>` rewrites the entry in place (it
   replaces the managed entry rather than adding a second one).
+
+**Codex and GitHub Copilot CLI** run their hooks from the terminal process you started them in, so
+their managed commands are written as the plain `birdybeep hook <harness>` form shown below — the
+same text committed under [`examples/`](../examples/README.md).
 
 #### Claude Code
 
