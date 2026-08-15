@@ -25,12 +25,11 @@ Anything not in that table is not supported today — see
 exact generated config is committed under [`examples/`](../examples/README.md).
 
 > **Versions this was verified against** (CLAUDE.md §21.1 — harness hook APIs move, so claims are
-> pinned to what was actually exercised): **Cursor** `cursor-agent 2026.07.09` (headless `-p`,
-> captured 2026-07-15 — see `packages/cursor/src/__fixtures__/README.md`) and Cursor IDE `3.14.27`;
-> **GitHub Copilot CLI** `1.0.70` (BYOK, 2026-08-06) and `1.0.78` (GitHub OAuth, 2026-08-07). Claude
-> Code, Codex, and OpenCode were verified live over 2026-07-14/15 against the versions then current.
-> A newer harness release can change or add hook events; re-run the adapter's live E2E before
-> trusting the table.
+> pinned to what was actually exercised): per harness, in the [support matrix](#support-matrix).
+> Claude Code, Codex, and OpenCode were exercised live over 2026-07-14/15 against the versions then
+> current; Cursor's headless `-p` payloads were captured 2026-07-15 (see
+> `packages/cursor/src/__fixtures__/README.md`). A newer harness release can change or add hook
+> events; re-run the adapter's live E2E before trusting the table.
 
 ---
 
