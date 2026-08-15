@@ -22,7 +22,11 @@ import {
   claudeCodeAdapter,
   claudeSettingsPath,
 } from "@birdybeep/claude-code";
-import { codexAdapter, codexConfigFile } from "@birdybeep/codex";
+import {
+  BIRDYBEEP_HOOK_EVENTS as CODEX_HOOK_EVENTS,
+  codexAdapter,
+  codexConfigFile,
+} from "@birdybeep/codex";
 import { COPILOT_HOOK_EVENTS, copilotAdapter, copilotHooksPath } from "@birdybeep/copilot";
 import {
   BIRDYBEEP_HOOK_EVENTS as CURSOR_HOOK_EVENTS,
@@ -69,6 +73,7 @@ const HARNESSES: {
     adapter: codexAdapter,
     example: join(EXAMPLES, "codex", "config.toml"),
     generated: (home) => codexConfigFile({ home }),
+    events: CODEX_HOOK_EVENTS,
   },
   {
     target: "opencode",

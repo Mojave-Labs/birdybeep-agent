@@ -9,10 +9,14 @@
  *     structure) → restore the backup BYTES verbatim → byte-for-byte original.
  *   - EDITED since install → surgically strip our entries from the CURRENT config and
  *     re-serialize, preserving the user's post-install edits.
- * Codex `notify` is single-valued, so install overwrote any user `notify` (saved in the
- * backup); uninstall restores the user's original `notify` from the backup. If BirdyBeep
- * created the file from scratch (no backup) and nothing else remains, the file is removed.
- * Idempotent: a no-op when nothing of ours is present. The backup is consumed on success.
+ * Current installs never write `notify`. Configs patched by an older BirdyBeep still carry
+ * our argv in that single-valued slot; uninstall removes it and restores the user's original
+ * from the backup. A `notify` owned by anyone else is never rewritten — not even by the
+ * byte-for-byte path, which only runs when stripping our entries reproduces the backup
+ * exactly, so a re-claimed slot always takes the surgical path (birdybeep-agent-gcgp.2).
+ * If BirdyBeep created the file from scratch (no backup) and nothing else remains, the file
+ * is removed. Idempotent: a no-op when nothing of ours is present. The backup is consumed
+ * on success.
  */
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -20,7 +24,7 @@ import { homedir } from "node:os";
 import type { UninstallOptions, UninstallResult } from "@birdybeep/agent-core";
 import { parse, stringify } from "smol-toml";
 
-import { backupPathFor, BIRDYBEEP_NOTIFY, isBirdyBeepHookEntry } from "./install";
+import { backupPathFor, isBirdyBeepHookEntry, notifyIsLegacyBirdyBeep } from "./install";
 import { codexConfigFile, type CodexPathOptions } from "./paths";
 import { clearCodexTrust, type CodexTrustOptions } from "./trust";
 
@@ -28,10 +32,6 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-function notifyIsManaged(value: unknown): boolean {
-  return Array.isArray(value) && value.join(" ") === [...BIRDYBEEP_NOTIFY].join(" ");
 }
 
 /** Order-insensitive (objects) / order-sensitive (arrays) deep equality for parsed TOML. */
@@ -55,9 +55,13 @@ function deepEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Strip BirdyBeep's `notify` + hook entries from a parsed config. Restores the user's
- * original (non-BirdyBeep) `notify` from the backup when present; prunes emptied hook
- * events and an emptied `hooks` block.
+ * Strip BirdyBeep's hook entries (and an older BirdyBeep's `notify`) from a parsed config;
+ * prunes emptied hook events and an emptied `hooks` block.
+ *
+ * `notify` is touched ONLY when it still holds our own legacy argv — then the user's
+ * pre-install `notify` is restored from the backup, undoing the overwrite older versions
+ * performed. A `notify` belonging to anyone else is left exactly as found, including when
+ * it differs from the backup because that tool re-claimed the slot (birdybeep-agent-gcgp.2).
  */
 export function removeBirdyBeepConfig(
   config: Record<string, unknown>,
@@ -66,10 +70,10 @@ export function removeBirdyBeepConfig(
   let removedAny = false;
   const cleaned: Record<string, unknown> = { ...config };
 
-  if (notifyIsManaged(cleaned["notify"])) {
+  if (notifyIsLegacyBirdyBeep(cleaned["notify"])) {
     removedAny = true;
     const original = backup?.["notify"];
-    if (original !== undefined && !notifyIsManaged(original)) {
+    if (original !== undefined && !notifyIsLegacyBirdyBeep(original)) {
       cleaned["notify"] = original; // restore the user's own notify (install overwrote it)
     } else {
       delete cleaned["notify"];

@@ -217,6 +217,64 @@ describe("CX-E2E: install → fire real notify + hooks → assert delivered", ()
     expect((approval!.body as { body: string }).body).toBe("Approve Bash?");
   });
 
+  /**
+   * birdybeep-agent-gcgp.8. Turn-complete now rides `[[hooks.Stop]]`. These payloads are
+   * VERBATIM from Codex 0.147.0-alpha (`/Applications/ChatGPT.app/Contents/Resources/codex`)
+   * running a real turn — the Stop hook stdin, and the `agent-turn-complete` argv a third
+   * party's notify chain forwarded for the SAME turn, 2s apart. A user whose notify slot is
+   * owned by a tool that chains to us gets both, so they must collapse to one beep.
+   */
+  describe("Stop hook (real captured payloads)", () => {
+    const THREAD = "019ffe2f-a7b2-7f83-a566-4b850b5cbfe0";
+    const stopPayload = {
+      session_id: THREAD,
+      turn_id: "019ffe2f-a7e7-7560-a02f-3a43b6f443c9",
+      transcript_path: `${RAW_CWD}/rollout.jsonl`,
+      cwd: RAW_CWD,
+      hook_event_name: "Stop",
+      model: "gpt-5.6-sol",
+      stop_hook_active: false,
+      last_assistant_message: "the secret is sk-abcdefghijklmnop1234",
+    };
+    const chainedNotify = {
+      type: "agent-turn-complete",
+      "thread-id": THREAD,
+      "turn-id": "019ffe2f-a7e7-7560-a02f-3a43b6f443c9",
+      cwd: RAW_CWD,
+      client: "Codex Desktop",
+      "input-messages": ["do the thing"],
+      "last-assistant-message": "the secret is sk-abcdefghijklmnop1234",
+    };
+
+    it("maps Stop → agent_completed and never persists last_assistant_message", async () => {
+      const { fire } = await setUp();
+      expect(await fire(stopPayload)).toBe("delivered");
+      const [delivered] = sink!.received();
+      const body = delivered!.body as Record<string, unknown>;
+      expect(body["event_type"]).toBe("agent_completed");
+      expect(body["status"]).toBe("completed");
+      expect(JSON.stringify(body)).not.toContain("sk-abcdefghijklmnop1234");
+      assertPathsHashed(delivered!, [RAW_CWD]);
+    });
+
+    it("is trust proof (a Stop hook is trust-gated; the notify chain is not)", async () => {
+      const { fire } = await setUp();
+      expect(await codexAdapter.status()).toBe("needs_trust");
+      expect(await fire(stopPayload)).toBe("delivered");
+      expect(await codexAdapter.status()).toBe("installed");
+    });
+
+    it("Stop + a third party's chained notify for one turn → exactly ONE beep", async () => {
+      const { fire } = await setUp();
+      expect(await fire(stopPayload)).toBe("delivered");
+      expect(await fire(chainedNotify)).toBe("deduped");
+      const completed = sink!
+        .received()
+        .filter((e) => (e.body as { event_type: string }).event_type === "agent_completed");
+      expect(completed).toHaveLength(1);
+    });
+  });
+
   it("dedupes a repeated event: two identical notify → exactly ONE agent_completed", async () => {
     const { fire } = await setUp();
     const first = await fire({ type: "agent-turn-complete", "thread-id": SESSION, cwd: RAW_CWD });

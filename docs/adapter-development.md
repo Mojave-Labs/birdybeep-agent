@@ -241,12 +241,18 @@ Pick the closest semantic type for each harness signal. Codex
 
 | Codex surface                         | `event_type`                          | `status`               |
 | ------------------------------------- | ------------------------------------- | ---------------------- |
-| `notify {type:"agent-turn-complete"}` | `agent_completed`                     | `completed`            |
 | hook `SessionStart`                   | `session_started` / `session_resumed` | `starting` / `running` |
 | hook `PermissionRequest`              | `approval_required`                   | `waiting_for_approval` |
 | hook `PostToolUse`                    | `tool_finished`                       | `running`              |
 | hook `SubagentStart`                  | `subagent_started`                    | `running`              |
 | hook `SubagentStop`                   | `subagent_completed`                  | `running`              |
+| hook `Stop`                           | `agent_completed`                     | `completed`            |
+| `notify {type:"agent-turn-complete"}` | `agent_completed`                     | `completed`            |
+
+BirdyBeep registers the hooks and not the `notify` program, but still accepts `notify` payloads:
+configs written by an older BirdyBeep carry one, and a third-party `notify` program may forward to
+`birdybeep hook codex`. A turn that produces both collapses to one beep, because Codex's hook
+`session_id` and notify `thread-id` are the same value and the dedup identity matches.
 
 > **Verify against the live harness, not a spec table.** Codex's mapping was reconciled against the
 > actual `openai/codex` source, and the comments record where reality differed from the PRD. Do the
@@ -392,10 +398,6 @@ identifies its own entries by the managed command string, so a re-merge is a no-
 export function mergeCodexConfig(config: Record<string, unknown>) {
   let changed = false;
   const merged = { ...config };
-  if (!notifyIsManaged(merged["notify"])) {
-    merged["notify"] = [...BIRDYBEEP_NOTIFY]; // ["birdybeep", "hook", "codex"]
-    changed = true;
-  }
   const nextHooks = { ...asRecord(merged["hooks"]) };
   for (const event of BIRDYBEEP_HOOK_EVENTS) {
     const current = Array.isArray(nextHooks[event]) ? [...nextHooks[event]] : [];
@@ -410,13 +412,21 @@ export function mergeCodexConfig(config: Record<string, unknown>) {
 }
 ```
 
+> **Only merge into keys that hold more than one value.** A single-valued key has exactly one
+> owner, so writing it deletes whatever tool was there. Prefer a list the harness lets you append
+> to. If a signal is reachable only through a single-valued key, leave the key alone and print what
+> is in it — never claim it silently. Codex's `notify` is the worked example; see
+> [`docs/SPEC.md`](./SPEC.md) §6.
+
 **4. If nothing changed, return early** with `changed: false` — that is the idempotency guarantee
 (`birdybeep agent install` twice is identical to once).
 
 **5. On `dryRun`, report the would-change files without writing.**
 
-**6. Back up once, then write.** Copy the existing file to a backup (Codex uses a
-`.birdybeep-backup` suffix) only if a backup doesn't already exist, then write the merged config.
+**6. Back up before every write, then write.** Copy the existing file to a backup (Codex uses a
+`.birdybeep-backup` suffix). The canonical backup keeps the pre-BirdyBeep original; a later write
+whose current bytes differ from that backup gets an additional timestamped copy beside it, so no
+overwrite is unrecoverable.
 
 **7. Return `changedFiles`, `backupFiles`, `requiredActions`, and the resulting `status`.**
 
@@ -439,8 +449,6 @@ Here is the exact Codex `config.toml` block BirdyBeep generates from scratch
 identical bar the event name):
 
 ```toml
-notify = [ "birdybeep", "hook", "codex" ]
-
 [[hooks.SessionStart]]
 matcher = ""
 

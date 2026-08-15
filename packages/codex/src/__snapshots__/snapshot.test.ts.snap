@@ -1,9 +1,7 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`generated Codex config snapshots (§21.1) > from-scratch install writes the canonical notify + hooks block 1`] = `
-"notify = [ "birdybeep", "hook", "codex" ]
-
-[[hooks.SessionStart]]
+exports[`generated Codex config snapshots (§21.1) > from-scratch install writes the canonical hooks block 1`] = `
+"[[hooks.SessionStart]]
 matcher = ""
 
 [[hooks.SessionStart.hooks]]
@@ -42,11 +40,19 @@ matcher = ""
 type = "command"
 command = "birdybeep hook codex"
 timeout = 10
+
+[[hooks.Stop]]
+matcher = ""
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = "birdybeep hook codex"
+timeout = 10
 "
 `;
 
-exports[`generated Codex config snapshots (§21.1) > overwrites a user's single-valued notify (reversible) and preserves other keys 1`] = `
-"notify = [ "birdybeep", "hook", "codex" ]
+exports[`generated Codex config snapshots (§21.1) > leaves another tool's single-valued notify intact and preserves other keys 1`] = `
+"notify = [ "user-notifier", "--flag" ]
 model = "gpt-5"
 
 [tui]
@@ -91,13 +97,20 @@ matcher = ""
 type = "command"
 command = "birdybeep hook codex"
 timeout = 10
+
+[[hooks.Stop]]
+matcher = ""
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = "birdybeep hook codex"
+timeout = 10
 "
 `;
 
 exports[`generated Codex config snapshots (§21.1) > patches into a config with a same-event user PostToolUse hook + other keys 1`] = `
 "model = "o3"
 approval_policy = "on-request"
-notify = [ "birdybeep", "hook", "codex" ]
 
 [sandbox]
 mode = "workspace-write"
@@ -145,6 +158,14 @@ timeout = 10
 matcher = ""
 
 [[hooks.SubagentStop.hooks]]
+type = "command"
+command = "birdybeep hook codex"
+timeout = 10
+
+[[hooks.Stop]]
+matcher = ""
+
+[[hooks.Stop.hooks]]
 type = "command"
 command = "birdybeep hook codex"
 timeout = 10

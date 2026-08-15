@@ -10,15 +10,17 @@
  * VERIFIED against the current Codex source (openai/codex `codex-rs/hooks`), not the
  * PRD §9.6 table — see docs/SPEC.md §6 reconciliation. Two real surfaces:
  *
- *   notify {type:"agent-turn-complete"}  → agent_completed   (the ONLY notify type;
- *                                          notify never fires for needs-input/approval)
  *   hook SessionStart                    → session_started / session_resumed (by source)
  *   hook PermissionRequest               → approval_required (the real approval signal)
  *   hook PostToolUse                     → tool_finished
  *   hook SubagentStart                   → subagent_started
  *   hook SubagentStop                    → subagent_completed
- *   hook Stop                            → agent_completed   (not registered — notify
- *                                          covers turn-complete — but mapped if it arrives)
+ *   hook Stop                            → agent_completed   (the turn-complete signal
+ *                                          BirdyBeep registers)
+ *   notify {type:"agent-turn-complete"}  → agent_completed   (the ONLY notify type; still
+ *                                          mapped for configs an older BirdyBeep patched,
+ *                                          and for third-party notify chains that forward
+ *                                          to `birdybeep hook codex`)
  *
  * notify carries JSON on argv; hooks carry JSON on stdin. The `birdybeep hook codex`
  * entrypoint feeds either shape here; dispatch keys off `hook_event_name` vs `type`.
@@ -129,12 +131,13 @@ function mapHookEvent(payload: Record<string, unknown>, name: string): MappedEve
         metadata: { agent_type: str(payload["agent_type"]), agent_id: str(payload["agent_id"]) },
       };
     case "Stop":
+      // last_assistant_message is assistant content — intentionally NOT persisted.
       return {
         eventType: "agent_completed",
         status: "completed",
         title: "Codex finished",
         body: "Turn complete",
-        metadata: {},
+        metadata: { turn_id: str(payload["turn_id"]), model: str(payload["model"]) },
       };
     default:
       throw new CodexMappingError(`unsupported Codex hook event: ${JSON.stringify(name)}`);

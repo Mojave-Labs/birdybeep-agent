@@ -37,7 +37,7 @@ followed by an indented `→` fix:
 ```
 ✓  Machine token
 ✓  Claude Code: Claude Code installed
-✗  Codex: Codex hooks trusted — BirdyBeep hooks are installed but Codex has not fired a trusted lifecycle hook yet. Until they are trusted, Codex silently skips them — so approval beeps will NOT arrive (turn-complete beeps still work: they come from `notify`, which needs no trust).
+✗  Codex: Codex hooks trusted — BirdyBeep hooks are installed but Codex has not fired a trusted lifecycle hook yet. Until they are trusted, Codex silently skips them, so no beeps will arrive.
      → Open Codex and run /hooks to trust the BirdyBeep hooks.
 ✓  Local queue — 0 queued → 0 delivered, 0 remaining
 ✓  Backend reachable
@@ -103,10 +103,11 @@ checks appear.
      → Open Codex and run /hooks to trust the BirdyBeep hooks.
 ```
 
-**Why** — writing the config (`notify` + the lifecycle hooks in `~/.codex/config.toml`) is **not**
-enough to count as installed: Codex requires a **one-time trust** of those hooks. Until a trusted
-**lifecycle hook** actually fires, BirdyBeep reports `needs_trust` rather than `installed`. (Turn-complete beeps arriving via the ungated `notify` program do **not** count — they
-work without trust, so they are no proof the approval hooks are trusted.)
+**Why** — writing the lifecycle hooks into `~/.codex/config.toml` is **not** enough to count as
+installed: Codex requires a **one-time trust** of those hooks. Until a trusted **lifecycle hook**
+actually fires, BirdyBeep reports `needs_trust` rather than `installed`. (A turn-complete beep
+arriving from a `notify` program does **not** count — `notify` runs without trust, so it is no proof
+the hooks are trusted.)
 
 **Fix** — open Codex and run:
 
@@ -154,8 +155,8 @@ to `installed`:
 ✗  Claude Code: BirdyBeep hooks installed — BirdyBeep hooks are not installed.
      → Run `birdybeep agent install claude` to (re)install the hooks.
 
-✗  Codex: BirdyBeep notify + hooks installed — BirdyBeep is not installed in Codex.
-     → Run `birdybeep agent install codex` to (re)install the notify + hooks.
+✗  Codex: BirdyBeep hooks installed — BirdyBeep is not installed in Codex.
+     → Run `birdybeep agent install codex` to (re)install the hooks. It adds only BirdyBeep entries and leaves any other tool's Codex config alone.
 
 ✗  OpenCode: BirdyBeep plugin configured — The `@birdybeep/opencode` plugin is not in opencode.json.
      → Run `birdybeep agent install opencode` to add the plugin.

@@ -1,6 +1,6 @@
 /**
  * @birdybeep/codex — the Codex adapter (one-time hook trust). Implements the
- * agent-core `AgentAdapter` contract for Codex's user-level notify + hook config (§9.6).
+ * agent-core `AgentAdapter` contract for Codex's user-level lifecycle hooks (§9.6).
  */
 export { CODEX_HARNESS_ID, codexAdapter } from "./adapter";
 export { type CodexDetectOptions, detectCodex } from "./detect";
@@ -8,10 +8,12 @@ export {
   backupPathFor,
   BIRDYBEEP_HOOK_COMMAND,
   BIRDYBEEP_HOOK_EVENTS,
-  BIRDYBEEP_NOTIFY,
   installCodex,
   isBirdyBeepHookEntry,
+  LEGACY_BIRDYBEEP_NOTIFY,
   mergeCodexConfig,
+  type MergeResult,
+  notifyIsLegacyBirdyBeep,
   TRUST_INSTRUCTIONS,
 } from "./install";
 export { CodexMappingError, normalizeCodexEvent } from "./normalize";

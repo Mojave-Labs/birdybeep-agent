@@ -192,10 +192,11 @@ A managed hook entry looks like this:
 #### Codex
 
 - **File:** `~/.codex/config.toml` (honors `$CODEX_HOME` if set)
-- **Change:** sets the top-level `notify` program to `["birdybeep", "hook", "codex"]` (fires on
-  turn-complete) and adds `[[hooks.X]]` lifecycle entries for `SessionStart`, `PermissionRequest`,
-  `PostToolUse`, `SubagentStart`, and `SubagentStop`. Each hook runs `birdybeep hook codex`. Your
-  own config is preserved.
+- **Change:** adds `[[hooks.X]]` lifecycle entries for `SessionStart`, `PermissionRequest`,
+  `PostToolUse`, `SubagentStart`, `SubagentStop`, and `Stop` (turn complete). Each hook runs
+  `birdybeep hook codex`. Your own config is preserved, including the top-level `notify` program,
+  which BirdyBeep never writes — see
+  [`examples/codex/README.md`](../examples/codex/README.md#the-notify-program).
 - **Status:** `needs_trust` — see the gotcha below.
 
 #### OpenCode
@@ -267,9 +268,9 @@ Codex skips hooks it hasn't trusted, so a fresh install reports `needs_trust`. T
 1. Open Codex.
 2. Run `/hooks`.
 
-(The top-level `notify` program is not trust-gated, so turn-complete Beeps can arrive before trust;
-the lifecycle hooks need the trust step.) Codex isn't marked fully installed until the first real
-event arrives, which proves trust was granted — until then its status stays `needs_trust`.
+Until then Codex silently skips the hooks, so no Beeps arrive. Codex isn't marked fully installed
+until the first trusted lifecycle hook fires, which proves trust was granted — until then its status
+stays `needs_trust`.
 
 ### OpenCode needs a restart → `needs_restart`
 
