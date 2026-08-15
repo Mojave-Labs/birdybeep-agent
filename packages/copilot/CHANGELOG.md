@@ -1,5 +1,12 @@
 # @birdybeep/copilot
 
+## 0.4.0
+
+### Patch Changes
+
+- Updated dependencies [6817f70]
+  - @birdybeep/agent-core@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes
