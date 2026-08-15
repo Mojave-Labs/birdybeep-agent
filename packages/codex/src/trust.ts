@@ -45,12 +45,16 @@ import { isCodexLifecycleHookPayload } from "./normalize";
 /**
  * Outcomes that prove the trust-gated hook command ran end-to-end. `queued` counts: the
  * hook FIRED (which is what trust means) and the event is safely on the local queue —
- * the user merely isn't paired / is offline, which is a separate failure surfaced
- * separately by doctor.
+ * the user merely is offline, which is a separate failure surfaced separately by doctor.
+ * `unpaired` counts for the same reason (gcgp.4): Codex ran our command, which is the whole
+ * question trust answers; that the event went nowhere for want of a token is `doctor`'s
+ * business, and withholding trust would make `birdybeep pair` silently re-open the /hooks
+ * prompt on a machine that had already granted it.
  */
 const TRUST_PROVING_OUTCOMES: ReadonlySet<HookOutcome> = new Set<HookOutcome>([
   "delivered",
   "queued",
+  "unpaired",
 ]);
 
 export interface CodexTrustOptions {

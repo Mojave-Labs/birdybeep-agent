@@ -155,16 +155,18 @@ describe("CX-TRUST: install → needs_trust → first real event flips it", () =
     expect(hasCodexEventBeenSeen()).toBe(true); // the trust-gated hook is the proof
   });
 
-  it("a trust-gated hook that only QUEUES (unpaired) still proves trust", async () => {
+  it("a trust-gated hook on an UNPAIRED machine still proves trust", async () => {
     sink = await StubEventSink.start();
     sandbox = createSandbox();
-    // No setToken → the sender cannot deliver and queues. The hook still FIRED, which is
-    // what trust is about; delivery is a separate concern.
+    // No setToken → the sender sends nothing (gcgp.4: `unpaired`, not `queued`). The hook still
+    // FIRED, which is what trust is about; delivery is a separate concern. Withholding trust here
+    // would make `birdybeep doctor` report needs_trust on a machine that had already granted it.
     const sender = createSender({ baseUrl: sink.url, tokenOptions: FILE_ONLY });
 
     const result = await runCodexHook(PERMISSION_REQUEST, { sender });
 
-    expect(result.outcome).toBe("queued");
+    expect(result.outcome).toBe("unpaired");
+    expect(sink.received()).toHaveLength(0);
     expect(hasCodexEventBeenSeen()).toBe(true);
   });
 

@@ -327,8 +327,15 @@ Send a real test event end-to-end:
 birdybeep test
 ```
 
-This pushes a test event through the actual sender path and reports whether it was delivered or
-queued for retry. If everything is paired and reachable, you should get a Beep on your phone.
+This pushes a test event through the actual sender path and reports whether it was delivered,
+queued for retry (offline), or not sent at all:
+
+```text
+✗ NOT PAIRED — this machine has no BirdyBeep machine token, so nothing was sent (and nothing was
+queued). Run `birdybeep pair`.
+```
+
+If everything is paired and reachable, you should get a Beep on your phone.
 
 For a deeper diagnosis, run:
 
@@ -453,8 +460,9 @@ Before anything leaves your machine, the hook sanitizes the payload:
   or status flow through.
 
 The hook always returns fast and never blocks your harness. If a send fails, the event goes to a
-best-effort local retry queue (24h retention, strict permissions) that's drained opportunistically
-on the next hook, `status`, or `doctor`. On the backend, notification title and body are not
+best-effort local retry queue (24h retention, at most 500 entries, strict permissions) that's drained
+opportunistically on the next hook, `status`, or `doctor`. Until the machine is paired nothing is
+queued — `status` and `doctor` report how many events that has cost. On the backend, notification title and body are not
 persisted by default — only metadata, hashes, and delivery/session status.
 
 For the full detail, see [`docs/SPEC.md`](./SPEC.md) (§6, §7, §11) and the adapter source under

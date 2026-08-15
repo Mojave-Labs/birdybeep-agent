@@ -36,9 +36,9 @@ never blocks your harness.
   `~/.codex/config.toml`, `~/.config/opencode/opencode.json`, `~/.cursor/hooks.json`, and
   `~/.copilot/hooks/birdybeep.json`. Installs are idempotent, back up the original once, and add
   only BirdyBeep-managed entries. (See [Per-harness details](#per-harness-details).)
-- **A local event queue** — best-effort, ~24h retention, strict file permissions. It holds only
-  events that couldn't be delivered immediately. It is not an audit log, and `birdybeep queue clear`
-  empties it.
+- **A local event queue** — best-effort, ~24h retention, at most 500 entries, strict file
+  permissions. It holds only events that couldn't be delivered immediately, and nothing at all until
+  the machine is paired. It is not an audit log, and `birdybeep queue clear` empties it.
 - **One machine token** — stored in your OS keychain when available, otherwise a strict-permission
   (`0600`) file in your user config directory. It is never written into harness config or any repo
   file.
@@ -82,7 +82,7 @@ Run `birdybeep <command> --help` for per-command help.
 | `birdybeep logout`                                                          | Removes the machine token (keychain + file fallback). Idempotent. Same as `unpair`.                                                                                                   |
 | `birdybeep unpair`                                                          | Unpairs this machine — removes the machine token (keychain + file fallback). Idempotent. Same as `logout`.                                                                            |
 | `birdybeep status`                                                          | Machine + pairing state, per-harness integration status, and queue depth. Drains the queue opportunistically; exits non-zero if not paired.                                           |
-| `birdybeep test`                                                            | Sends a test event through the real sender path and reports whether it was delivered or queued.                                                                                       |
+| `birdybeep test`                                                            | Sends a test event through the real sender path and reports whether it was delivered, queued (offline), or not sent at all (not paired).                                              |
 | `birdybeep doctor`                                                          | Checks the token, each adapter (`needs_trust` / `needs_restart` / `error`), the queue, and backend reachability; prints a fix per failure; drains the queue; non-zero on any failure. |
 | `birdybeep agent install [all\|claude\|codex\|opencode\|cursor\|copilot]`   | Detect + install per harness (idempotent, backs up, managed entries only, no token).                                                                                                  |
 | `birdybeep agent uninstall [all\|claude\|codex\|opencode\|cursor\|copilot]` | Remove only managed entries and restore from backup.                                                                                                                                  |

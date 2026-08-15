@@ -3,7 +3,7 @@
  * path (normalize/redact/truncate → send w/ short timeout → queue-on-fail → opportunistic
  * drain) so a developer can confirm end-to-end delivery (and trigger a test Beep) right
  * after pairing. Not a mock — it exercises the production code path. Reports delivered vs
- * queued (offline) vs rejected; --json mirrors the outcome.
+ * NOT PAIRED vs queued (offline) vs rejected; --json mirrors the outcome.
  *
  * Sends event_type "test" (9fh): the backend notifies it by default and exempts it from
  * the beep quota. (The old "custom" type is unconditionally suppressed by the §10.5
@@ -95,14 +95,24 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
               "was sent. Run `birdybeep doctor`.",
           );
         }
+      } else if (result.outcome === "unpaired") {
+        // gcgp.4: this said "Offline — test event queued" on a machine that was online and
+        // merely unpaired, and exited 0. `test` is the one command whose entire job is to tell
+        // you why beeps aren't arriving; naming the wrong cause is worse than saying nothing.
+        ctx.io.line(
+          "✗ NOT PAIRED — this machine has no BirdyBeep machine token, so nothing was sent " +
+            "(and nothing was queued). Run `birdybeep pair`.",
+        );
       } else if (result.outcome === "queued") {
         ctx.io.line("• Offline — test event queued; it will deliver when you reconnect.");
       } else {
         ctx.io.line("✗ Test event was rejected by the backend. Run `birdybeep doctor`.");
       }
 
-      // delivered + queued are non-failure (offline is by design); a hard reject is an error.
-      return result.outcome === "dropped" ? EXIT.ERROR : EXIT.OK;
+      // delivered + queued are non-failure (offline is by design). A hard reject is an error —
+      // and so is being unpaired, which sent nothing at all (`status` already exits non-zero
+      // for it, so a script can branch on either command).
+      return result.outcome === "dropped" || result.outcome === "unpaired" ? EXIT.ERROR : EXIT.OK;
     },
   };
 }

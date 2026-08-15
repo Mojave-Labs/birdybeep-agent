@@ -2,7 +2,7 @@
  * `birdybeep test` proof (hermetic temp HOME): with the stub reachable, the command sends a
  * well-formed test event on the REAL sender path (cwd hashed by the normalizer) and reports
  * delivered; with the backend unreachable it queues the event, returns fast, and reports
- * queued. --json mirrors the outcome.
+ * queued; with no machine token it says NOT PAIRED and queues nothing. --json mirrors the outcome.
  */
 import { randomUUID } from "node:crypto";
 
@@ -113,5 +113,54 @@ describe("birdybeep test", () => {
     expect(Date.now() - start).toBeLessThan(5000); // fast even offline
     expect(JSON.parse(out.text())).toMatchObject({ outcome: "queued" });
     expect(new LocalEventQueue().size()).toBe(1); // parked in the queue
+  });
+
+  /**
+   * birdybeep-agent-gcgp.4 REGRESSION. Observed verbatim on an unpaired but fully ONLINE
+   * machine: "• Offline — test event queued; it will deliver when you reconnect.", exit 0.
+   * Both halves were false — the machine was online, and nothing would ever deliver. `test` is
+   * the ONE command whose whole job is diagnosis, so it has to name the real cause.
+   */
+  it("says NOT PAIRED — not 'Offline' — on an unpaired but ONLINE machine", async () => {
+    sink = await StubEventSink.start(); // the backend IS reachable
+    sandbox = createSandbox();
+    const sinkUrl = sink.url;
+    // No setToken: unpaired. FILE_ONLY keeps the real OS keychain out of it.
+    const cmd = createTestCommand({
+      createSender: () => createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY }),
+      tokenOptions: FILE_ONLY,
+    });
+    const out = capture();
+    const code = await runCli(["test"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+
+    expect(out.text()).toContain("NOT PAIRED");
+    expect(out.text()).toContain("birdybeep pair");
+    expect(out.text()).not.toContain("Offline");
+    expect(out.text()).not.toContain("test event queued"); // the exact false claim it used to make
+    expect(code).toBe(EXIT.ERROR); // sent nothing → a failure, like `status`
+    expect(new LocalEventQueue().size()).toBe(0); // nothing parked to flush on a first pair
+    expect(sink.received()).toHaveLength(0);
+  });
+
+  it("mirrors the unpaired outcome in --json", async () => {
+    sandbox = createSandbox();
+    const cmd = createTestCommand({
+      createSender: () => createSender({ baseUrl: "http://127.0.0.1:1", tokenOptions: FILE_ONLY }),
+      tokenOptions: FILE_ONLY,
+    });
+    const out = capture();
+    const code = await runCli(["test", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(JSON.parse(out.text())).toMatchObject({ outcome: "unpaired" });
+    expect(code).toBe(EXIT.ERROR);
   });
 });

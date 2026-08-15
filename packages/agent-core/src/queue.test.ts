@@ -4,7 +4,8 @@
  * queue resolves its dir from the sandbox-redirected data dir, proving real path
  * resolution). The live wrangler-dev drain E2E is the deferred cross-repo gate.
  */
-import { chmodSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { chmodSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
@@ -258,5 +259,125 @@ describe("concurrency: two simultaneous drains never double-send", () => {
     expect(seen.size).toBe(N);
     for (const count of seen.values()) expect(count).toBe(1);
     expect(q.size()).toBe(0);
+  });
+});
+
+/**
+ * birdybeep-agent-gcgp.4: age was the ONLY bound. A machine that could not deliver grew one
+ * file per hook fire until the 24h window caught up — 1138 files / 4.5 MB in the field, all of
+ * which would have been POSTed on the first successful pair.
+ */
+describe("count cap (gcgp.4)", () => {
+  it("REPRO/FIX: growth is bounded by the cap, and the drops are counted", () => {
+    sandbox = createSandbox();
+    const q = new LocalEventQueue({ dir: sandbox.path("data", "q"), maxEntries: 20 });
+    const depth = (): number => readdirSync(q.dir).filter((n) => n.endsWith(".json")).length;
+
+    const depths: number[] = [];
+    for (let i = 0; i < 100; i++) {
+      q.enqueue(makeEvent(i));
+      depths.push(depth());
+    }
+
+    expect(Math.max(...depths)).toBe(20); // bounded, NOT 100 (was: unbounded)
+    expect(q.size()).toBe(20);
+    expect(q.overflowDropCount()).toBe(80); // and the loss is recorded, not silent
+  });
+
+  it("drops the OLDEST first — the newest event is never the one refused", async () => {
+    sandbox = createSandbox();
+    let clock = 1_000_000;
+    const q = new LocalEventQueue({
+      dir: sandbox.path("data", "q"),
+      maxEntries: 3,
+      now: () => clock,
+    });
+    for (let i = 0; i < 6; i++) {
+      q.enqueue(makeEvent(i));
+      clock += 1000;
+    }
+    const drained: string[] = [];
+    await q.drain((e) => {
+      drained.push(e.event_id);
+      return "delivered";
+    });
+    expect(drained).toEqual(["evt_3", "evt_4", "evt_5"]); // evt_0..2 dropped as oldest
+  });
+
+  it("prune() applies the cap too, so a backlog from an older CLI is trimmed on first contact", () => {
+    sandbox = createSandbox();
+    const dir = sandbox.path("data", "q");
+    // What an unbounded predecessor left behind.
+    const legacy = new LocalEventQueue({ dir, maxEntries: Number.MAX_SAFE_INTEGER });
+    for (let i = 0; i < 60; i++) legacy.enqueue(makeEvent(i));
+    expect(legacy.size()).toBe(60);
+
+    const q = new LocalEventQueue({ dir, maxEntries: 10 });
+    expect(q.prune()).toEqual({ delivered: 0, dropped: 0, kept: 10, pruned: 0 });
+    expect(q.size()).toBe(10);
+    expect(q.overflowDropCount()).toBe(50);
+  });
+
+  it("the counter file is not mistaken for a queued event", () => {
+    sandbox = createSandbox();
+    const q = new LocalEventQueue({ dir: sandbox.path("data", "q"), maxEntries: 1 });
+    q.enqueue(makeEvent(1));
+    q.enqueue(makeEvent(2)); // forces a drop → writes the counter
+    expect(q.overflowDropCount()).toBe(1);
+    expect(q.size()).toBe(1); // the counter is not counted as an entry
+    expect(q.clear()).toBe(1); // …nor reported as one that was cleared
+    expect(q.overflowDropCount()).toBe(0);
+  });
+});
+
+/**
+ * The cold-start guard (gcgp.4): `pair` calls this the instant a token is stored so a first
+ * pairing does not replay the backlog the machine built up while it had nowhere to send.
+ */
+describe("discardBefore — the cold-start guard (gcgp.4)", () => {
+  it("discards everything queued before the cutoff and keeps everything after", async () => {
+    sandbox = createSandbox();
+    let clock = 1_000_000;
+    const q = new LocalEventQueue({ dir: sandbox.path("data", "q"), now: () => clock });
+    for (let i = 0; i < 5; i++) {
+      q.enqueue(makeEvent(i)); // "before pairing"
+      clock += 10;
+    }
+    const pairedAt = clock;
+    clock += 10;
+    q.enqueue(makeEvent(99)); // "after pairing" — an ordinary offline retry
+
+    expect(q.discardBefore(pairedAt)).toBe(5);
+    const drained: string[] = [];
+    await q.drain((e) => {
+      drained.push(e.event_id);
+      return "delivered";
+    });
+    expect(drained).toEqual(["evt_99"]); // no storm: only the post-pairing event delivers
+  });
+
+  it("takes stale .claim files too, so an orphan can't rejoin the queue and deliver", () => {
+    sandbox = createSandbox();
+    let clock = 1_000_000;
+    const dir = sandbox.path("data", "q");
+    const q = new LocalEventQueue({ dir, now: () => clock });
+    q.enqueue(makeEvent(1));
+    // Simulate a drainer killed mid-send: its entry is parked under a `.claim` name.
+    const entry = readdirSync(dir).find((n) => n.endsWith(".json"))!;
+    renameSync(join(dir, entry), join(dir, `${entry}.${clock}-${randomUUID()}.claim`));
+
+    clock += 10;
+    q.discardBefore(clock);
+    clock += CLAIM_RECLAIM_MS + 1; // long enough that the orphan would be reclaimed
+    expect(q.size()).toBe(0);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("is a no-op on a queue with nothing older than the cutoff", () => {
+    sandbox = createSandbox();
+    const q = new LocalEventQueue({ dir: sandbox.path("data", "q") });
+    q.enqueue(makeEvent(1));
+    expect(q.discardBefore(1)).toBe(0);
+    expect(q.size()).toBe(1);
   });
 });

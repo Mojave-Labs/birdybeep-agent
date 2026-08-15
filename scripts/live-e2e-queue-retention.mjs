@@ -11,18 +11,27 @@
  *   only inside the drain/size read pass — so the queue grew one file per hook
  *   fire, forever, and retention was silently defeated.
  *
+ *   FOLLOW-UP FIELD EVIDENCE (birdybeep-agent-gcgp.4): the same machine was later found
+ *   holding 1138 entries / 4.5 MB / 18.45h — because the no-token path still ENQUEUED,
+ *   silently, with no size bound and no way for the user to find out. So an unpaired
+ *   fire now queues NOTHING, reports `unpaired`, and leaves a durable notice; and the
+ *   queue is capped by count as well as by age.
+ *
  * Steps:
  *   1. hermetic sandbox HOME (never touches the real machine)
  *   2. `birdybeep agent install claude` patches ~/.claude/settings.json
  *   3. NO token is seeded — this is an unpaired machine, the whole point
- *   4. seed 457 back-dated entries into the REAL queue dir (the field state)
+ *   4. seed 457 back-dated entries + 3 still-fresh ones into the REAL queue dir
  *   5. fire real Claude Code hook payloads through the real `birdybeep hook claude`
  *      binary, each in its own process, and watch the on-disk depth after every fire
- *   6. assert the queue COLLAPSES to just the fresh events and stays bounded across
- *      repeated fires, that every hook still exits 0 fast (never blocks the harness),
- *      and that nothing was sent to the sink while unpaired
- *   7. pair (seed a token) and assert the surviving backlog then DRAINS to the sink —
- *      i.e. retention pruning never ate a deliverable event
+ *   6. assert the expired backlog COLLAPSES, the fresh entries survive, the queue never
+ *      GROWS (the unpaired fires add nothing), every hook still exits 0 fast (never
+ *      blocks the harness), each one says so on stderr, and nothing reached the sink
+ *   7. assert the unpaired-activity notice records the loss and `doctor` reports it
+ *   8. seed a token and assert the surviving fresh backlog DRAINS to the sink — i.e.
+ *      retention pruning never ate a deliverable event, and offline retry still works
+ *   9. seed a backlog past the count cap and assert one real hook process trims it,
+ *      records the drop count, and reports it through `doctor --json`
  *
  * Needs no backend and no model credentials: the no-token path makes no network
  * call at all, so this runs anywhere the repo is built (unlike the harness live-e2e
@@ -52,7 +61,11 @@ const AGENT_CORE_DIST = join(REPO, "packages", "agent-core", "dist", "index.js")
 const TOKEN = "bbm_live_e2e_retention_token";
 /** The field-observed backlog depth on the affected machine. */
 const FIELD_BACKLOG = 457;
+/** Entries seeded INSIDE the retention window — deliverable, so pruning must not eat them. */
+const FRESH_BACKLOG = 3;
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** Mirrors DEFAULT_QUEUE_MAX_ENTRIES in agent-core (asserted against the shipped value below). */
+const QUEUE_CAP = 500;
 
 let step = 0;
 const log = (msg) => console.log(`[live-e2e-retention] ${msg}`);
@@ -238,26 +251,33 @@ try {
   );
   assert(tok === "null", `expected no token on a fresh sandbox, got ${tok}`);
 
-  // ── 3. seed the observed field backlog, all back-dated past retention ──────
-  begin(`seed ${FIELD_BACKLOG} back-dated queue entries (the observed field state)`);
+  // ── 3. seed the observed field backlog, plus a few still-deliverable entries ──
+  begin(
+    `seed ${FIELD_BACKLOG} back-dated + ${FRESH_BACKLOG} fresh queue entries (the field state)`,
+  );
   const seeded = inSandbox(
-    `const { LocalEventQueue, normalizeEvent } = await import(${CORE_URL});
+    `const { LocalEventQueue, normalizeEvent, DEFAULT_QUEUE_MAX_ENTRIES } = await import(${CORE_URL});
+     const mk = (id) => normalizeEvent({
+       event_type: "agent_completed", harness: "claude_code", source_session_id: id,
+       machine: { label: "box", os: "linux" }, workspace: { cwd: ${JSON.stringify(work)} },
+       status: "completed", title: "done", body: "ok",
+     });
      // Two weeks stale, exactly like the machine in the field report.
      const stale = Date.now() - 14 * ${DAY_MS};
-     const q = new LocalEventQueue({ now: () => stale });
-     for (let i = 0; i < ${FIELD_BACKLOG}; i++) {
-       q.enqueue(normalizeEvent({
-         event_type: "agent_completed", harness: "claude_code", source_session_id: "seed" + i,
-         machine: { label: "box", os: "linux" }, workspace: { cwd: ${JSON.stringify(work)} },
-         status: "completed", title: "done", body: "ok",
-       }));
-     }
-     console.log("seeded");`,
+     const old = new LocalEventQueue({ now: () => stale, maxEntries: Number.MAX_SAFE_INTEGER });
+     for (let i = 0; i < ${FIELD_BACKLOG}; i++) old.enqueue(mk("seed" + i));
+     // Inside the window: an ordinary offline backlog that MUST still deliver.
+     const q = new LocalEventQueue({ maxEntries: Number.MAX_SAFE_INTEGER });
+     for (let i = 0; i < ${FRESH_BACKLOG}; i++) q.enqueue(mk("fresh" + i));
+     console.log(DEFAULT_QUEUE_MAX_ENTRIES);`,
   );
-  assert(seeded === "seeded", `seeding failed: ${seeded}`);
   assert(
-    depth() === FIELD_BACKLOG,
-    `expected ${FIELD_BACKLOG} seeded entries on disk, got ${depth()}`,
+    seeded === String(QUEUE_CAP),
+    `shipped DEFAULT_QUEUE_MAX_ENTRIES is ${seeded}, this script assumes ${QUEUE_CAP}`,
+  );
+  assert(
+    depth() === FIELD_BACKLOG + FRESH_BACKLOG,
+    `expected ${FIELD_BACKLOG + FRESH_BACKLOG} seeded entries on disk, got ${depth()}`,
   );
 
   // ── 4. fire real hooks on the unpaired machine ────────────────────────────
@@ -269,33 +289,61 @@ try {
     assert(r.status === 0, `hook ${i} exited ${r.status}: ${r.stderr.slice(-400)}`);
     assert(r.elapsed < 5000, `hook ${i} took ${r.elapsed}ms — must never block the harness`);
     const parsed = JSON.parse(r.stdout);
-    assert(parsed.outcome === "queued", `hook ${i} outcome ${parsed.outcome}, expected queued`);
-    // NB: the hook's --json is a deliberately narrow debug surface (outcome/eventType/
-    // decision/status) — the prune's DrainResult reaches `doctor`/`status` through
-    // drainNow(), asserted in step 6. Here the on-disk depth is the real proof.
+    // gcgp.4: `unpaired`, NOT `queued` — the two are different failures and were indistinguishable.
+    assert(parsed.outcome === "unpaired", `hook ${i} outcome ${parsed.outcome}, expected unpaired`);
+    // The hot path has nobody to talk to, so it says it on stderr (harnesses log that) AND
+    // records it durably — asserted in step 5. A bare hook command prints nothing on stdout.
+    assert(
+      /not paired/i.test(r.stderr),
+      `hook ${i} left no stderr signal for the user: ${JSON.stringify(r.stderr)}`,
+    );
     depths.push(depth());
   }
   log(`on-disk depth after each fire: ${JSON.stringify(depths)}`);
 
   // ── 5. the assertions that fail on the pre-fix build ──────────────────────
-  begin("assert the stale backlog was pruned and the queue stayed bounded");
+  begin("assert the stale backlog was pruned and the unpaired fires added NOTHING");
   assert(
-    depths[0] === 1,
-    `first fire must collapse the ${FIELD_BACKLOG} expired entries to just its own event; got ${depths[0]}`,
+    depths[0] === FRESH_BACKLOG,
+    `first fire must collapse the ${FIELD_BACKLOG} expired entries to the ${FRESH_BACKLOG} fresh ones; got ${depths[0]}`,
   );
   assert(
-    depths[depths.length - 1] === 5,
-    `queue must hold only the 5 fresh events, got ${depths[depths.length - 1]}`,
-  );
-  assert(
-    depths.every((d, i) => d === i + 1),
-    `depth must track only fresh events (1..5), got ${JSON.stringify(depths)}`,
-  );
-  assert(
-    depth() < FIELD_BACKLOG,
-    "queue never shrank — retention is still defeated on the no-token path",
+    depths.every((d) => d === FRESH_BACKLOG),
+    `an unpaired fire must never enqueue; depth should stay ${FRESH_BACKLOG}, got ${JSON.stringify(depths)}`,
   );
   assert(received.length === 0, `unpaired machine sent ${received.length} requests; expected 0`);
+
+  // ── 5b. the durable signal the user can actually find ─────────────────────
+  begin("assert the unpaired-activity notice recorded the loss and `doctor` reports it");
+  const notice = JSON.parse(
+    inSandbox(
+      `const { readUnpairedNotice } = await import(${CORE_URL});
+       console.log(JSON.stringify(readUnpairedNotice()));`,
+    ),
+  );
+  assert(notice !== null, "no unpaired-activity notice was written — the loss is silent again");
+  assert(notice.count === 5, `notice counted ${notice.count} lost events, expected 5`);
+  assert(
+    notice.harnesses.includes("claude_code"),
+    `notice did not name the harness: ${JSON.stringify(notice.harnesses)}`,
+  );
+  // Metadata only: a notice must never carry notification content (§15).
+  const noticeJson = JSON.stringify(notice);
+  assert(
+    !/done|ok/.test(noticeJson.replace(/"[a-zA-Z]+":/g, "")),
+    `notice leaked content: ${noticeJson}`,
+  );
+
+  const doctorUnpaired = await birdybeepAsync(["doctor"]);
+  const dj = JSON.parse(doctorUnpaired.stdout);
+  assert(
+    dj.unpairedActivity?.count === 5,
+    `doctor --json did not surface the notice: ${JSON.stringify(dj.unpairedActivity)}`,
+  );
+  assert(
+    dj.checks.some((c) => c.name === "Events lost while unpaired" && c.ok === false),
+    "doctor did not raise a FAILING check for the lost events",
+  );
 
   // ── 6. pairing drains what retention kept (pruning ate nothing live) ──────
   begin("seed a token, then `birdybeep status` drains the surviving backlog to the sink");
@@ -311,15 +359,24 @@ try {
   assert(status.status === 0, `status failed: ${status.stderr} ${status.stdout}`);
   const sj = JSON.parse(status.stdout);
   log(`status queue: ${JSON.stringify(sj.queue)}`);
-  assert(sj.queue.depthBefore === 5, `expected 5 queued before drain, got ${sj.queue.depthBefore}`);
-  assert(sj.queue.delivered === 5, `expected 5 delivered, got ${sj.queue.delivered}`);
+  assert(
+    sj.queue.depthBefore === FRESH_BACKLOG,
+    `expected ${FRESH_BACKLOG} queued before drain, got ${sj.queue.depthBefore}`,
+  );
+  assert(
+    sj.queue.delivered === FRESH_BACKLOG,
+    `expected ${FRESH_BACKLOG} delivered, got ${sj.queue.delivered}`,
+  );
   assert(
     sj.queue.depthAfter === 0,
     `expected an empty queue after drain, got ${sj.queue.depthAfter}`,
   );
 
   const events = received.filter((r) => r.path === "/v1/agent-events");
-  assert(events.length === 5, `sink received ${events.length} events, expected 5`);
+  assert(
+    events.length === FRESH_BACKLOG,
+    `sink received ${events.length} events, expected ${FRESH_BACKLOG}`,
+  );
   for (const e of events) {
     assert(
       e.headers.authorization === `Bearer ${TOKEN}`,
@@ -346,11 +403,59 @@ try {
   );
   assert(!bodies.includes(TOKEN), "machine token leaked into an event body");
 
+  // ── 7. the COUNT cap: age was the only bound, and 1138 entries fit inside it ──
+  begin(`seed ${QUEUE_CAP + 120} fresh entries and assert one real hook process trims to the cap`);
+  const overSeeded = inSandbox(
+    `const { LocalEventQueue, normalizeEvent } = await import(${CORE_URL});
+     // maxEntries lifted ONLY for the seed, to recreate what an unbounded predecessor left.
+     const q = new LocalEventQueue({ maxEntries: Number.MAX_SAFE_INTEGER });
+     for (let i = 0; i < ${QUEUE_CAP + 120}; i++) {
+       q.enqueue(normalizeEvent({
+         event_type: "agent_completed", harness: "claude_code", source_session_id: "over" + i,
+         machine: { label: "box", os: "linux" }, workspace: { cwd: ${JSON.stringify(work)} },
+         status: "completed", title: "done", body: "ok",
+       }));
+     }
+     console.log("seeded");`,
+  );
+  assert(overSeeded === "seeded", `over-seeding failed: ${overSeeded}`);
+  assert(
+    depth() === QUEUE_CAP + 120,
+    `expected ${QUEUE_CAP + 120} seeded entries on disk, got ${depth()}`,
+  );
+
+  // Drop the token again so the fire takes the no-token prune path and touches no network.
+  const clearedToken = inSandbox(
+    `const { clearToken, unavailableKeychainBackend } = await import(${CORE_URL});
+     await clearToken({ backend: unavailableKeychainBackend });
+     console.log("ok");`,
+  );
+  assert(clearedToken === "ok", `token clear failed: ${clearedToken}`);
+  received.length = 0;
+
+  const capFire = await fireHook(hookPayload(99));
+  assert(capFire.status === 0, `cap-check hook exited ${capFire.status}: ${capFire.stderr}`);
+  assert(
+    depth() === QUEUE_CAP,
+    `queue must be trimmed to the ${QUEUE_CAP} cap, got ${depth()} — the count bound is missing`,
+  );
+  assert(received.length === 0, `cap check sent ${received.length} requests; expected 0`);
+
+  const doctorCap = await birdybeepAsync(["doctor"]);
+  const cj = JSON.parse(doctorCap.stdout);
+  log(`doctor queue: ${JSON.stringify(cj.queue)}`);
+  assert(
+    cj.queue.overflowDropped === 120,
+    `doctor reported ${cj.queue.overflowDropped} cap drops, expected 120 — the loss must be counted`,
+  );
+
   log("");
   log(
     `PASS — ${FIELD_BACKLOG} stale entries pruned on the first unpaired hook fire; ` +
-      `depth stayed bounded at ${JSON.stringify(depths)} across 5 real hook processes; ` +
-      `the 5 fresh events drained to the sink after pairing`,
+      `depth stayed at ${JSON.stringify(depths)} across 5 real hook processes (unpaired enqueues ` +
+      `nothing) and each one said so on stderr; the notice recorded 5 lost events and doctor ` +
+      `raised them; the ${FRESH_BACKLOG} deliverable events drained to the sink after pairing; ` +
+      `and a ${QUEUE_CAP + 120}-entry backlog was trimmed to ${QUEUE_CAP} with 120 drops counted`,
   );
 } finally {
   cleanup();

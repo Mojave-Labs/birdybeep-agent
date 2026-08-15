@@ -1,7 +1,8 @@
 /**
  * Event sender (§9.2–9.3): POST a normalized event to `/v1/agent-events` with a
  * SHORT hard timeout; on timeout/network/transient failure, queue it and return
- * fast — never blocking or throwing into the harness. The retry-vs-terminal
+ * fast — never blocking or throwing into the harness. With NO machine token nothing
+ * is queued at all: see the `unpaired` outcome below. The retry-vs-terminal
  * decision keys off the product error-envelope code (mirrored in `api.ts`), so the
  * queue never fills with un-deliverable events. Each send also opportunistically
  * drains the backlog (bounded by count AND by a TOTAL time budget — every harness
@@ -14,6 +15,7 @@ import { type ErrorCode, errorEnvelopeSchema } from "./api";
 import { agentEventsResponseSchema, type BirdyBeepAgentEvent } from "./event";
 import { DEFAULT_DRAIN_MAX, type DrainOutcome, type DrainResult, LocalEventQueue } from "./queue";
 import { getToken, type TokenStoreOptions } from "./token-store";
+import { recordUnpairedEvent, type UnpairedNotice } from "./unpaired-notice";
 
 export const DEFAULT_SEND_TIMEOUT_MS = 3000;
 /**
@@ -27,7 +29,14 @@ export const DEFAULT_TOTAL_BUDGET_MS = 5000;
 const MIN_DRAIN_ATTEMPT_MS = 250;
 const AGENT_EVENTS_PATH = "/v1/agent-events";
 
-export type SendOutcome = "delivered" | "queued" | "dropped";
+/**
+ * `unpaired` is NOT a flavour of `queued` (birdybeep-agent-gcgp.4). Queueing means "we will
+ * deliver this once the network is back"; with no machine token there is nothing to come back
+ * to, and pretending otherwise is what let 1138 events pile up unnoticed and made `birdybeep
+ * test` report "Offline" on a machine that was online. It is its own outcome so every caller —
+ * `test`, `hook`, `doctor` — has to say which of the two actually happened.
+ */
+export type SendOutcome = "delivered" | "queued" | "dropped" | "unpaired";
 
 export interface SendResult {
   outcome: SendOutcome;
@@ -42,6 +51,11 @@ export interface SendResult {
   decision?: string;
   /** Result of the opportunistic queue drain performed on this send. */
   drained?: DrainResult;
+  /**
+   * On an `unpaired` send, the running tally of events discarded for want of a machine token
+   * (gcgp.4) — what `status`/`doctor` surface. Absent on every other outcome.
+   */
+  unpairedNotice?: UnpairedNotice;
 }
 
 export interface SenderConfig {
@@ -61,6 +75,8 @@ export interface SenderConfig {
   drainMax?: number;
   /** Injectable clock (ms) for deterministic budget tests. */
   now?: () => number;
+  /** Override the unpaired-activity notice path (tests); default `<dataDir>/unpaired-events.json`. */
+  noticePath?: string;
 }
 
 export interface Sender {
@@ -156,11 +172,28 @@ export function createSender(config: SenderConfig): Sender {
       const deadline = clock() + totalBudgetMs;
       const token = await getToken(config.tokenOptions);
       if (token === null) {
-        queue.enqueue(event); // not paired yet → retry after `birdybeep pair`
-        // Retention still applies on the path that can never drain (87n): without this
-        // an unpaired machine accumulates one file per hook fire forever. Surfaced as
-        // `drained` (was undefined here) so doctor/status can see the depth it leaves.
-        return { outcome: "queued", drained: queue.prune() };
+        // NOT PAIRED — a different failure from OFFLINE, and it does not queue (gcgp.4).
+        //
+        // Queueing here was wrong twice over. It could never drain (no token, no send), so the
+        // queue only grew; and if the user later paired, everything in it flushed at once —
+        // measured at 1148 POSTs over 23 drain waves from a real backlog, which the backend's
+        // per-(integration, session, type) storm summariser turns into push notifications even
+        // for event types that would never beep on their own. Nobody who has just paired for the
+        // first time wants yesterday's notifications. So the event is dropped deliberately and
+        // the fact of it is recorded instead, in one bounded file `status`/`doctor` read back.
+        const notice = recordUnpairedEvent(
+          event.harness,
+          config.noticePath !== undefined
+            ? { path: config.noticePath, now: clock }
+            : { now: clock },
+        );
+        // Retention + the count cap still run on this path (87n, gcgp.4): a backlog left by an
+        // older CLI must shrink rather than sit there waiting for a first pairing to flush it.
+        return {
+          outcome: "unpaired",
+          drained: queue.prune(),
+          ...(notice !== null ? { unpairedNotice: notice } : {}),
+        };
       }
       const a = await attempt(event, token, Math.min(timeoutMs, totalBudgetMs));
       let outcome: SendOutcome;

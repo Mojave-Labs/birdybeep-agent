@@ -21,9 +21,11 @@
 import { closeSync, openSync } from "node:fs";
 
 import {
+  clearUnpairedNotice,
   deriveCodeChallengeS256,
   generateCodeVerifier,
   getMachineIdentity,
+  LocalEventQueue,
   setToken,
   type TokenStoreOptions,
 } from "@birdybeep/agent-core";
@@ -584,14 +586,32 @@ export function createPairCommand(deps: PairCommandDeps = {}): Command {
       await setToken(paired.machineToken, deps.tokenOptions ?? {});
       writeCliConfig({ apiUrl });
 
+      // COLD-START GUARD (gcgp.4). A token has just appeared, so the very next hook fire would
+      // drain whatever is on the local queue. Everything queued BEFORE this instant belongs to a
+      // machine that had nowhere to send it; replaying it means a phone full of notifications
+      // about work that finished yesterday, and — because the backend's storm summariser runs
+      // ahead of its notify decision — real pushes even for event types that never beep. So the
+      // pre-pairing backlog is discarded here, once, at the moment the token is stored. Anything
+      // enqueued from now on is an ordinary offline retry and still delivers.
+      const discarded = new LocalEventQueue().discardBefore(clock());
+      clearUnpairedNotice(); // the "events went nowhere" warning has been answered
+
       // Surface the approving account (dgxd) when the server reports it, so the trusted
       // identity is on the record. Additive: absent from older servers.
       const humanSuffix = approvedBy !== undefined ? ` to ${approvedBy}` : "";
-      ctx.io.emit(`✓ Paired${humanSuffix}. Run \`birdybeep test\` to send a test Beep.`, {
-        paired: true,
-        machineId: paired.machineId,
-        ...(approvedBy !== undefined ? { approvedByEmail: approvedBy } : {}),
-      });
+      const discardedSuffix =
+        discarded > 0
+          ? ` Discarded ${discarded} event(s) queued before pairing — you won't be beeped about them.`
+          : "";
+      ctx.io.emit(
+        `✓ Paired${humanSuffix}. Run \`birdybeep test\` to send a test Beep.${discardedSuffix}`,
+        {
+          paired: true,
+          machineId: paired.machineId,
+          discardedPrePairingEvents: discarded,
+          ...(approvedBy !== undefined ? { approvedByEmail: approvedBy } : {}),
+        },
+      );
       return EXIT.OK;
     },
   };

@@ -15,7 +15,14 @@ import {
 } from "./dedup";
 import type { Sender, SendResult } from "./sender";
 
-export type HookOutcome = "delivered" | "queued" | "dropped" | "deduped" | "skipped";
+export type HookOutcome =
+  | "delivered"
+  | "queued"
+  | "dropped"
+  | "deduped"
+  | "skipped"
+  /** No machine token: nothing was sent and nothing was queued (gcgp.4 — see `SendOutcome`). */
+  | "unpaired";
 
 export interface HookResult {
   outcome: HookOutcome;
