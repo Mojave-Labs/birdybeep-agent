@@ -138,16 +138,17 @@ closed instead of hanging. See
 
 ## Per-harness details
 
-| Harness            | Target     | Config it patches                  | After install                                      | Verified against                                               |
-| ------------------ | ---------- | ---------------------------------- | -------------------------------------------------- | -------------------------------------------------------------- |
-| Claude Code        | `claude`   | `~/.claude/settings.json`          | `installed` immediately                            | Live harness E2E                                               |
-| Codex              | `codex`    | `~/.codex/config.toml`             | `needs_trust` until a trusted lifecycle hook fires | Live harness E2E                                               |
-| OpenCode           | `opencode` | `~/.config/opencode/opencode.json` | `needs_restart` until the restarted plugin emits   | Live harness E2E; event shapes reconciled with OpenCode 1.18.1 |
-| Cursor             | `cursor`   | `~/.cursor/hooks.json`             | `installed` immediately                            | Cursor Agent 2026.07.09 fixtures; Cursor IDE 3.14.27 live E2E  |
-| GitHub Copilot CLI | `copilot`  | `~/.copilot/hooks/birdybeep.json`  | `installed` immediately                            | CLI 1.0.70 BYOK + 1.0.78 GitHub OAuth live E2E (2026-08-07)    |
+| Harness            | Target     | Config it patches                  | After install                                      |
+| ------------------ | ---------- | ---------------------------------- | -------------------------------------------------- |
+| Claude Code        | `claude`   | `~/.claude/settings.json`          | `installed` immediately                            |
+| Codex              | `codex`    | `~/.codex/config.toml`             | `needs_trust` until a trusted lifecycle hook fires |
+| OpenCode           | `opencode` | `~/.config/opencode/opencode.json` | `needs_restart` until the restarted plugin emits   |
+| Cursor             | `cursor`   | `~/.cursor/hooks.json`             | `installed` immediately                            |
+| GitHub Copilot CLI | `copilot`  | `~/.copilot/hooks/birdybeep.json`  | `installed` immediately                            |
 
 All installs are idempotent, back up the original once, add only BirdyBeep-managed entries, and
-write no token.
+write no token. The harness versions each adapter was verified against are in the
+[support matrix](./docs/install.md#support-matrix).
 
 - **Claude Code** — patches the hooks in `~/.claude/settings.json` to invoke
   `birdybeep hook claude`. Claude Code reads its config live, so the integration is active
