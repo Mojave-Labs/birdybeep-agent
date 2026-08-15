@@ -493,7 +493,7 @@ never repo-local), carrying a timestamp only — never notification content
 
 ```ts
 // Trust-gated hook payloads are keyed by `hook_event_name`; the notify program is keyed by `type`.
-const TRUST_PROVING_OUTCOMES = new Set<HookOutcome>(["delivered", "queued"]);
+const TRUST_PROVING_OUTCOMES = new Set<HookOutcome>(["delivered", "queued", "unpaired"]);
 
 export async function runCodexHook(rawInput, options): Promise<HookResult> {
   const result = await runAgentHook(codexAdapter, rawInput, options);
@@ -546,11 +546,12 @@ export async function runAgentHook(adapter, rawInput, options): Promise<HookResu
 - **Sender** ([`sender.ts`](../packages/agent-core/src/sender.ts)): `POST`s the event to
   `/v1/agent-events` with a short hard timeout (default 3s), reading the token from secure storage
   at send time. On timeout/network/transient failure it **queues** the event and returns fast; it
-  also opportunistically drains the backlog on each send. The
-  [local queue](../packages/agent-core/src/queue.ts) is best-effort, 24h retention, strict perms,
-  and **never blocks the harness**.
+  also opportunistically drains the backlog on each send. With no machine token it queues nothing,
+  returns `unpaired`, and records the discard for `status` / `doctor` to report. The
+  [local queue](../packages/agent-core/src/queue.ts) is best-effort, 24h retention, at most 500
+  entries (oldest dropped first), strict perms, and **never blocks the harness**.
 
-The outcome is one of `delivered` / `queued` / `dropped` / `deduped` / `skipped`.
+The outcome is one of `delivered` / `queued` / `unpaired` / `dropped` / `deduped` / `skipped`.
 
 Most adapters can use `runAgentHook` directly. Wrap it only when you need an extra side effect on
 first delivery — Codex's `runCodexHook` wraps it solely to write the trust marker.
@@ -611,6 +612,8 @@ which uses `createSandbox`, `StubEventSink`, and the privacy assertions from
   `tool_input`, last-assistant message) is persisted;
 - **dedup** collapses a repeated event to exactly one beep;
 - **offline**: an unreachable backend queues the event and returns fast, draining on a later send;
+- **unpaired**: with no machine token nothing is sent and nothing is queued; the fire returns
+  `unpaired` and is counted in the unpaired-activity notice;
 - the hook **returns fast** (never blocks the harness).
 
 A unit test of the mapper is necessary but **not sufficient** — the E2E is the bar. (The stub-sink

@@ -186,12 +186,18 @@ Per [SPEC §11](./SPEC.md):
 
 If a send fails (offline, backend down), the event is written to a best-effort local retry queue
 ([`packages/agent-core/src/queue.ts`](../packages/agent-core/src/queue.ts)): **≤ 24h** retention,
+**≤ 500 entries** (oldest dropped first, and the drop count is reported by `status` / `doctor`),
 strict file permissions, drained opportunistically on the next `hook` / `status` / `doctor`. It never
 blocks or slows the harness. It is a retry buffer, not a durable audit log. Clear it any time with:
 
 ```bash
 birdybeep queue clear
 ```
+
+If the machine is **not paired**, nothing is queued: the event is discarded and only a count, a
+first/last timestamp, and the harness ids are recorded in `unpaired-events.json` in the same data
+directory. `birdybeep status` and `birdybeep doctor` read it back; `birdybeep pair` deletes it and
+discards anything already queued from before pairing, so a first pairing never replays old events.
 
 ## How the hook path runs
 

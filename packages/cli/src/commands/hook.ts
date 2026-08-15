@@ -381,6 +381,18 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
         ...(result.send?.decision ? { decision: result.send.decision } : {}),
         ...(result.send?.status !== undefined ? { status: result.send.status } : {}),
       });
+      // birdybeep-agent-gcgp.4: an unpaired machine sent NOTHING and said NOTHING — the defect
+      // that let 1138 events vanish over 18 hours. Say it on stderr (Cursor's hook log has a
+      // STDERR section; Claude Code surfaces it), and note that `doctor` has the durable count,
+      // because a bare hook command has no other way to reach the user. Exit stays 0: not being
+      // paired is a BirdyBeep problem, and erroring the harness over it would be worse than the
+      // silence. The durable half of this signal is the notice file agent-core just wrote.
+      if (result.outcome === "unpaired") {
+        ctx.io.errline(
+          "birdybeep: this machine is not paired — the event was not sent and was not queued. " +
+            "Run `birdybeep pair` (or `birdybeep doctor` to see how many events this has cost).",
+        );
+      }
       // birdybeep-agent-gcgp.1: a payload no adapter recognizes sent NOTHING, and a silent
       // exit 0 is what hid the Cursor-bridge drop for months. Say so on stderr (harnesses log
       // it — Cursor's hook log has a STDERR section, Claude Code shows it to the user) and

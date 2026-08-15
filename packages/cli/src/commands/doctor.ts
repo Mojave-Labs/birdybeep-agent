@@ -9,6 +9,7 @@
 import {
   type AgentAdapter,
   createSender as defaultCreateSender,
+  DEFAULT_QUEUE_MAX_ENTRIES as QUEUE_CAP,
   type Sender,
   type TokenStoreOptions,
 } from "@birdybeep/agent-core";
@@ -19,7 +20,13 @@ import { cursorAdapter } from "@birdybeep/cursor";
 import { opencodeAdapter } from "@birdybeep/opencode";
 
 import { resolveApiUrl } from "../config";
-import { isPaired, localQueueDepth } from "../diagnostics";
+import {
+  describeUnpairedActivity,
+  isPaired,
+  localQueueDepth,
+  localQueueOverflowDrops,
+  unpairedActivity,
+} from "../diagnostics";
 import { type Command, EXIT } from "../framework";
 
 const DEFAULT_ADAPTERS: AgentAdapter[] = [
@@ -90,6 +97,21 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
             },
       );
 
+      // 1b. Events that fired while unpaired and were therefore never sent (gcgp.4). Placed
+      // second on purpose: it is the answer to "why am I getting no beeps?", and it has to be
+      // visible above the per-adapter checks rather than buried under twenty lines of them.
+      const unpaired = unpairedActivity();
+      if (unpaired !== null) {
+        checks.push({
+          name: "Events lost while unpaired",
+          ok: false,
+          detail: describeUnpairedActivity(unpaired),
+          remedy:
+            "Run `birdybeep pair`. Events that fired before pairing are gone — a first pairing " +
+            "does not replay them.",
+        });
+      }
+
       // 2. Each adapter's own diagnostics (detected? installed? needs_trust/needs_restart/error?).
       for (const adapter of adapters) {
         const result = await adapter.doctor();
@@ -103,14 +125,17 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
         }
       }
 
-      // 3. Local queue: drain opportunistically, report depth.
+      // 3. Local queue: drain opportunistically, report depth (and any cap overflow, gcgp.4).
       const depthBefore = localQueueDepth();
       const drain = await makeSender(apiUrl).drainNow();
       const depthAfter = localQueueDepth();
+      const overflowDropped = localQueueOverflowDrops();
       checks.push({
         name: "Local queue",
         ok: true,
-        detail: `${depthBefore} queued → ${drain.delivered} delivered, ${depthAfter} remaining`,
+        detail:
+          `${depthBefore} queued → ${drain.delivered} delivered, ${depthAfter} remaining` +
+          (overflowDropped > 0 ? `; ${overflowDropped} dropped by the ${QUEUE_CAP} entry cap` : ""),
       });
 
       // 4. Backend reachability.
@@ -132,7 +157,8 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
         ctx.io.result({
           ok,
           checks,
-          queue: { depthBefore, delivered: drain.delivered, depthAfter },
+          queue: { depthBefore, delivered: drain.delivered, depthAfter, overflowDropped },
+          ...(unpaired !== null ? { unpairedActivity: unpaired } : {}),
         });
       } else {
         for (const c of checks) {

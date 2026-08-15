@@ -2,7 +2,7 @@
  * CORE-SENDER (part 2): the reliability contract, proven with a stubbed transport.
  * 2xx clears; timeout/5xx/429-ratelimit queue (and the call returns within the fast
  * budget); permanent rejects (401/403/quota/validation) drop and never re-queue; no
- * token → queued without a network call; the queue drains opportunistically on send;
+ * token → `unpaired`, no network call and nothing queued; the queue drains opportunistically on send;
  * the token rides in the Authorization header and is never logged. The live
  * wrangler-dev delivered-event check is the deferred cross-repo gate.
  */
@@ -18,6 +18,7 @@ import { normalizeEvent } from "./normalize";
 import { LocalEventQueue, QUEUE_RETENTION_MS } from "./queue";
 import { createSender } from "./sender";
 import { type KeychainBackend } from "./token-store";
+import { readUnpairedNotice } from "./unpaired-notice";
 
 let sandbox: Sandbox | undefined;
 afterEach(() => {
@@ -141,21 +142,40 @@ describe("permanent rejects drop (never re-queue)", () => {
 });
 
 describe("no token", () => {
-  it("queues without making a network call", async () => {
+  /**
+   * gcgp.4 REGRESSION. The no-token path used to return `queued` — indistinguishable from
+   * being offline, and a promise it could never keep: with no token nothing can ever drain,
+   * so the events only piled up (1138 files / 4.5 MB / 18.45h on a real machine) until a
+   * first pairing flushed the lot at the user's phone.
+   */
+  it("reports `unpaired` — NOT `queued` — and parks nothing on disk", async () => {
     const fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 202 })));
     const { sender, queue } = setup(fetchSpy, null);
     const r = await sender.send(event());
-    expect(r.outcome).toBe("queued");
-    expect(queue.size()).toBe(1);
+    expect(r.outcome).toBe("unpaired");
+    expect(queue.size()).toBe(0); // nothing to flush on first pair
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  /** The discard is RECORDED, so `status`/`doctor` can tell the user what it cost (gcgp.4). */
+  it("records the discarded event in the unpaired-activity notice", async () => {
+    const { sender } = setup(() => Promise.resolve(new Response("{}", { status: 202 })), null);
+    const first = await sender.send(event(1));
+    const second = await sender.send(event(2));
+    expect(first.unpairedNotice?.count).toBe(1);
+    expect(second.unpairedNotice).toMatchObject({ count: 2, harnesses: ["claude_code"] });
+    // Metadata only — never a title or a body (§15).
+    expect(JSON.stringify(second.unpairedNotice)).not.toContain("done");
+    expect(readUnpairedNotice()?.count).toBe(2); // durable: survives the process
+  });
+
   /**
-   * 87n: the no-token path enqueues but can never drain, and pruning used to live ONLY
-   * inside the drain/size read pass — so an unpaired machine grew one file per hook fire
-   * forever (observed: 457 entries, oldest two weeks past a 24h retention window).
+   * 87n + gcgp.4: the no-token path can never drain, and pruning used to live ONLY inside the
+   * drain/size read pass — so an unpaired machine grew one file per hook fire forever
+   * (observed: 457 entries, oldest two weeks past a 24h retention window). It now enqueues
+   * nothing at all, AND still applies retention so a backlog left by an older CLI shrinks.
    */
-  it("applies retention instead of growing forever (87n)", async () => {
+  it("applies retention to a pre-existing backlog instead of growing it (87n)", async () => {
     sandbox = createSandbox();
     let clock = 1_000_000;
     const queue = new LocalEventQueue({ dir: sandbox.path("data", "q"), now: () => clock });
@@ -165,24 +185,26 @@ describe("no token", () => {
       queue,
       fetchImpl: fetchSpy,
       tokenOptions: { backend: tokenBackend(null), filePath: sandbox.path("data", "token") },
+      noticePath: sandbox.path("data", "unpaired.json"),
       now: () => clock,
     });
     const depth = () => readdirSync(queue.dir).filter((n) => n.endsWith(".json")).length;
+    queue.enqueue(event(99)); // what an older CLI would have left behind
 
     // A fortnight of hook fires on an unpaired machine, one per day — each one lands
     // outside the previous one's 24h window.
     const depths: number[] = [];
     for (let day = 0; day < 14; day++) {
       const r = await sender.send(event(day));
-      expect(r.outcome).toBe("queued");
+      expect(r.outcome).toBe("unpaired");
       expect(r.drained).toBeDefined(); // doctor/status can see the prune (was undefined)
       depths.push(depth());
       clock += QUEUE_RETENTION_MS + 1;
     }
 
     expect(fetchSpy).not.toHaveBeenCalled(); // still no network without a token
-    expect(depths).toEqual(Array<number>(14).fill(1)); // bounded, NOT 1..14
-    expect(depth()).toBe(1);
+    expect(depths[0]).toBe(1); // the legacy entry, still inside its window
+    expect(depths.slice(1)).toEqual(Array<number>(13).fill(0)); // aged out, and nothing added
   });
 
   it("prunes on drainNow() even though it cannot send (87n)", async () => {

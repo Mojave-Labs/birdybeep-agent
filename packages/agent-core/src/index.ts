@@ -26,6 +26,7 @@ export * from "./safe-spawn";
 export * from "./salt";
 export * from "./sender";
 export * from "./token-store";
+export * from "./unpaired-notice";
 export * from "./workspace";
 
 /** Package version marker — replaced by the real build/version pipeline (REL-*). */

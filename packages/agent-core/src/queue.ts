@@ -30,6 +30,23 @@ export const QUEUE_RETENTION_MS = 24 * 60 * 60 * 1000;
 /** Default max entries drained per call so a drain never blocks the harness (§9.3). */
 export const DEFAULT_DRAIN_MAX = 50;
 /**
+ * Hard cap on how many entries the queue holds (birdybeep-agent-gcgp.4). Age was the ONLY
+ * bound, so a machine that could not deliver grew one file per hook fire until the 24h window
+ * caught up — observed in the field at 1138 files / 4.5 MB, and every one of them would have
+ * been POSTed the moment delivery started working. 500 is ~10x a heavy day's real backlog and
+ * still drains inside the sender's 50-per-call budget in a handful of invocations.
+ */
+export const DEFAULT_QUEUE_MAX_ENTRIES = 500;
+/**
+ * Running total of entries the cap has dropped, kept next to the entries it counts (a
+ * non-`.json` name, so every read path skips it). Read-modify-write, not atomic across
+ * concurrent hooks: it is a diagnostic counter for `status`/`doctor`, never a ledger, and a
+ * lost increment is worth less than the locking it would take to prevent.
+ */
+const OVERFLOW_COUNTER_FILE = "overflow.count";
+/** Leading `<enqueuedAt>-` of every name this queue writes (`.json`, `.tmp` and `.claim` alike). */
+const ENQUEUED_AT_PREFIX = /^(\d+)-/;
+/**
  * Age after which a `.claim` file is considered ORPHANED and returned to the queue
  * (erm): a drain claims an entry via rename before sending; if that process is killed
  * mid-send the claim would otherwise strand the event forever (claims are invisible
@@ -58,6 +75,8 @@ export interface LocalEventQueueOptions {
   dir?: string;
   /** Retention window in ms (default 24h). */
   retentionMs?: number;
+  /** Max entries retained (default {@link DEFAULT_QUEUE_MAX_ENTRIES}); oldest are dropped first. */
+  maxEntries?: number;
   /** Injectable clock (ms since epoch) for deterministic tests. */
   now?: () => number;
 }
@@ -74,11 +93,13 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 export class LocalEventQueue {
   readonly dir: string;
   readonly #retentionMs: number;
+  readonly #maxEntries: number;
   readonly #now: () => number;
 
   constructor(options: LocalEventQueueOptions = {}) {
     this.dir = options.dir ?? join(birdyBeepDataDir(), "queue");
     this.#retentionMs = options.retentionMs ?? QUEUE_RETENTION_MS;
+    this.#maxEntries = Math.max(0, options.maxEntries ?? DEFAULT_QUEUE_MAX_ENTRIES);
     this.#now = options.now ?? (() => Date.now());
   }
 
@@ -99,10 +120,105 @@ export class LocalEventQueue {
       writeFileSync(tmpPath, JSON.stringify({ enqueuedAt, event }), { mode: 0o600 });
       renameSync(tmpPath, finalPath);
       if (process.platform !== "win32") chmodSync(finalPath, 0o600);
+      // Cap AFTER the write, so the newest event is never the one refused (gcgp.4). One readdir
+      // over a set the cap itself bounds; no file is opened, since the enqueue time is in the name.
+      this.#enforceCap();
       return true;
     } catch {
       return false; // best-effort: a failed enqueue must never break the harness
     }
+  }
+
+  /** The `<enqueuedAt>` encoded in a queue filename; 0 (i.e. ancient) when unparseable. */
+  #enqueuedAtOf(name: string): number {
+    const at = Number(ENQUEUED_AT_PREFIX.exec(name)?.[1]);
+    return Number.isFinite(at) ? at : 0;
+  }
+
+  /**
+   * Drop the OLDEST entries until at most `maxEntries` remain, recording how many were lost.
+   * Oldest-first because a backlog's value decays: "your agent needs you" from twenty minutes
+   * ago still matters, the same line from yesterday does not. Never throws.
+   */
+  #enforceCap(): number {
+    let names: string[];
+    try {
+      names = readdirSync(this.dir);
+    } catch {
+      return 0;
+    }
+    const entries = names
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => ({ name, at: this.#enqueuedAtOf(name) }));
+    const excess = entries.length - this.#maxEntries;
+    if (excess <= 0) return 0;
+    entries.sort((a, b) => a.at - b.at || a.name.localeCompare(b.name));
+    let dropped = 0;
+    for (const entry of entries.slice(0, excess)) {
+      try {
+        rmSync(join(this.dir, entry.name), { force: true });
+        dropped += 1;
+      } catch {
+        /* another process got there first — never throw */
+      }
+    }
+    if (dropped > 0) this.#recordOverflowDrops(dropped);
+    return dropped;
+  }
+
+  /** How many entries the count cap has dropped on this machine. 0 when never exceeded. */
+  overflowDropCount(): number {
+    try {
+      const raw = readFileSync(join(this.dir, OVERFLOW_COUNTER_FILE), "utf8").trim();
+      const value = Number.parseInt(raw, 10);
+      return Number.isFinite(value) && value > 0 ? value : 0;
+    } catch {
+      return 0; // absent/corrupt → nothing has been dropped as far as anyone can tell
+    }
+  }
+
+  #recordOverflowDrops(count: number): void {
+    try {
+      const path = join(this.dir, OVERFLOW_COUNTER_FILE);
+      writeFileSync(path, `${this.overflowDropCount() + count}\n`, { mode: 0o600 });
+      if (process.platform !== "win32") chmodSync(path, 0o600);
+    } catch {
+      /* the counter is a diagnostic; losing it must never break a hook */
+    }
+  }
+
+  /**
+   * Discard every entry enqueued before `cutoffMs`, returning how many events were dropped.
+   *
+   * The cold-start guard (gcgp.4): `pair` calls this the moment a token is stored, so a first
+   * pairing does not replay the backlog the machine accumulated while it had nowhere to send.
+   * A user pairing for the first time wants the NEXT beep, not eighteen hours of retroactive
+   * ones — and the backend's storm summariser turns that replay into real pushes even for
+   * event types that would never beep on their own.
+   *
+   * In-flight `.claim`s and half-written `.tmp`s from before the cutoff go too (they carry the
+   * same `<enqueuedAt>-` prefix): a claim orphaned by a dead drainer would otherwise rejoin the
+   * queue later and deliver exactly the event this guard exists to discard. Never throws.
+   */
+  discardBefore(cutoffMs: number): number {
+    let names: string[];
+    try {
+      names = readdirSync(this.dir);
+    } catch {
+      return 0;
+    }
+    let discarded = 0;
+    for (const name of names) {
+      if (!ENQUEUED_AT_PREFIX.test(name)) continue; // e.g. the overflow counter — not an entry
+      if (this.#enqueuedAtOf(name) >= cutoffMs) continue;
+      try {
+        rmSync(join(this.dir, name), { force: true });
+        if (name.endsWith(".json")) discarded += 1; // .tmp/.claim aren't deliverable events
+      } catch {
+        /* ignore */
+      }
+    }
+    return discarded;
   }
 
   /**
@@ -186,20 +302,21 @@ export class LocalEventQueue {
   }
 
   /**
-   * Apply retention WITHOUT sending anything, reporting what was dropped and what
-   * remains (`kept` is the on-disk depth after the pass; nothing is delivered).
+   * Apply retention AND the count cap WITHOUT sending anything, reporting what was dropped
+   * and what remains (`kept` is the on-disk depth after the pass; nothing is delivered).
    *
-   * Exists for the no-token path (87n): that path enqueues but can never drain, and
-   * pruning lives only inside {@link #readFresh} — reachable via drain/size alone. So
-   * an unpaired machine grew one file per hook fire forever and the documented 24h
-   * retention was silently defeated (observed in the field: 457 entries, the oldest two
-   * weeks past the window). No network, same readdir+parse pass as a drain. Never throws.
+   * Exists for the no-token path (87n): that path can never drain, and pruning lives only
+   * inside {@link #readFresh} — reachable via drain/size alone. So an unpaired machine grew
+   * one file per hook fire forever and the documented 24h retention was silently defeated
+   * (observed in the field: 457 entries, the oldest two weeks past the window). The cap runs
+   * here too (gcgp.4) so a backlog left by an older CLI is trimmed on the first fire after an
+   * upgrade rather than waiting out the retention window. Never throws.
    */
   prune(): DrainResult {
     const result: DrainResult = { delivered: 0, dropped: 0, kept: 0, pruned: 0 };
     try {
       const read = this.#readFresh();
-      result.kept = read.fresh.length;
+      result.kept = Math.max(0, read.fresh.length - this.#enforceCap());
       result.pruned = read.pruned;
     } catch {
       /* best-effort, like every other method here — never throw into the hook */
@@ -275,7 +392,7 @@ export class LocalEventQueue {
       for (const name of readdirSync(this.dir)) {
         try {
           rmSync(join(this.dir, name), { force: true });
-          removed++;
+          if (name !== OVERFLOW_COUNTER_FILE) removed++; // the counter is not a queued event
         } catch {
           /* ignore */
         }

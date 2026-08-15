@@ -18,7 +18,15 @@ import { cursorAdapter } from "@birdybeep/cursor";
 import { opencodeAdapter } from "@birdybeep/opencode";
 
 import { resolveApiUrl } from "../config";
-import { gatherIntegrations, isPaired, localQueueDepth, machineIdentity } from "../diagnostics";
+import {
+  describeUnpairedActivity,
+  gatherIntegrations,
+  isPaired,
+  localQueueDepth,
+  localQueueOverflowDrops,
+  machineIdentity,
+  unpairedActivity,
+} from "../diagnostics";
 import { type Command, EXIT } from "../framework";
 
 const DEFAULT_ADAPTERS: AgentAdapter[] = [
@@ -55,14 +63,17 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
       const paired = await isPaired(deps.tokenOptions ?? {});
       const integrations = await gatherIntegrations(adapters);
       const depthBefore = localQueueDepth();
+      const unpaired = unpairedActivity(); // gcgp.4: events that fired with no token to send them
       const drain = await makeSender(resolveApiUrl()).drainNow(); // opportunistic, best-effort
       const depthAfter = localQueueDepth();
+      const overflowDropped = localQueueOverflowDrops();
 
       const report = {
         machine,
         paired,
         integrations,
-        queue: { depthBefore, delivered: drain.delivered, depthAfter },
+        queue: { depthBefore, delivered: drain.delivered, depthAfter, overflowDropped },
+        ...(unpaired !== null ? { unpairedActivity: unpaired } : {}),
       };
 
       if (ctx.flags.json) {
@@ -73,8 +84,12 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
         ctx.io.line("Integrations:");
         for (const i of integrations) ctx.io.line(`  ${i.displayName}: ${i.status}`);
         ctx.io.line(
-          `Queue:   ${depthBefore} queued → ${drain.delivered} delivered, ${depthAfter} remaining`,
+          `Queue:   ${depthBefore} queued → ${drain.delivered} delivered, ${depthAfter} remaining` +
+            (overflowDropped > 0 ? `, ${overflowDropped} dropped by the queue cap` : ""),
         );
+        // The whole point of the notice (gcgp.4): hooks firing into the void is otherwise
+        // indistinguishable from no hooks firing at all.
+        if (unpaired !== null) ctx.io.line(`⚠ Lost:   ${describeUnpairedActivity(unpaired)}`);
       }
       return paired ? EXIT.OK : EXIT.ERROR; // not-paired → defined non-zero
     },

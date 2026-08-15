@@ -9,7 +9,9 @@ import {
   getToken,
   type IntegrationStatus,
   LocalEventQueue,
+  readUnpairedNotice,
   type TokenStoreOptions,
+  type UnpairedNotice,
 } from "@birdybeep/agent-core";
 
 export interface IntegrationState {
@@ -37,6 +39,26 @@ export async function isPaired(tokenOptions: TokenStoreOptions = {}): Promise<bo
 /** Current local event-queue depth (fresh, non-expired entries). */
 export function localQueueDepth(): number {
   return new LocalEventQueue().size();
+}
+
+/** How many events the queue's count cap has dropped on this machine (gcgp.4). */
+export function localQueueOverflowDrops(): number {
+  return new LocalEventQueue().overflowDropCount();
+}
+
+/**
+ * Events that fired while this machine had no token, and were therefore never sent (gcgp.4).
+ * `null` once the machine is paired — `pair` clears the notice.
+ */
+export function unpairedActivity(): UnpairedNotice | null {
+  return readUnpairedNotice();
+}
+
+/** One line describing an unpaired-activity notice, for `status` / `doctor`. */
+export function describeUnpairedActivity(notice: UnpairedNotice): string {
+  const since = new Date(notice.firstAt).toISOString();
+  const from = notice.harnesses.length > 0 ? ` from ${notice.harnesses.join(", ")}` : "";
+  return `${notice.count} event(s)${from} fired since ${since} and were NOT sent — this machine is not paired.`;
 }
 
 /** Machine label + OS (the event `machine` identity). */
