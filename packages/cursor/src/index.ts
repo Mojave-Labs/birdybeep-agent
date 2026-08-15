@@ -15,8 +15,10 @@ export {
   BIRDYBEEP_HOOK_EVENTS,
   CURSOR_HOOKS_VERSION,
   installCursor,
+  installedBirdyBeepCommands,
   isBirdyBeepEntry,
   mergeBirdyBeepHooks,
+  resolveCursorHookCommand,
 } from "./install";
 export { CursorMappingError, normalizeCursorEvent } from "./normalize";
 export { cursorConfigDir, cursorHooksPath } from "./paths";

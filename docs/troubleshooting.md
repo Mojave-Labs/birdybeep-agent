@@ -225,6 +225,21 @@ Codex and Cursor report the same partial state across their managed lifecycle ho
 `error` if its dedicated managed file has drifted from the current exact format. Re-running the
 matching install repairs it while preserving the one-time backup.
 
+**Stale hook command** — the installed command points at a CLI (or a Node) that is no longer there:
+
+```
+✗  Cursor: Hook command resolves — The installed hook command points at
+   /Users/you/.nvm/versions/node/v20.11.0/bin/node, which no longer exists — Cursor fails these hooks
+   with exit 127.
+     → Run `birdybeep agent install cursor` to rewrite the hook command for the current CLI.
+```
+
+This is what you get after reinstalling the CLI somewhere else or switching Node versions. Nothing
+else looks wrong — the hooks are all still listed — but the harness cannot run them, so no Beeps
+arrive. The harness's own log shows it: Cursor writes `exit code: 127` to
+`~/Library/Application Support/Cursor/logs/**/cursor.hooks.*.log`. Re-running install rewrites the
+entry in place.
+
 **Read-only config** — BirdyBeep cannot write the file:
 
 ```

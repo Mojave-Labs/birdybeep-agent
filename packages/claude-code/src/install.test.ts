@@ -16,8 +16,15 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 
 import { installClaudeCode } from "./install";
-import { BIRDYBEEP_HOOK_COMMAND, BIRDYBEEP_HOOK_EVENTS, isBirdyBeepEntry } from "./install";
+import {
+  BIRDYBEEP_HOOK_COMMAND,
+  BIRDYBEEP_HOOK_EVENTS,
+  installedBirdyBeepCommands,
+  isBirdyBeepEntry,
+  resolveClaudeHookCommand,
+} from "./install";
 import { claudeSettingsPath } from "./paths";
+import { uninstallClaudeCode } from "./uninstall";
 
 let sandbox: Sandbox | undefined;
 afterEach(() => {
@@ -111,6 +118,153 @@ describe("install over realistic pre-existing config", () => {
     const r2 = await installClaudeCode({}, sandbox.home);
     expect(r2.changed).toBe(false);
     assertTreesEqual(afterFirst, captureTree(sandbox.path(".claude")), "second install is a no-op");
+  });
+});
+
+// gcgp.9 — `~/.claude/settings.json` is also loaded by Cursor as a "claude-user" hook source and
+// executed with the launchd PATH; that is where `birdybeep hook claude` was logged at exit 127.
+describe("hook command resolution (gcgp.9 — the exit-127 fix)", () => {
+  const ABSOLUTE = '"/opt/node/bin/node" "/opt/pnpm/birdybeep" hook claude';
+
+  it("writes the absolute command it is given, for every registered event", async () => {
+    sandbox = createSandbox();
+    const r = await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+    expect(r.changed).toBe(true);
+    const parsed = readSettings(claudeSettingsPath(sandbox.home));
+    expect(installedBirdyBeepCommands(parsed)).toEqual([ABSOLUTE]);
+    for (const event of BIRDYBEEP_HOOK_EVENTS) {
+      expect(entriesFor(parsed, event)).toEqual([
+        { matcher: "", hooks: [{ type: "command", command: ABSOLUTE, timeout: 10 }] },
+      ]);
+    }
+  });
+
+  it("REPAIRS a legacy bare entry in place — never leaves two hooks firing", async () => {
+    sandbox = createSandbox();
+    await installClaudeCode({ hookCommand: "birdybeep hook claude" }, sandbox.home);
+    const r = await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+    expect(r.changed).toBe(true);
+    const parsed = readSettings(claudeSettingsPath(sandbox.home));
+    expect(installedBirdyBeepCommands(parsed)).toEqual([ABSOLUTE]);
+    for (const event of BIRDYBEEP_HOOK_EVENTS) {
+      expect(entriesFor(parsed, event)).toHaveLength(1);
+    }
+  });
+
+  it("preserves a user's own hook while repairing ours", async () => {
+    sandbox = createSandbox();
+    const settings = claudeSettingsPath(sandbox.home);
+    seedSettings(settings, {
+      hooks: { Stop: [{ matcher: "", hooks: [{ type: "command", command: "my-own-hook" }] }] },
+    });
+    await installClaudeCode({ hookCommand: "birdybeep hook claude" }, sandbox.home);
+    await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+    const stop = entriesFor(readSettings(settings), "Stop");
+    expect(stop).toHaveLength(2);
+    expect(JSON.stringify(stop[0])).toContain("my-own-hook");
+    expect(stop[1]).toEqual({
+      matcher: "",
+      hooks: [{ type: "command", command: ABSOLUTE, timeout: 10 }],
+    });
+  });
+
+  // gcgp.9 follow-up (P1, silent data loss). A Claude matcher entry holds a LIST of commands, so
+  // a user can put their own command in the same entry as ours — `isBirdyBeepEntry` is a `.some()`
+  // and matches it. Repairing at ENTRY granularity replaced the whole object, deleting the user's
+  // sibling command, resetting `matcher`, and dropping unknown fields. It fires only on the repair
+  // path, i.e. exactly the users the PATH fix is meant to help, and the one-time backup may
+  // predate their edit, so it cannot reliably be undone.
+  describe("a matcher entry shared with a user's own command", () => {
+    /** Ours FIRST, so a whole-entry replace cannot accidentally look correct. */
+    const shared = (ourCommand: string) => ({
+      hooks: {
+        Stop: [
+          {
+            matcher: "Bash",
+            description: "user note — an unknown field we must not drop",
+            hooks: [
+              { type: "command", command: ourCommand, timeout: 10 },
+              { type: "command", command: "/usr/local/bin/my-audit-hook --stop", timeout: 30 },
+            ],
+          },
+        ],
+      },
+    });
+
+    it("repair keeps the user's sibling command, the matcher, and unknown fields", async () => {
+      sandbox = createSandbox();
+      const settings = claudeSettingsPath(sandbox.home);
+      seedSettings(settings, shared("birdybeep hook claude")); // legacy bare → will be repaired
+      await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+
+      const stop = entriesFor(readSettings(settings), "Stop");
+      expect(stop).toHaveLength(1); // still ONE entry — not duplicated
+      expect(stop[0]).toEqual({
+        matcher: "Bash", // not reset to ""
+        description: "user note — an unknown field we must not drop",
+        hooks: [
+          { type: "command", command: ABSOLUTE, timeout: 10 }, // only the command changed
+          { type: "command", command: "/usr/local/bin/my-audit-hook --stop", timeout: 30 },
+        ],
+      });
+      expect(installedBirdyBeepCommands(readSettings(settings))).toEqual([ABSOLUTE]);
+    });
+
+    it("uninstall removes ONLY our command, keeping the entry and the user's hook", async () => {
+      sandbox = createSandbox();
+      const settings = claudeSettingsPath(sandbox.home);
+      seedSettings(settings, shared(ABSOLUTE));
+      await uninstallClaudeCode({}, sandbox.home);
+
+      const stop = entriesFor(readSettings(settings), "Stop");
+      expect(stop).toHaveLength(1); // the entry survives — it was not wholly ours
+      expect(stop[0]).toEqual({
+        matcher: "Bash",
+        description: "user note — an unknown field we must not drop",
+        hooks: [{ type: "command", command: "/usr/local/bin/my-audit-hook --stop", timeout: 30 }],
+      });
+      expect(installedBirdyBeepCommands(readSettings(settings))).toEqual([]);
+    });
+
+    it("uninstall still drops an entry that held nothing but ours", async () => {
+      sandbox = createSandbox();
+      const settings = claudeSettingsPath(sandbox.home);
+      const original = seedSettings(settings, {
+        hooks: { Stop: [{ matcher: "", hooks: [{ type: "command", command: "my-own-hook" }] }] },
+      });
+      await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+      await uninstallClaudeCode({}, sandbox.home);
+      expect(readFileSync(settings, "utf8")).toBe(original); // byte-for-byte
+    });
+  });
+
+  it("re-installing the SAME command is still a no-op (idempotent)", async () => {
+    sandbox = createSandbox();
+    await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+    const after = captureTree(sandbox.path(".claude"));
+    const r = await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+    expect(r.changed).toBe(false);
+    assertTreesEqual(
+      after,
+      captureTree(sandbox.path(".claude")),
+      "same-command install is a no-op",
+    );
+  });
+
+  it("uninstall removes an absolute-command entry as cleanly as a bare one", async () => {
+    sandbox = createSandbox();
+    const settings = claudeSettingsPath(sandbox.home);
+    const original = seedSettings(settings, {
+      hooks: { Stop: [{ matcher: "", hooks: [{ type: "command", command: "my-own-hook" }] }] },
+    });
+    await installClaudeCode({ hookCommand: ABSOLUTE }, sandbox.home);
+    await uninstallClaudeCode({}, sandbox.home);
+    expect(readFileSync(settings, "utf8")).toBe(original);
+  });
+
+  it("defaults to the portable command when the installer is not the CLI", () => {
+    expect(resolveClaudeHookCommand()).toBe(BIRDYBEEP_HOOK_COMMAND);
+    expect(BIRDYBEEP_HOOK_COMMAND).toBe("birdybeep hook claude");
   });
 });
 

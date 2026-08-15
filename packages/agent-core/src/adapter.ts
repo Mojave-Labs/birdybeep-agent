@@ -39,6 +39,12 @@ export interface DetectionResult {
 export interface InstallOptions {
   /** Compute + report changes without writing anything. */
   dryRun?: boolean;
+  /**
+   * The exact command to write into the harness config (gcgp.9). Defaults to the launcher
+   * resolved from the running CLI — see `resolveHookCommand`. Adapters that honor it MUST
+   * still recognize (and repair) entries an earlier install resolved differently.
+   */
+  hookCommand?: string;
 }
 
 export interface InstallResult {

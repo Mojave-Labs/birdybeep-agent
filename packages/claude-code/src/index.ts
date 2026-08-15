@@ -11,8 +11,11 @@ export {
   BIRDYBEEP_HOOK_COMMAND,
   BIRDYBEEP_HOOK_EVENTS,
   installClaudeCode,
+  installedBirdyBeepCommands,
   isBirdyBeepEntry,
+  isBirdyBeepHook,
   mergeBirdyBeepHooks,
+  resolveClaudeHookCommand,
 } from "./install";
 export {
   CLAUDE_CODE_HOOK_EVENTS,

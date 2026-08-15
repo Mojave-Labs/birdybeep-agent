@@ -43,6 +43,12 @@
         "timeout": 30
       }
     ],
+    "beforeMCPExecution": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
     "stop": [
       {
         "command": "birdybeep hook cursor",

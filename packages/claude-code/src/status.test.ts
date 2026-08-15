@@ -85,7 +85,10 @@ describe("statusReport()", () => {
   });
 });
 
-function failingCheck(checks: { name: string; ok: boolean; remedy?: string }[], namePart: string) {
+function failingCheck(
+  checks: { name: string; ok: boolean; detail?: string; remedy?: string }[],
+  namePart: string,
+) {
   return checks.find((c) => !c.ok && c.name.includes(namePart));
 }
 
@@ -146,6 +149,32 @@ describe("doctor()", () => {
     const check = failingCheck(result.checks, "valid JSON");
     expect(check?.remedy).toContain(backupPath);
     expect(check?.remedy).toContain("birdybeep agent install claude");
+  });
+
+  // gcgp.9: an absolute hook command can go stale (CLI reinstalled elsewhere, node switched).
+  // The harness then fails the hook with exit 127 while settings.json still looks perfect, so
+  // doctor is the only place the user can find out.
+  it("flags a STALE absolute hook command and offers the repair", async () => {
+    sandbox = createSandbox();
+    await installClaudeCode(
+      { hookCommand: '"/gone/node-v20/bin/node" "/gone/bin/birdybeep" hook claude' },
+      sandbox.home,
+    );
+    const result = await claudeCodeDoctor({ home: sandbox.home, detect: present() });
+    const check = failingCheck(result.checks, "resolves");
+    expect(check).toBeDefined();
+    expect(check?.remedy).toContain("birdybeep agent install claude");
+    expect(result.ok).toBe(false);
+    // …while status still reads `installed`, which is why the check has to be its own signal.
+    expect(await claudeCodeStatus({ home: sandbox.home, detect: present() })).toBe("installed");
+  });
+
+  it("does not flag the portable bare command (no absolute path to go stale)", async () => {
+    sandbox = createSandbox();
+    await installClaudeCode({ hookCommand: "birdybeep hook claude" }, sandbox.home);
+    const result = await claudeCodeDoctor({ home: sandbox.home, detect: present() });
+    expect(failingCheck(result.checks, "resolves")).toBeUndefined();
+    expect(result.ok).toBe(true);
   });
 
   it("flags a read-only settings file (POSIX)", async () => {

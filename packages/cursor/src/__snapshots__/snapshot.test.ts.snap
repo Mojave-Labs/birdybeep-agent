@@ -1,5 +1,86 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`generated config snapshots (§21.1) > a resolved install writes the absolute launcher into every event 1`] = `
+"{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
+        "timeout": 30
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
+        "timeout": 30
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
+        "timeout": 30
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
+        "timeout": 30
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
+        "timeout": 30
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
+        "timeout": 30
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
+        "timeout": 30
+      }
+    ],
+    "beforeMCPExecution": [
+      {
+        "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
+        "timeout": 30
+      }
+    ],
+    "stop": [
+      {
+        "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
+        "timeout": 30
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
+        "timeout": 30
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
+        "timeout": 30
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
+        "timeout": 30
+      }
+    ]
+  }
+}
+"
+`;
+
 exports[`generated config snapshots (§21.1) > from-scratch install writes the canonical BirdyBeep hooks block 1`] = `
 "{
   "version": 1,
@@ -41,6 +122,12 @@ exports[`generated config snapshots (§21.1) > from-scratch install writes the c
       }
     ],
     "beforeShellExecution": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "beforeMCPExecution": [
       {
         "command": "birdybeep hook cursor",
         "timeout": 30
@@ -124,6 +211,12 @@ exports[`generated config snapshots (§21.1) > patches into an existing config t
         "timeout": 30
       }
     ],
+    "beforeMCPExecution": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
     "stop": [
       {
         "command": "birdybeep hook cursor",
@@ -198,6 +291,12 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
       }
     ],
     "beforeShellExecution": [
+      {
+        "command": "birdybeep hook cursor",
+        "timeout": 30
+      }
+    ],
+    "beforeMCPExecution": [
       {
         "command": "birdybeep hook cursor",
         "timeout": 30

@@ -1,0 +1,16 @@
+{
+  "conversation_id": "00000000-0000-4000-8000-000000000001",
+  "generation_id": "00000000-0000-4000-8000-000000000001",
+  "model": "default",
+  "is_background_agent": false,
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "hook_event_name": "beforeMCPExecution",
+  "cursor_version": "3.15.6",
+  "workspace_roots": ["/home/user/project"],
+  "user_email": "user@example.com",
+  "transcript_path": null,
+  "tool_name": "execute_sql",
+  "tool_input": "{\"query\":\"select * from users\"}",
+  "mcp_server_name": "supabase",
+  "command": "npx -y @supabase/mcp-server --access-token sbp_TESTONLY_secret"
+}
