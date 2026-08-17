@@ -23,7 +23,9 @@ import { opencodeAdapter } from "@birdybeep/opencode";
 import { resolveApiUrl } from "../config";
 import {
   cursorBridgeOnly,
+  describeFilteredActivity,
   describeUnpairedActivity,
+  filteredActivity,
   isPaired,
   localQueueDepth,
   localQueueOverflowDrops,
@@ -137,6 +139,18 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
         });
       }
 
+      // 1d. Hooks that fired and were deliberately NOT sent (gcgp.3). An `ok` check, not a
+      // failure: it is the positive evidence that the harness is wired up, which the backend
+      // can no longer supply for these types because they never reach it.
+      const filtered = filteredActivity();
+      if (filtered !== null) {
+        checks.push({
+          name: "Local-only events (never notifiable)",
+          ok: true,
+          detail: describeFilteredActivity(filtered),
+        });
+      }
+
       // 2. Each adapter's own diagnostics (detected? installed? needs_trust/needs_restart/error?).
       for (const adapter of adapters) {
         const result = await adapter.doctor();
@@ -184,6 +198,7 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
           checks,
           queue: { depthBefore, delivered: drain.delivered, depthAfter, overflowDropped },
           ...(unpaired !== null ? { unpairedActivity: unpaired } : {}),
+          ...(filtered !== null ? { filteredActivity: filtered } : {}),
         });
       } else {
         for (const c of checks) {

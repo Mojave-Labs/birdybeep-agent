@@ -6,7 +6,14 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { createSender, setToken, unavailableKeychainBackend } from "@birdybeep/agent-core";
+import {
+  type BirdyBeepEventType,
+  createSender,
+  LOCAL_ONLY_EVENT_TYPES,
+  readFilteredActivity,
+  setToken,
+  unavailableKeychainBackend,
+} from "@birdybeep/agent-core";
 import {
   assertNoAbsolutePaths,
   assertNoRawValues,
@@ -60,7 +67,7 @@ afterEach(async () => {
   sink = undefined;
 });
 
-const fixtures: [CopilotHookEventName, unknown, string][] = [
+const fixtures: [CopilotHookEventName, unknown, BirdyBeepEventType][] = [
   ["sessionStart", sessionStart, "session_started"],
   ["userPromptSubmitted", userPromptSubmitted, "session_active"],
   ["preToolUse", preToolUse, "tool_started"],
@@ -68,6 +75,15 @@ const fixtures: [CopilotHookEventName, unknown, string][] = [
   ["agentStop", agentStop, "agent_completed"],
   ["sessionEnd", sessionEnd, "session_ended"],
 ];
+
+/**
+ * gcgp.3 — every fixture still runs the whole pipeline, but the per-tool-call pair is
+ * withheld client-side (the backend can never push those types). DERIVED from
+ * LOCAL_ONLY_EVENT_TYPES rather than hard-coded, so changing the filter changes what this
+ * E2E expects instead of quietly passing.
+ */
+const isFiltered = (type: BirdyBeepEventType): boolean => LOCAL_ONLY_EVENT_TYPES.includes(type);
+const deliveredFixtures = fixtures.filter(([, , type]) => !isFiltered(type));
 
 describe("COPILOT-E2E", () => {
   it("installs then delivers every real captured lifecycle payload without content leaks", async () => {
@@ -84,13 +100,22 @@ describe("COPILOT-E2E", () => {
 
     const sender = createSender({ baseUrl: sink.url, tokenOptions: FILE_ONLY });
     const started = Date.now();
-    for (const [eventName, payload] of fixtures) {
-      expect((await runCopilotHook(eventName, payload, { sender })).outcome).toBe("delivered");
+    for (const [eventName, payload, type] of fixtures) {
+      expect([eventName, (await runCopilotHook(eventName, payload, { sender })).outcome]).toEqual([
+        eventName,
+        isFiltered(type) ? "filtered" : "delivered",
+      ]);
     }
     expect(Date.now() - started).toBeLessThan(5000);
-    expect(sink.received()).toHaveLength(fixtures.length);
+    expect(sink.received()).toHaveLength(deliveredFixtures.length);
+    // The withheld pair never left the machine, but both were counted, so `status`/`doctor`
+    // can still show that Copilot's hooks are firing.
+    expect(readFilteredActivity()).toMatchObject({
+      count: fixtures.length - deliveredFixtures.length,
+      byType: { tool_started: 1, tool_finished: 1 },
+    });
 
-    for (const [index, [, , expectedType]] of fixtures.entries()) {
+    for (const [index, [, , expectedType]] of deliveredFixtures.entries()) {
       const delivered = sink.received()[index]!;
       const body = delivered.body as Record<string, unknown>;
       expect(body["harness"]).toBe("copilot");

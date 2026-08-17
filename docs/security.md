@@ -51,6 +51,13 @@ thing the sender transmits (to `POST /v1/agent-events`). These are the exact fie
 That is the complete list. There is no field for prompt text, assistant output, tool arguments, file
 contents, diffs, or absolute paths.
 
+### Events that are not sent at all
+
+Per-tool-call events (`tool_started`, `tool_finished`) stay on your machine. They are counted for
+`birdybeep status` and `birdybeep doctor` and nothing is transmitted — on a measured 18.45h Codex
+session that is 88.5% of the events the hooks produced. The list lives in
+[`packages/agent-core/src/notify-matrix.ts`](../packages/agent-core/src/notify-matrix.ts).
+
 ### The titles and bodies are generated, not captured
 
 The `title` and `body` you see above are written by the adapter, not lifted from your session. For

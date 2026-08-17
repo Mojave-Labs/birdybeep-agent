@@ -7,6 +7,7 @@
  *   - correct §10.1 mapping for every forwarded surface (session.created→session_started,
  *     permission.asked→approval_required, session.idle→agent_idle, session.error→
  *     agent_failed, tool.execute.before/after→tool_started/tool_finished);
+ *   - gcgp.3: the tool_started/tool_finished pair is FILTERED — counted locally, never sent;
  *   - the needs_restart → installed transition (the OpenCode-specific gate): needs_restart
  *     before any event → installed after the first real delivered event;
  *   - the token resolves from the strict-perm FILE fallback, rides as a Bearer, and never
@@ -22,7 +23,12 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { createSender, setToken, unavailableKeychainBackend } from "@birdybeep/agent-core";
+import {
+  createSender,
+  readFilteredActivity,
+  setToken,
+  unavailableKeychainBackend,
+} from "@birdybeep/agent-core";
 import {
   assertNoAbsolutePaths,
   assertNoRawValues,
@@ -101,6 +107,8 @@ describe("OC-E2E: install → load plugin → fire real events → assert delive
         properties: { sessionID: SID, error: { name: "ProviderAuthError" } },
       },
     });
+    // The per-tool-call pair. Both map to types the backend can never push, so gcgp.3
+    // tallies them on this machine and sends nothing — asserted below.
     await hooks["tool.execute.before"]({ tool: "bash", sessionID: SID, callID: "c1" });
     await hooks["tool.execute.after"]({ tool: "edit", sessionID: SID, callID: "c2" });
     const elapsed = Date.now() - start;
@@ -110,8 +118,7 @@ describe("OC-E2E: install → load plugin → fire real events → assert delive
       approval_required: "waiting_for_approval",
       agent_idle: "idle",
       agent_failed: "failed",
-      tool_started: "running",
-      tool_finished: "running",
+      // tool_started / tool_finished are deliberately ABSENT (gcgp.3).
     };
     expect(sink!.received()).toHaveLength(Object.keys(expected).length); // all delivered, none dropped
 
@@ -136,6 +143,16 @@ describe("OC-E2E: install → load plugin → fire real events → assert delive
     const types = sink!.received().map((e) => (e.body as { event_type: string }).event_type);
     expect(types).toContain("approval_required");
     expect(types).toContain("agent_failed");
+    // gcgp.3: the per-tool-call pair never leaves the machine, but both ARE counted, so
+    // `status`/`doctor` can still show the plugin is firing.
+    expect(types).not.toContain("tool_started");
+    expect(types).not.toContain("tool_finished");
+    expect(readFilteredActivity()).toMatchObject({
+      count: 2,
+      byType: { tool_started: 1, tool_finished: 1 },
+    });
+    expect(NOTIFY_DEFAULT["tool_started"]).toBe(false); // neither could ever have beeped
+    expect(NOTIFY_DEFAULT["tool_finished"]).toBe(false);
 
     expect(elapsed).toBeLessThan(5000); // hook returns fast
     expect(readFileSync(opencodeConfigFile({ home: sb.home }), "utf8")).not.toContain(TOKEN);

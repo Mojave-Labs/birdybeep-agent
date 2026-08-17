@@ -1,14 +1,17 @@
 /**
- * Hook pipeline proof (unit): runAgentHook normalizes → dedups → sends; an unmappable
- * payload is skipped (no send); a duplicate beep is deduped (one send). Full
- * adapter↔sender↔sink integration is exercised by the Claude Code CC-E2E.
+ * Hook pipeline proof (unit): runAgentHook normalizes → filters → dedups → sends; an
+ * unmappable payload is skipped (no send); a `local_only` type is filtered (no send, but
+ * counted); a duplicate beep is deduped (one send). Full adapter↔sender↔sink integration
+ * is exercised by the Claude Code CC-E2E.
  */
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { RecentEventLedger } from "./dedup";
+import { readFilteredActivity } from "./filtered-activity";
 import { runAgentHook } from "./hook";
 import type { AgentAdapter, BirdyBeepAgentEvent, BirdyBeepEventType } from "./index";
+import { BIRDYBEEP_EVENT_TYPES, DEFAULT_NOTIFY, LOCAL_ONLY_EVENT_TYPES } from "./index";
 import type { Sender, SendResult } from "./sender";
 
 let sandbox: Sandbox | undefined;
@@ -145,6 +148,62 @@ describe("runAgentHook", () => {
     expect(first.outcome).toBe("delivered");
     expect(second.outcome).toBe("deduped");
     expect(sender.sent).toHaveLength(1);
+  });
+
+  // ── gcgp.3: the client-side event-type filter ──────────────────────────────────────────
+  it("FILTERS tool_finished — the 88.5% — before the ledger and the sender ever see it", async () => {
+    sandbox = createSandbox();
+    const sender = fakeSender();
+    const ledger = new RecentEventLedger({ path: sandbox.path("data", "r.json") });
+    const path = sandbox.path("data", "filtered.json");
+    const r = await runAgentHook(
+      adapterReturning("tool_finished"),
+      { hook_event_name: "PostToolUse" },
+      { sender, ledger, filteredActivity: { path } },
+    );
+    expect(r.outcome).toBe("filtered");
+    expect(r.eventType).toBe("tool_finished");
+    expect(sender.sent).toHaveLength(0); // nothing left the machine
+    expect(readFilteredActivity({ path })).toMatchObject({
+      count: 1,
+      byType: { tool_finished: 1 },
+    });
+  });
+
+  it("keeps counting a repeat instead of deduping it away (status must show activity)", async () => {
+    sandbox = createSandbox();
+    const sender = fakeSender();
+    const ledger = new RecentEventLedger({ path: sandbox.path("data", "r.json") });
+    const path = sandbox.path("data", "filtered.json");
+    const adapter = adapterReturning("tool_finished");
+    for (let i = 0; i < 3; i += 1) {
+      const r = await runAgentHook(adapter, {}, { sender, ledger, filteredActivity: { path } });
+      expect(r.outcome).toBe("filtered"); // never "deduped" — the filter runs first
+    }
+    expect(sender.sent).toHaveLength(0);
+    expect(readFilteredActivity({ path })?.count).toBe(3);
+  });
+
+  it("still DELIVERS every notifiable type, and still sends the non-notifying types the worker needs", async () => {
+    for (const type of BIRDYBEEP_EVENT_TYPES) {
+      if (LOCAL_ONLY_EVENT_TYPES.includes(type)) continue;
+      sandbox = createSandbox();
+      const sender = fakeSender();
+      const ledger = new RecentEventLedger({ path: sandbox.path("data", "r.json") });
+      const r = await runAgentHook(
+        adapterReturning(type),
+        {},
+        { sender, ledger, filteredActivity: { path: sandbox.path("data", "filtered.json") } },
+      );
+      expect([type, r.outcome]).toEqual([type, "delivered"]);
+      expect(sender.sent).toHaveLength(1);
+      sandbox.cleanup();
+      sandbox = undefined;
+    }
+  });
+
+  it("no filtered type is one the backend could ever have pushed", () => {
+    for (const type of LOCAL_ONLY_EVENT_TYPES) expect(DEFAULT_NOTIFY[type]).toBe(false);
   });
 
   it("beeps for a SECOND distinct approval once the short collapse window has passed", async () => {

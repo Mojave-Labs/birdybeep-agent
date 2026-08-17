@@ -1,10 +1,12 @@
 /**
  * CX-E2E — the mandatory real-hook gate. Installs the REAL Codex adapter into a hermetic
  * temp HOME, then fires actual Codex notify + lifecycle-hook payloads through the
- * `birdybeep hook codex` pipeline (runCodexHook = runAgentHook: normalizeEvent → dedup →
- * sender.send, plus the trust-marker write) and asserts, at the stub sink:
+ * `birdybeep hook codex` pipeline (runCodexHook = runAgentHook: normalizeEvent → filter →
+ * dedup → sender.send, plus the trust-marker write) and asserts, at the stub sink:
  *   - correct §10.1 mapping for every Codex surface (notify→agent_completed,
  *     PermissionRequest→approval_required, PostToolUse→tool_finished, Subagent*→…);
+ *   - gcgp.3: PostToolUse's tool_finished is FILTERED — counted locally, never sent — while
+ *     it still proves hook trust, and every other surface is delivered unchanged;
  *   - the one-time TRUST transition: needs_trust before any event → installed after the
  *     first real delivered event (the Codex-specific gate);
  *   - the token resolves from the strict-perm FILE fallback (no keychain), rides as a
@@ -21,7 +23,8 @@ import { readFileSync } from "node:fs";
 
 import {
   createSender,
-  type SendResult,
+  type HookOutcome,
+  readFilteredActivity,
   setToken,
   unavailableKeychainBackend,
 } from "@birdybeep/agent-core";
@@ -70,7 +73,7 @@ afterEach(async () => {
 
 async function setUp(): Promise<{
   sb: Sandbox;
-  fire: (p: unknown) => Promise<SendResult["outcome"] | "deduped" | "skipped">;
+  fire: (p: unknown) => Promise<HookOutcome>;
 }> {
   sink = await StubEventSink.start();
   sandbox = createSandbox();
@@ -95,7 +98,10 @@ describe("CX-E2E: install → fire real notify + hooks → assert delivered", ()
       tool_name: "Bash",
       tool_input: { command: "terraform apply" },
     });
-    await fire({
+    // PostToolUse → tool_finished, which the backend can never push (gcgp.3): the pipeline
+    // tallies it locally and sends NOTHING. This one surface was 88.5% of a real user's
+    // traffic, so its absence from the sink below is the point of the change, not a gap.
+    const postToolUse = await fire({
       ...hookBase,
       hook_event_name: "PostToolUse",
       tool_name: "Edit",
@@ -103,6 +109,7 @@ describe("CX-E2E: install → fire real notify + hooks → assert delivered", ()
       tool_response: { ok: true },
       tool_use_id: "tu1",
     });
+    expect(postToolUse).toBe("filtered");
     await fire({
       ...hookBase,
       hook_event_name: "SubagentStart",
@@ -129,7 +136,7 @@ describe("CX-E2E: install → fire real notify + hooks → assert delivered", ()
     const expected: Record<string, string> = {
       session_started: "starting",
       approval_required: "waiting_for_approval",
-      tool_finished: "running",
+      // tool_finished is deliberately ABSENT — filtered client-side (gcgp.3); asserted below.
       subagent_started: "running",
       subagent_completed: "running",
       agent_completed: "completed",
@@ -159,6 +166,11 @@ describe("CX-E2E: install → fire real notify + hooks → assert delivered", ()
     const types = sink!.received().map((e) => (e.body as { event_type: string }).event_type);
     expect(types).toContain("approval_required"); // from PermissionRequest hook
     expect(types).toContain("agent_completed"); // from notify
+    // gcgp.3: the PostToolUse flood never leaves the machine, but it IS counted, so
+    // `status`/`doctor` can still show the hooks are firing.
+    expect(types).not.toContain("tool_finished");
+    expect(readFilteredActivity()).toMatchObject({ count: 1, byType: { tool_finished: 1 } });
+    expect(NOTIFY_DEFAULT["tool_finished"]).toBe(false); // it could never have beeped anyway
 
     expect(elapsed).toBeLessThan(5000); // hook returns fast
     expect(readFileSync(codexConfigFile({ home: sb.home }), "utf8")).not.toContain(TOKEN);

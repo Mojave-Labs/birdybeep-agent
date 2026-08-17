@@ -98,19 +98,30 @@ const PAYLOADS: {
     eventType: "agent_completed",
   },
   {
-    // Copilot payloads have no event discriminator: the config passes preToolUse separately.
+    // Copilot payloads have no event discriminator: the config passes the name separately.
+    // sessionStart (not preToolUse): this table is the "every harness DELIVERS" matrix, and
+    // Copilot's tool_* events are withheld client-side (gcgp.3) — covered separately below.
     harness: "copilot",
-    copilotEventName: "preToolUse",
+    copilotEventName: "sessionStart",
     payload: {
       sessionId: "sess-copilot",
       timestamp: 1786075958198,
       cwd: RAW_CWD,
-      toolName: "bash",
-      toolArgs: '{"command":"cat /Users/dev/private"}',
+      source: "new",
+      initialPrompt: "PRIVATE INITIAL PROMPT",
     },
-    eventType: "tool_started",
+    eventType: "session_started",
   },
 ];
+
+/** A Copilot payload whose normalized type the backend can never push (gcgp.3). */
+const COPILOT_FILTERED_PAYLOAD = {
+  sessionId: "sess-copilot",
+  timestamp: 1786075958198,
+  cwd: RAW_CWD,
+  toolName: "bash",
+  toolArgs: '{"command":"cat /Users/dev/private"}',
+};
 
 describe("runHookCommand delivers the right normalized event per harness", () => {
   for (const { harness, payload, eventType, copilotEventName } of PAYLOADS) {
@@ -134,6 +145,21 @@ describe("runHookCommand delivers the right normalized event per harness", () =>
       expect(elapsed).toBeLessThan(5000); // fast return — must not slow the harness
     });
   }
+
+  // gcgp.3 — the other half of the matrix: a real payload whose type can never beep runs the
+  // whole pipeline, returns `filtered`, and sends NOTHING.
+  it("copilot preToolUse → tool_started is filtered: nothing reaches the backend", async () => {
+    sink = await StubEventSink.start();
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const sender = createSender({ baseUrl: sink.url, tokenOptions: FILE_ONLY });
+
+    const result = await runHookCommand("copilot", COPILOT_FILTERED_PAYLOAD, sender, "preToolUse");
+
+    expect(result.outcome).toBe("filtered");
+    expect(result.eventType).toBe("tool_started");
+    expect(sink.received()).toHaveLength(0);
+  });
 });
 
 describe("offline → queue → drain (CLI-OFFLINE-QUEUE-E2E core)", () => {
@@ -308,6 +334,34 @@ describe("hook command dispatch (full CLI path)", () => {
       readStdin: () => Promise.resolve(JSON.stringify(copilot.payload)),
     });
     const out = capture();
+    const code = await runCli(["hook", "copilot", "sessionStart", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.OK);
+    expect(JSON.parse(out.text())).toMatchObject({
+      harness: "copilot",
+      event: "sessionStart",
+      outcome: "delivered",
+      eventType: "session_started",
+    });
+    expect(sink.received()).toHaveLength(1);
+  });
+
+  // gcgp.3 — through the FULL CLI dispatch (argv → stdin → adapter → pipeline): a filtered
+  // event reports itself in --json and still exits 0, so the harness never sees an error.
+  it("reports a filtered Copilot event in --json, sends nothing, and exits 0", async () => {
+    sink = await StubEventSink.start();
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const sinkUrl = sink.url;
+    const cmd = createHookCommand({
+      createSender: () => createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY }),
+      readStdin: () => Promise.resolve(JSON.stringify(COPILOT_FILTERED_PAYLOAD)),
+    });
+    const out = capture();
     const code = await runCli(["hook", "copilot", "preToolUse", "--json"], {
       commands: [cmd],
       stdout: out.writer,
@@ -318,10 +372,10 @@ describe("hook command dispatch (full CLI path)", () => {
     expect(JSON.parse(out.text())).toMatchObject({
       harness: "copilot",
       event: "preToolUse",
-      outcome: "delivered",
+      outcome: "filtered",
       eventType: "tool_started",
     });
-    expect(sink.received()).toHaveLength(1);
+    expect(sink.received()).toHaveLength(0);
   });
 
   it("unknown harness → USAGE", async () => {

@@ -19,7 +19,9 @@ import { opencodeAdapter } from "@birdybeep/opencode";
 
 import { resolveApiUrl } from "../config";
 import {
+  describeFilteredActivity,
   describeUnpairedActivity,
+  filteredActivity,
   gatherIntegrations,
   isPaired,
   localQueueDepth,
@@ -64,6 +66,7 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
       const integrations = await gatherIntegrations(adapters);
       const depthBefore = localQueueDepth();
       const unpaired = unpairedActivity(); // gcgp.4: events that fired with no token to send them
+      const filtered = filteredActivity(); // gcgp.3: events handled locally, never sent
       const drain = await makeSender(resolveApiUrl()).drainNow(); // opportunistic, best-effort
       const depthAfter = localQueueDepth();
       const overflowDropped = localQueueOverflowDrops();
@@ -74,6 +77,7 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
         integrations,
         queue: { depthBefore, delivered: drain.delivered, depthAfter, overflowDropped },
         ...(unpaired !== null ? { unpairedActivity: unpaired } : {}),
+        ...(filtered !== null ? { filteredActivity: filtered } : {}),
       };
 
       if (ctx.flags.json) {
@@ -90,6 +94,8 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
         // The whole point of the notice (gcgp.4): hooks firing into the void is otherwise
         // indistinguishable from no hooks firing at all.
         if (unpaired !== null) ctx.io.line(`⚠ Lost:   ${describeUnpairedActivity(unpaired)}`);
+        // gcgp.3: the counterpart signal — hooks that fired and were deliberately not sent.
+        if (filtered !== null) ctx.io.line(`Local:   ${describeFilteredActivity(filtered)}`);
       }
       return paired ? EXIT.OK : EXIT.ERROR; // not-paired → defined non-zero
     },

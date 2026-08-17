@@ -229,6 +229,11 @@ subagent_started · subagent_completed · custom · test
 
 (`test` is reserved for the `birdybeep test` diagnostic — adapters never emit it.)
 
+`tool_started` and `tool_finished` are handled on the machine and never sent to the backend
+(see `packages/agent-core/src/notify-matrix.ts`). Map a tool signal to them anyway: the pipeline
+counts them for `status` / `doctor`, and picking a different type to get one delivered produces a
+wrong event. Every other type is sent.
+
 Session statuses (`AGENT_SESSION_STATUSES`, §10.4):
 
 ```
