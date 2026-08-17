@@ -425,13 +425,18 @@ as `harness: "cursor"`. `birdybeep hook claude --json` reports them as:
 ```
 
 Cursor's bridge does not support `Notification` or `PermissionRequest`, so approval beeps never come
-through it. For full coverage install the Cursor adapter as well:
+through it. `doctor` flags that state, above the per-harness checks:
 
-```bash
-birdybeep agent install cursor
+```
+✗  Approval beeps from Cursor — Cursor is running your agent through the Claude Code hooks — that is why
+   Cursor events arrive without a Cursor install. Its bridge drops Notification and PermissionRequest, so
+   approvals never reach you.
+     → Run `birdybeep agent install cursor` to get approval beeps from Cursor's own shell and MCP
+       permission prompts. Keeping both installed is safe — duplicate events are collapsed.
 ```
 
-Events that arrive twice are collapsed by the dedup ledger, so running both is safe.
+Events that arrive twice are collapsed by the dedup ledger, so running both is safe. The check is silent
+once `~/.cursor/hooks.json` carries the BirdyBeep entries.
 
 ---
 
