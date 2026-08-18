@@ -351,6 +351,24 @@ function buildAndNormalize(input: unknown, opts: NormalizeOptions): BirdyBeepAge
 }
 ```
 
+### Reporting `harness_version`
+
+`harness_version` names the build of the harness that fired the event. Fill it from something the
+harness hands the hook directly — never a `<harness> --version` probe: a machine commonly has the
+same harness installed twice on two update channels, and the probe answers for whichever one is on
+`PATH`.
+
+| Adapter     | Source                                                                                         |
+| ----------- | ---------------------------------------------------------------------------------------------- |
+| Claude Code | `CLAUDE_CODE_EXECPATH` (desktop launcher), else `AI_AGENT` — both exported into the hook child |
+| Codex       | `cli_version` from the `session_meta` line opening the rollout at `transcript_path`            |
+| Cursor      | `cursor_version` on the payload                                                                |
+| Copilot     | `COPILOT_CLI_BINARY_VERSION` exported into the hook child                                      |
+| OpenCode    | not reported — the plugin envelope does not carry it                                           |
+
+Pass the value through `sanitizeHarnessVersion` and omit the field when it returns `undefined`. An
+absent field means "the harness did not say"; a guess is worse than nothing.
+
 ### What the shared normalizer guarantees
 
 The canonical payload ([`event.ts`](../packages/agent-core/src/event.ts)) carries: `event_id`,

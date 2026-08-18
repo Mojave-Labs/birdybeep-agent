@@ -26,6 +26,16 @@
  *   tool.execute.before        → tool_started
  *   tool.execute.after         → tool_finished
  *
+ * NO `harness_version` yet (birdybeep-agent-gcgp.7). The other four adapters fill it from a
+ * source their harness hands the hook directly — an env var it exports (Claude Code, Copilot),
+ * a payload field (Cursor), or the rollout it just wrote (Codex). OpenCode has none of those:
+ * the events that reach here are whatever `packages/opencode/src/plugin.ts` forwards, and the
+ * version OpenCode knows about itself lives in the plugin's `PluginInput`, on the other side of
+ * that envelope. Populating it therefore means widening the plugin envelope — a change to the
+ * installed plugin, which is a separate ticket's file — and it cannot be verified end-to-end
+ * without a real `opencode` binary. Left absent rather than probed: a `--version` probe would
+ * report whatever is on PATH, which is exactly the wrong answer this field exists to avoid.
+ *
  * NO `metadata.session_name` (audited for birdybeep-agent-991). OpenCode has no user-typed
  * session name to report. The only name-shaped thing near these payloads is the `title` on the
  * Session object that rides `session.created`/`session.updated` as `properties.info` — and that

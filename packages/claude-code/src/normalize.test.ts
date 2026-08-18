@@ -772,3 +772,76 @@ describe("metadata.session_name (991)", () => {
     expect(stop.metadata?.["session_name"]).toBeUndefined();
   });
 });
+
+/**
+ * birdybeep-agent-gcgp.7 — `harness_version` names WHICH Claude Code engine fired the hook.
+ * The values below are the ones actually observed in a live hook child's environment on
+ * macOS 2026-08-16: the terminal CLI at `~/.local/bin/claude` reported 2.1.227 while the
+ * desktop app's bundled engine reported 2.1.229 — same machine, same minute, two channels.
+ * Only one of them is on PATH, which is why a `claude --version` probe cannot answer this.
+ */
+describe("harness_version identifies the engine that fired the hook (gcgp.7)", () => {
+  const tmpDirs: string[] = [];
+  function opts(env: NodeJS.ProcessEnv) {
+    const dir = mkdtempSync(join(tmpdir(), "bb-hv-"));
+    tmpDirs.push(dir);
+    return { ...DET, sessionStateDir: dir, env };
+  }
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  const start = { ...base, hook_event_name: "SessionStart", source: "startup" };
+  const TERMINAL = { AI_AGENT: "claude-code_2-1-227_harness" };
+  const DESKTOP = {
+    CLAUDE_CODE_EXECPATH:
+      "/Users/alice/Library/Application Support/Claude/claude-code/2.1.229/claude.app/Contents/MacOS/claude",
+    AI_AGENT: "claude-code_2-1-229_agent",
+  };
+
+  it("reads the terminal CLI version out of AI_AGENT", async () => {
+    const ev = await normalizeClaudeCodeEvent(start, opts(TERMINAL));
+    expect(ev.harness_version).toBe("2.1.227");
+  });
+
+  it("reads the desktop-bundled engine version out of CLAUDE_CODE_EXECPATH", async () => {
+    const ev = await normalizeClaudeCodeEvent(start, opts(DESKTOP));
+    expect(ev.harness_version).toBe("2.1.229");
+    // EXECPATH is an absolute path: only the version substring is read, never the path.
+    expect(JSON.stringify(ev)).not.toContain("Application Support");
+  });
+
+  it("tells the two update channels apart on one machine", async () => {
+    const terminal = await normalizeClaudeCodeEvent(start, opts(TERMINAL));
+    const desktop = await normalizeClaudeCodeEvent(start, opts(DESKTOP));
+    expect(terminal.harness_version).not.toBe(desktop.harness_version);
+  });
+
+  it("rides every mapped event, not just SessionStart", async () => {
+    for (const c of cases) {
+      const ev = await normalizeClaudeCodeEvent(c.payload, opts(TERMINAL));
+      expect(ev.harness_version, c.name).toBe("2.1.227");
+    }
+  });
+
+  it("is omitted, never guessed, when the engine reports nothing", async () => {
+    const ev = await normalizeClaudeCodeEvent(start, opts({}));
+    expect(ev.harness_version).toBeUndefined();
+    expect(Object.keys(ev)).not.toContain("harness_version");
+  });
+
+  it("ignores an AI_AGENT another tool set (the name is generic; the prefix is required)", async () => {
+    const ev = await normalizeClaudeCodeEvent(start, opts({ AI_AGENT: "some-other_9-9-9_x" }));
+    expect(ev.harness_version).toBeUndefined();
+  });
+
+  it("forwards no part of a junk/hostile EXECPATH", async () => {
+    const ev = await normalizeClaudeCodeEvent(
+      start,
+      opts({ AI_AGENT: "claude-code_2-1-227_x", CLAUDE_CODE_EXECPATH: "/tmp/evil; rm -rf /" }),
+    );
+    // No version-shaped segment in EXECPATH → falls through to AI_AGENT; the path never leaks.
+    expect(ev.harness_version).toBe("2.1.227");
+    expect(JSON.stringify(ev)).not.toContain("rm -rf");
+  });
+});
