@@ -199,6 +199,15 @@ export class LocalEventQueue {
    * In-flight `.claim`s and half-written `.tmp`s from before the cutoff go too (they carry the
    * same `<enqueuedAt>-` prefix): a claim orphaned by a dead drainer would otherwise rejoin the
    * queue later and deliver exactly the event this guard exists to discard. Never throws.
+   *
+   * The cutoff is INCLUSIVE (gcgp.24): an entry stamped exactly `cutoffMs` is discarded. Entry
+   * timestamps are milliseconds, so an event enqueued in the same millisecond as pairing is
+   * genuinely ambiguous — it could have been written a hair before or a hair after the token
+   * landed. Resolving that toward "discard" makes the guard deterministic and fails safe toward
+   * the storm it exists to prevent; keeping it made the outcome depend on sub-millisecond timing
+   * (a same-millisecond entry survived 133 of 200 probe runs, and flaked the pre-push gate at
+   * ~1 run in 5). Losing one event at the instant of pairing costs nothing — the user has just
+   * paired, and the next event delivers.
    */
   discardBefore(cutoffMs: number): number {
     let names: string[];
@@ -210,7 +219,7 @@ export class LocalEventQueue {
     let discarded = 0;
     for (const name of names) {
       if (!ENQUEUED_AT_PREFIX.test(name)) continue; // e.g. the overflow counter — not an entry
-      if (this.#enqueuedAtOf(name) >= cutoffMs) continue;
+      if (this.#enqueuedAtOf(name) > cutoffMs) continue;
       try {
         rmSync(join(this.dir, name), { force: true });
         if (name.endsWith(".json")) discarded += 1; // .tmp/.claim aren't deliverable events

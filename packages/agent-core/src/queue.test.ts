@@ -356,6 +356,33 @@ describe("discardBefore — the cold-start guard (gcgp.4)", () => {
     expect(drained).toEqual(["evt_99"]); // no storm: only the post-pairing event delivers
   });
 
+  // gcgp.24: entry timestamps are milliseconds, so an event enqueued in the SAME millisecond as
+  // pairing is ambiguous. While the boundary was exclusive, `>=` kept it and the guard's outcome
+  // depended on sub-millisecond timing — a same-ms entry survived 133/200 probe runs and flaked
+  // the pre-push gate at ~1 run in 5. The clock is injected, so this asserts the boundary itself
+  // rather than racing it: the failure mode WAS nondeterminism, and a test that could only catch
+  // it by chance would be the same bug in test form.
+  it("discards an entry stamped EXACTLY at the cutoff — the boundary is inclusive", async () => {
+    sandbox = createSandbox();
+    let clock = 1_000_000;
+    const q = new LocalEventQueue({ dir: sandbox.path("data", "q"), now: () => clock });
+
+    q.enqueue(makeEvent(1)); // strictly before the cutoff
+    clock += 10;
+    const pairedAt = clock;
+    q.enqueue(makeEvent(2)); // the ambiguous one — same millisecond as pairing
+    clock += 1;
+    q.enqueue(makeEvent(3)); // unambiguously after
+
+    expect(q.discardBefore(pairedAt)).toBe(2); // the earlier AND the same-ms entry both go
+    const drained: string[] = [];
+    await q.drain((e) => {
+      drained.push(e.event_id);
+      return "delivered";
+    });
+    expect(drained).toEqual(["evt_3"]);
+  });
+
   it("takes stale .claim files too, so an orphan can't rejoin the queue and deliver", () => {
     sandbox = createSandbox();
     let clock = 1_000_000;
