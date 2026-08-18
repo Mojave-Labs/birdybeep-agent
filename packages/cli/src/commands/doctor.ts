@@ -10,6 +10,7 @@ import {
   type AgentAdapter,
   createSender as defaultCreateSender,
   DEFAULT_QUEUE_MAX_ENTRIES as QUEUE_CAP,
+  type DetectionResult,
   type Sender,
   type TokenStoreOptions,
 } from "@birdybeep/agent-core";
@@ -21,6 +22,7 @@ import { opencodeAdapter } from "@birdybeep/opencode";
 
 import { resolveApiUrl } from "../config";
 import {
+  cursorBridgeOnly,
   describeUnpairedActivity,
   isPaired,
   localQueueDepth,
@@ -64,6 +66,8 @@ export interface DoctorCommandDeps {
   tokenOptions?: TokenStoreOptions;
   /** Backend reachability probe (tests inject reachable/unreachable). */
   probeNetwork?: (baseUrl: string) => Promise<boolean>;
+  /** Cursor detection for the bridge check (tests avoid shelling out to `cursor-agent`). */
+  detectCursor?: () => Promise<DetectionResult>;
 }
 
 export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
@@ -109,6 +113,27 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
           remedy:
             "Run `birdybeep pair`. Events that fired before pairing are gone — a first pairing " +
             "does not replay them.",
+        });
+      }
+
+      // 1c. Cursor runs BirdyBeep through its Claude Code compatibility bridge, which drops
+      // Notification and PermissionRequest (gcgp.13) — so a Cursor user with only the Claude
+      // hooks installed sees Cursor events arrive but never an approval. It reads two adapters'
+      // config at once, so it can live in neither adapter's doctor(); it sits with the other
+      // "why am I missing beeps?" answers, above the per-adapter checks. Silent once the Cursor
+      // adapter is installed — nothing to nag about then.
+      if (await cursorBridgeOnly(deps.detectCursor ? { detect: deps.detectCursor } : {})) {
+        checks.push({
+          name: "Approval beeps from Cursor",
+          ok: false,
+          detail:
+            "Cursor is running your agent through the Claude Code hooks — that is why Cursor " +
+            "events arrive without a Cursor install. Its bridge drops Notification and " +
+            "PermissionRequest, so approvals never reach you.",
+          remedy:
+            "Run `birdybeep agent install cursor` to get approval beeps from Cursor's own shell " +
+            "and MCP permission prompts. Keeping both installed is safe — duplicate events are " +
+            "collapsed.",
         });
       }
 
