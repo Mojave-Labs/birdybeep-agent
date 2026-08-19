@@ -1,5 +1,60 @@
 # @birdybeep/cli
 
+## 0.5.0
+
+### Minor Changes
+
+- b9b9610: Stop sending events that can never produce a notification.
+
+  - `tool_started` and `tool_finished` are handled on your machine and no longer sent. On a measured
+    18.45h Codex session that is 1016 of 1148 events — 88.5% of the traffic — none of which the
+    backend could have notified on. They were also the bulk of the per-machine rate-limit budget, so
+    a busy session could push real beeps into a 429.
+  - `status` and `doctor` report those events instead: how many fired, when they started, and the
+    count per type. A working install is still visibly working.
+  - Every other event type is unchanged, including the ones that never beep: session start/resume/
+    active/end and subagent start/stop still go, because the backend uses them for the sessions list,
+    for "last seen", and to confirm Codex hook trust.
+  - A `birdybeep hook` fire reports `filtered` under `--json` when it handled an event this way, and
+    still exits 0.
+
+### Patch Changes
+
+- 65883d4: `doctor` now explains why Cursor events arrive on a machine that only installed the Claude Code
+  hooks, and what installing the Cursor adapter adds.
+
+  Cursor runs the hook commands in `~/.claude/settings.json`, so those machines get Cursor lifecycle
+  events — but its bridge drops `Notification` and `PermissionRequest`, so approvals never arrive.
+  When Cursor is present, BirdyBeep's Claude hooks are installed, and `~/.cursor/hooks.json` has none
+  of BirdyBeep's entries, `doctor` reports `Approval beeps from Cursor` with the
+  `birdybeep agent install cursor` fix. The check is silent in every other state.
+
+- b9e5c57: Tell an unpaired machine apart from an offline one, and stop building a backlog that fires all at
+  once when you pair.
+
+  - An event sent with no machine token now reports `unpaired` instead of `queued`, and is not written
+    to the queue — it could never have been delivered from there.
+  - `birdybeep test` on an unpaired machine says `NOT PAIRED` and exits non-zero. It used to print
+    `Offline — test event queued` on a machine that was online, and exit 0.
+  - A hook fire on an unpaired machine writes a line to stderr and records the discard. `status` and
+    `doctor` report how many events it has cost, when they started, and which harnesses fired them.
+  - The local queue holds at most 500 entries (oldest dropped first); `status` and `doctor` report the
+    drop count. Retention alone was the only bound.
+  - `birdybeep pair` discards anything queued before pairing, so a first pairing does not replay old
+    events, and says how many it dropped.
+
+- Updated dependencies [5153f4e]
+- Updated dependencies [f48eb6c]
+- Updated dependencies [4d7888e]
+- Updated dependencies [b9b9610]
+- Updated dependencies [b9e5c57]
+  - @birdybeep/agent-core@0.5.0
+  - @birdybeep/claude-code@0.5.0
+  - @birdybeep/codex@0.5.0
+  - @birdybeep/copilot@0.5.0
+  - @birdybeep/opencode@0.5.0
+  - @birdybeep/cursor@0.5.0
+
 ## 0.4.0
 
 ### Patch Changes

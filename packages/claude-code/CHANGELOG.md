@@ -1,5 +1,48 @@
 # @birdybeep/claude-code
 
+## 0.5.0
+
+### Patch Changes
+
+- f48eb6c: Report which build of a harness produced each event, in `harness_version`.
+
+  The field is part of the event contract but no adapter ever filled it, so every event said
+  `(none)` — including on machines running the same harness twice from two update channels.
+
+  - **Claude Code** reports the engine that fired the hook, read from the environment it exports.
+    The terminal CLI and the desktop app's bundled engine update separately and now report
+    separately.
+  - **Codex** reports the `cli_version` from the session rollout the hook points at. The terminal
+    CLI and the build inside ChatGPT.app share one `~/.codex/config.toml`, so this is what tells
+    their events apart.
+  - **Copilot CLI** reports `COPILOT_CLI_BINARY_VERSION`.
+  - **Cursor** already reported `cursor_version`; unchanged.
+
+  The version always comes from the harness that actually ran, never from a `--version` probe of
+  whatever is on `PATH` — on a two-channel install that probe answers for the wrong build. A value
+  that is not version-shaped is dropped rather than reported.
+
+- b9b9610: Stop sending events that can never produce a notification.
+
+  - `tool_started` and `tool_finished` are handled on your machine and no longer sent. On a measured
+    18.45h Codex session that is 1016 of 1148 events — 88.5% of the traffic — none of which the
+    backend could have notified on. They were also the bulk of the per-machine rate-limit budget, so
+    a busy session could push real beeps into a 429.
+  - `status` and `doctor` report those events instead: how many fired, when they started, and the
+    count per type. A working install is still visibly working.
+  - Every other event type is unchanged, including the ones that never beep: session start/resume/
+    active/end and subagent start/stop still go, because the backend uses them for the sessions list,
+    for "last seen", and to confirm Codex hook trust.
+  - A `birdybeep hook` fire reports `filtered` under `--json` when it handled an event this way, and
+    still exits 0.
+
+- Updated dependencies [5153f4e]
+- Updated dependencies [f48eb6c]
+- Updated dependencies [4d7888e]
+- Updated dependencies [b9b9610]
+- Updated dependencies [b9e5c57]
+  - @birdybeep/agent-core@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes
