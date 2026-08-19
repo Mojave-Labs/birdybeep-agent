@@ -1,0 +1,25 @@
+{
+  "conversation_id": "00000000-0000-4000-8000-000000000002",
+  "generation_id": "00000000-0000-4000-8000-000000000003",
+  "model": "cursor-grok-4.5-high-fast",
+  "model_id": "grok-4.5",
+  "model_params": [
+    { "id": "effort", "value": "high" },
+    { "id": "fast", "value": "true" }
+  ],
+  "is_background_agent": false,
+  "composer_mode": "agent",
+  "session_id": "00000000-0000-4000-8000-000000000002",
+  "hook_event_name": "postToolUseFailure",
+  "cursor_version": "3.14.27",
+  "workspace_roots": ["/home/user/project"],
+  "user_email": "user@example.com",
+  "transcript_path": "/home/user/.cursor/transcripts/x.jsonl",
+  "tool_name": "Bash",
+  "tool_input": "{\"command\":\"pnpm test\"}",
+  "error_message": "Aborted by user",
+  "failure_type": "interrupted",
+  "duration_ms": 372,
+  "tool_use_id": "toolu_00000000-0000-4000-8000-000000000005",
+  "is_interrupt": true
+}

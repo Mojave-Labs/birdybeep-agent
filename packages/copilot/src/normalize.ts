@@ -71,6 +71,24 @@ function copilotVersion(env: NodeJS.ProcessEnv): string | undefined {
   return sanitizeHarnessVersion(env["COPILOT_CLI_BINARY_VERSION"]);
 }
 
+/**
+ * Does this payload come from Copilot CLI (birdybeep-agent-gcgp.14)?
+ *
+ * Copilot is the one harness whose payloads carry NO event discriminator — the event name
+ * arrives as an argv argument — so `normalizeCopilotEvent` maps whatever object it is handed.
+ * A foreign payload therefore did not skip: it produced and SENT a fabricated Copilot event.
+ * `sessionId` is the discriminator that stops that. It is present on every captured payload
+ * (`src/__fixtures__/*.json`) and is camelCase, which no other harness's payload uses —
+ * Claude Code, Codex and Cursor all key on snake_case `session_id`.
+ *
+ * `cwd` and `timestamp` are equally universal in the captures but are deliberately NOT
+ * required: a future Copilot event that omits one must stay mappable, not become an error on
+ * every fire.
+ */
+export function isCopilotHookPayload(input: unknown): boolean {
+  return typeof asRecord(input)["sessionId"] === "string";
+}
+
 function mapCopilotEvent(
   eventName: CopilotHookEventName,
   payload: Record<string, unknown>,

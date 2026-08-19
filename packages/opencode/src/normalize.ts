@@ -199,6 +199,40 @@ function mapOpenCodeEvent(type: string, props: Record<string, unknown>): MappedE
   }
 }
 
+/**
+ * Every envelope `type` a BirdyBeep OpenCode plugin has ever forwarded
+ * (birdybeep-agent-gcgp.14) — the answer to "did this payload come from our plugin?".
+ *
+ * These names are not harness-defined: OpenCode writes no hook command, so
+ * `birdybeep hook opencode` is invoked ONLY by `plugin.ts`, which wraps each event as
+ * `{ type, properties, cwd }`. The recognized set is therefore the plugin's own forward list
+ * plus the names OLDER installed plugins forwarded — a user can still be running a plugin
+ * from a previous release, and a real event from it must stay a quiet skip rather than
+ * becoming an error on every fire.
+ *
+ * Legacy entries: `permission.updated` (the pre-1.x SST approval event this adapter used to
+ * forward) and `permission.replied` (forwarded before it was ruled out as "the user's own
+ * reply, not an agent-attention moment").
+ */
+export const OPENCODE_EVENT_TYPES: readonly string[] = [
+  "permission.asked",
+  "permission.replied",
+  "permission.updated",
+  "session.created",
+  "session.error",
+  "session.idle",
+  "session.status",
+  "session.updated",
+  "tool.execute.after",
+  "tool.execute.before",
+];
+
+/** Does this payload come from a BirdyBeep OpenCode plugin? */
+export function isOpenCodeEventPayload(input: unknown): boolean {
+  const type = asRecord(input)["type"];
+  return typeof type === "string" && OPENCODE_EVENT_TYPES.includes(type);
+}
+
 function buildAndNormalize(input: unknown, opts: NormalizeOptions): BirdyBeepAgentEvent {
   const payload = asRecord(input);
   const type = payload["type"];

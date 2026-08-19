@@ -8,6 +8,8 @@
 import { birdyBeepAgentEventSchema } from "@birdybeep/agent-core";
 import { describe, expect, it } from "vitest";
 
+import postToolUseFailureFixture from "./__fixtures__/postToolUseFailure.json";
+import postToolUseFailureInterruptFixture from "./__fixtures__/postToolUseFailure-interrupt.json";
 import { CursorMappingError, normalizeCursorEvent } from "./normalize";
 
 const DET = { now: () => "2026-07-15T00:00:00.000Z", generateId: () => "evt_fixed" };
@@ -16,6 +18,7 @@ const DET = { now: () => "2026-07-15T00:00:00.000Z", generateId: () => "evt_fixe
 const NOTIFY_DEFAULT: Record<string, boolean> = {
   session_started: false,
   agent_completed: true,
+  agent_failed: true, // the failure beep — postToolUseFailure (gcgp.17)
   session_ended: false, // lifecycle marker — never beeps
   approval_required: true,
   tool_started: false,
@@ -108,6 +111,20 @@ const cases: Case[] = [
     name: "postToolUse",
     payload: { ...base, hook_event_name: "postToolUse", tool_name: "Edit" },
     eventType: "tool_finished",
+    status: "running",
+  },
+  {
+    // gcgp.17 — the tool-failure beep. Fields per Cursor's own PostToolUseFailure schema.
+    name: "postToolUseFailure",
+    payload: {
+      ...base,
+      hook_event_name: "postToolUseFailure",
+      tool_name: "Bash",
+      failure_type: "tool_error",
+      duration_ms: 1843,
+      is_interrupt: false,
+    },
+    eventType: "agent_failed",
     status: "running",
   },
   {
@@ -227,11 +244,65 @@ describe("garbled / unmappable payloads reject (typed error, never a malformed e
     ).rejects.toBeInstanceOf(CursorMappingError);
   });
   it("rejects the IDE-only events that have no §10.1 target (→ skipped at the hook)", async () => {
-    for (const name of ["beforeSubmitPrompt", "postToolUseFailure", "afterAgentResponse"]) {
+    // gcgp.17 de-registered both: they are no longer written into hooks.json, but a config
+    // an earlier release patched still fires them, so they must stay a quiet skip.
+    for (const name of ["beforeSubmitPrompt", "afterAgentResponse"]) {
       await expect(normalizeCursorEvent({ ...base, hook_event_name: name })).rejects.toBeInstanceOf(
         CursorMappingError,
       );
     }
+  });
+});
+
+/**
+ * birdybeep-agent-gcgp.17 — `postToolUseFailure` was registered and mapped to nothing, so
+ * every fire spawned a hook process to produce `skipped`. Driven here with the fixture whose
+ * field set is Cursor's own `agent.v1.PostToolUseFailureRequestQuery` (see
+ * `__fixtures__/README.md`), not a hand-written shape.
+ */
+describe("postToolUseFailure → agent_failed (gcgp.17)", () => {
+  it("produces the Beep-eligible failure event from the real payload shape", async () => {
+    const ev = await normalizeCursorEvent(postToolUseFailureFixture, DET);
+    expect(ev.event_type).toBe("agent_failed");
+    expect(NOTIFY_DEFAULT[ev.event_type]).toBe(true); // the whole point: this one beeps
+    expect(ev.title).toBe("Cursor tool failed");
+    expect(ev.body).toBe("Bash failed");
+    expect(birdyBeepAgentEventSchema.safeParse(ev).success).toBe(true);
+    const metadata = ev.metadata as Record<string, unknown>;
+    expect(metadata["tool"]).toBe("Bash");
+    expect(metadata["failure_type"]).toBe("tool_error");
+    expect(metadata["duration_ms"]).toBe(1843);
+  });
+
+  it("leaves the session status `running` — one failed tool is not a failed session", async () => {
+    const ev = await normalizeCursorEvent(postToolUseFailureFixture, DET);
+    expect(ev.status).toBe("running");
+  });
+
+  it("drops error_message and tool_input — a tool's own error text is content", async () => {
+    const ev = await normalizeCursorEvent(postToolUseFailureFixture, DET);
+    const serialized = JSON.stringify(ev);
+    expect(serialized).not.toContain("password authentication failed");
+    expect(serialized).not.toContain("sbp_TESTONLY_secret");
+    expect(serialized).not.toContain("postgres://");
+    expect(serialized).not.toContain(".env");
+    expect(serialized).not.toContain("/home/user");
+  });
+
+  it("a user interrupt is a quiet skip, not a failure beep", async () => {
+    // is_interrupt means the user pressed stop: the person who would get the beep is the
+    // person who just cancelled the tool.
+    await expect(normalizeCursorEvent(postToolUseFailureInterruptFixture)).rejects.toBeInstanceOf(
+      CursorMappingError,
+    );
+  });
+
+  it("falls back to a usable body when Cursor sends no tool name", async () => {
+    const ev = await normalizeCursorEvent(
+      { ...base, hook_event_name: "postToolUseFailure", failure_type: "tool_error" },
+      DET,
+    );
+    expect(ev.body).toBe("A tool failed");
   });
 });
 

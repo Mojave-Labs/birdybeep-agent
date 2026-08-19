@@ -16,12 +16,6 @@ exports[`generated config snapshots (§21.1) > a resolved install writes the abs
         "timeout": 30
       }
     ],
-    "beforeSubmitPrompt": [
-      {
-        "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
-        "timeout": 30
-      }
-    ],
     "preToolUse": [
       {
         "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
@@ -53,12 +47,6 @@ exports[`generated config snapshots (§21.1) > a resolved install writes the abs
       }
     ],
     "stop": [
-      {
-        "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
-        "timeout": 30
-      }
-    ],
-    "afterAgentResponse": [
       {
         "command": "\\"/opt/node-22/bin/node\\" \\"/opt/pnpm/bin/birdybeep\\" hook cursor",
         "timeout": 30
@@ -97,12 +85,6 @@ exports[`generated config snapshots (§21.1) > from-scratch install writes the c
         "timeout": 30
       }
     ],
-    "beforeSubmitPrompt": [
-      {
-        "command": "birdybeep hook cursor",
-        "timeout": 30
-      }
-    ],
     "preToolUse": [
       {
         "command": "birdybeep hook cursor",
@@ -134,12 +116,6 @@ exports[`generated config snapshots (§21.1) > from-scratch install writes the c
       }
     ],
     "stop": [
-      {
-        "command": "birdybeep hook cursor",
-        "timeout": 30
-      }
-    ],
-    "afterAgentResponse": [
       {
         "command": "birdybeep hook cursor",
         "timeout": 30
@@ -181,12 +157,6 @@ exports[`generated config snapshots (§21.1) > patches into an existing config t
         "timeout": 30
       }
     ],
-    "beforeSubmitPrompt": [
-      {
-        "command": "birdybeep hook cursor",
-        "timeout": 30
-      }
-    ],
     "preToolUse": [
       {
         "command": "birdybeep hook cursor",
@@ -218,12 +188,6 @@ exports[`generated config snapshots (§21.1) > patches into an existing config t
       }
     ],
     "stop": [
-      {
-        "command": "birdybeep hook cursor",
-        "timeout": 30
-      }
-    ],
-    "afterAgentResponse": [
       {
         "command": "birdybeep hook cursor",
         "timeout": 30
@@ -266,12 +230,6 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
         "timeout": 30
       }
     ],
-    "beforeSubmitPrompt": [
-      {
-        "command": "birdybeep hook cursor",
-        "timeout": 30
-      }
-    ],
     "preToolUse": [
       {
         "command": "birdybeep hook cursor",
@@ -303,12 +261,6 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
       }
     ],
     "stop": [
-      {
-        "command": "birdybeep hook cursor",
-        "timeout": 30
-      }
-    ],
-    "afterAgentResponse": [
       {
         "command": "birdybeep hook cursor",
         "timeout": 30

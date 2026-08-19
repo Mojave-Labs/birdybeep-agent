@@ -19,7 +19,7 @@ export {
   isCurrentCopilotHooks,
   resolveCopilotLauncher,
 } from "./install";
-export { CopilotMappingError, normalizeCopilotEvent } from "./normalize";
+export { CopilotMappingError, isCopilotHookPayload, normalizeCopilotEvent } from "./normalize";
 export {
   BIRDYBEEP_HOOKS_FILE,
   copilotConfigDir,

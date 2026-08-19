@@ -1,0 +1,19 @@
+{
+  "conversation_id": "00000000-0000-4000-8000-000000000002",
+  "generation_id": "00000000-0000-4000-8000-000000000003",
+  "model": "cursor-grok-4.5-high-fast",
+  "model_id": "grok-4.5",
+  "model_params": [
+    { "id": "effort", "value": "high" },
+    { "id": "fast", "value": "true" }
+  ],
+  "composer_mode": "agent",
+  "prompt": "PRIVATE USER PROMPT /home/user/secret",
+  "attachments": [],
+  "session_id": "00000000-0000-4000-8000-000000000002",
+  "hook_event_name": "beforeSubmitPrompt",
+  "cursor_version": "3.14.27",
+  "workspace_roots": ["/home/user/project"],
+  "user_email": "user@example.com",
+  "transcript_path": null
+}

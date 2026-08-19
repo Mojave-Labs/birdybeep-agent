@@ -10,7 +10,13 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { normalizeOpenCodeEvent, OpenCodeMappingError } from "./normalize";
+import {
+  isOpenCodeEventPayload,
+  normalizeOpenCodeEvent,
+  OPENCODE_EVENT_TYPES,
+  OpenCodeMappingError,
+} from "./normalize";
+import { FORWARDED_BUS_EVENTS } from "./plugin";
 
 const OPTS = { now: () => "2026-06-14T00:00:00.000Z", generateId: () => "evt_test_1" } as const;
 const CWD = "/Users/alice/opencode-project";
@@ -244,5 +250,57 @@ describe("no session_name from OpenCode (991)", () => {
       const ev = await normalizeOpenCodeEvent(payload, OPTS);
       expect(ev.metadata?.["session_name"]).toBeUndefined();
     }
+  });
+});
+
+/**
+ * birdybeep-agent-gcgp.14 — an unmappable payload at `birdybeep hook opencode` returned
+ * `skipped` at exit 0 with no output, so a fire from something other than the BirdyBeep plugin
+ * vanished. Nothing here is a harness-defined name: OpenCode writes no hook command, so this
+ * command is invoked only by `plugin.ts`, and the recognized set is its forward list plus the
+ * names older installed plugins forwarded.
+ */
+describe("isOpenCodeEventPayload — foreign payloads are recognized as foreign (gcgp.14)", () => {
+  it("accepts every real envelope this adapter maps", () => {
+    for (const { name, payload } of CASES) {
+      expect(isOpenCodeEventPayload(payload), name).toBe(true);
+    }
+  });
+
+  it("covers everything the shipped plugin forwards — a gap would error on every fire", () => {
+    for (const event of FORWARDED_BUS_EVENTS) expect(OPENCODE_EVENT_TYPES).toContain(event);
+    expect(OPENCODE_EVENT_TYPES).toContain("tool.execute.before"); // the named tool hooks
+    expect(OPENCODE_EVENT_TYPES).toContain("tool.execute.after");
+  });
+
+  it("accepts what an OLDER installed plugin still forwards", () => {
+    // A user can be running a plugin from a previous release; a real event from it stays a
+    // quiet skip rather than becoming a per-fire error.
+    expect(isOpenCodeEventPayload({ type: "permission.replied", properties: {} })).toBe(true);
+    expect(isOpenCodeEventPayload({ type: "permission.updated", properties: {} })).toBe(true);
+  });
+
+  it("rejects the real payloads of every OTHER harness", () => {
+    expect(
+      isOpenCodeEventPayload({
+        hook_event_name: "sessionStart",
+        cursor_version: "3.14.27",
+        workspace_roots: [CWD],
+      }),
+    ).toBe(false);
+    expect(isOpenCodeEventPayload({ hook_event_name: "SessionStart", session_id: SID })).toBe(
+      false,
+    );
+    expect(isOpenCodeEventPayload({ type: "agent-turn-complete", "thread-id": "t" })).toBe(false);
+    expect(isOpenCodeEventPayload({ sessionId: SID, timestamp: 1, cwd: CWD })).toBe(false);
+  });
+
+  it("rejects a non-object, and an OpenCode bus event the plugin never forwards", () => {
+    for (const value of [null, undefined, 7, "session.idle", [], {}]) {
+      expect(isOpenCodeEventPayload(value)).toBe(false);
+    }
+    // message.part.updated is real OpenCode traffic, but the plugin filters it out before the
+    // hook — so seeing one here means something else built this envelope.
+    expect(isOpenCodeEventPayload({ type: "message.part.updated", properties: {} })).toBe(false);
   });
 });

@@ -23,6 +23,7 @@ import {
   installedBirdyBeepCommands,
   isBirdyBeepEntry,
   resolveCursorHookCommand,
+  RETIRED_HOOK_EVENTS,
 } from "./install";
 import { cursorHooksPath } from "./paths";
 import { uninstallCursor } from "./uninstall";
@@ -277,6 +278,87 @@ describe("hook command resolution (gcgp.9 — the exit-127 fix)", () => {
     // Under vitest, argv[1] is the test runner — resolution must NOT bake that in.
     expect(resolveCursorHookCommand()).toBe(BIRDYBEEP_HOOK_COMMAND);
     expect(BIRDYBEEP_HOOK_COMMAND).toBe("birdybeep hook cursor");
+  });
+});
+
+/**
+ * birdybeep-agent-gcgp.17 — `beforeSubmitPrompt` and `afterAgentResponse` shipped REGISTERED
+ * with no §10.1 mapping, so every fire spawned a hook process that normalized to `skipped`.
+ * De-registering them is only half the fix: the waste is already in users' hooks.json, so
+ * install has to take it back out.
+ */
+describe("retired hook events (gcgp.17)", () => {
+  it("no longer registers the two always-skipping events", () => {
+    expect(BIRDYBEEP_HOOK_EVENTS).not.toContain("beforeSubmitPrompt");
+    expect(BIRDYBEEP_HOOK_EVENTS).not.toContain("afterAgentResponse");
+    expect(RETIRED_HOOK_EVENTS).toEqual(["beforeSubmitPrompt", "afterAgentResponse"]);
+    // …and keeps the one that now maps to a failure event.
+    expect(BIRDYBEEP_HOOK_EVENTS).toContain("postToolUseFailure");
+  });
+
+  it("REWRITES an existing install: our retired entries are removed, the steps pruned", async () => {
+    sandbox = createSandbox();
+    const hooks = cursorHooksPath(sandbox.home);
+    // Exactly what an earlier release wrote.
+    seedHooks(hooks, {
+      version: 1,
+      hooks: Object.fromEntries(
+        [...BIRDYBEEP_HOOK_EVENTS, ...RETIRED_HOOK_EVENTS].map((event) => [
+          event,
+          [{ command: BIRDYBEEP_HOOK_COMMAND, timeout: 30 }],
+        ]),
+      ),
+    });
+
+    const r = await installCursor({ hookCommand: BIRDYBEEP_HOOK_COMMAND }, sandbox.home);
+    expect(r.changed).toBe(true);
+    const config = readHooks(hooks);
+    for (const event of RETIRED_HOOK_EVENTS) {
+      expect(entriesFor(config, event)).toEqual([]);
+      expect(Object.keys(config["hooks"] as object)).not.toContain(event);
+    }
+    for (const event of BIRDYBEEP_HOOK_EVENTS) {
+      expect(entriesFor(config, event).filter(isBirdyBeepEntry)).toHaveLength(1);
+    }
+  });
+
+  it("leaves a USER's own hook on a retired step exactly where it was", async () => {
+    sandbox = createSandbox();
+    const hooks = cursorHooksPath(sandbox.home);
+    seedHooks(hooks, {
+      version: 1,
+      hooks: {
+        beforeSubmitPrompt: [
+          { command: "my-own-prompt-hook", timeout: 10 },
+          { command: BIRDYBEEP_HOOK_COMMAND, timeout: 30 },
+        ],
+      },
+    });
+
+    await installCursor({ hookCommand: BIRDYBEEP_HOOK_COMMAND }, sandbox.home);
+    expect(entriesFor(readHooks(hooks), "beforeSubmitPrompt")).toEqual([
+      { command: "my-own-prompt-hook", timeout: 10 },
+    ]);
+  });
+
+  it("is still idempotent — a second install over the rewritten config changes nothing", async () => {
+    sandbox = createSandbox();
+    const hooks = cursorHooksPath(sandbox.home);
+    seedHooks(hooks, {
+      version: 1,
+      hooks: { beforeSubmitPrompt: [{ command: BIRDYBEEP_HOOK_COMMAND, timeout: 30 }] },
+    });
+    await installCursor({ hookCommand: BIRDYBEEP_HOOK_COMMAND }, sandbox.home);
+    const after = readFileSync(hooks, "utf8");
+
+    const second = await installCursor({ hookCommand: BIRDYBEEP_HOOK_COMMAND }, sandbox.home);
+    expect(second.changed).toBe(false);
+    expect(readFileSync(hooks, "utf8")).toBe(after);
+  });
+
+  it("no net increase in registrations: 12 events became 10, all of them mapped", () => {
+    expect(BIRDYBEEP_HOOK_EVENTS).toHaveLength(10);
+    expect(BIRDYBEEP_HOOK_EVENTS.length + RETIRED_HOOK_EVENTS.length).toBe(12); // the old set
   });
 });
 

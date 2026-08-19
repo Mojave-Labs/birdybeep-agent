@@ -8,9 +8,12 @@
  * persisted (the adapters' normalizers enforce that).
  *
  * Exit code is 0 for every normal outcome, including deliberate skips, so a hook fire never
- * errors the harness. The one exception (birdybeep-agent-gcgp.1) is a payload no adapter
- * recognizes: that sent nothing, so it exits non-zero with a stderr line instead of
- * disappearing — a non-blocking error every harness surfaces in its log.
+ * errors the harness. The exceptions all share one shape — the hook ran, sent NOTHING, and
+ * had nothing to say about it, which is precisely what hid the Cursor-bridge drop for months.
+ * Each now writes a stderr line and exits non-zero (a non-blocking error every harness
+ * surfaces in its log): a payload no adapter recognizes (birdybeep-agent-gcgp.1), and an
+ * absent, empty, unparseable or timed-out payload (birdybeep-agent-gcgp.14). A payload we DO
+ * recognize but deliberately don't map stays a quiet exit 0.
  *
  * Built as a factory so the sender + stdin reader are injectable: tests drive the full
  * dispatch → command → pipeline → stub-sink path hermetically, exactly like the adapter E2Es.
@@ -28,14 +31,15 @@ import {
   type Sender,
 } from "@birdybeep/agent-core";
 import { isClaudeCodeHookPayload, runClaudeHook } from "@birdybeep/claude-code";
-import { runCodexHook } from "@birdybeep/codex";
+import { isCodexHookPayload, runCodexHook } from "@birdybeep/codex";
 import {
   type CopilotHookEventName,
   isCopilotHookEventName,
+  isCopilotHookPayload,
   runCopilotHook,
 } from "@birdybeep/copilot";
 import { isCursorHookEventName, isCursorHookPayload, runCursorHook } from "@birdybeep/cursor";
-import { runOpenCodeHook } from "@birdybeep/opencode";
+import { isOpenCodeEventPayload, runOpenCodeHook } from "@birdybeep/opencode";
 
 import { resolveApiUrl } from "../config";
 import { type Command, EXIT } from "../framework";
@@ -115,13 +119,27 @@ export function resolveHookHarness(harness: HarnessName, payload: unknown): Harn
 /**
  * Is this payload one the handling harness actually fires? A payload we recognize but don't
  * map is a deliberate skip (quiet); one we don't recognize at all means something else is
- * driving this hook, and dropping it silently is the bug gcgp.1 was. Only the two harnesses
- * that share a config surface answer this — the rest keep their existing quiet-skip behavior.
+ * driving this hook, and dropping it silently is the bug gcgp.1 was.
+ *
+ * All five harnesses answer now (birdybeep-agent-gcgp.14). Codex matters most — its `notify`
+ * slot is a single-valued scalar that third-party tools also claim, so a chained tool handing
+ * us an unfamiliar shape is a live possibility. Copilot matters differently: its payloads
+ * carry no event discriminator (the event name is an argv argument), so a foreign payload did
+ * not even skip — it normalized into a FABRICATED Copilot event and was sent.
  */
 function recognizesPayload(harness: HarnessName, payload: unknown): boolean {
-  if (harness === "claude") return isClaudeCodeHookPayload(payload);
-  if (harness === "cursor") return isCursorHookEventName(asRecord(payload)["hook_event_name"]);
-  return true;
+  switch (harness) {
+    case "claude":
+      return isClaudeCodeHookPayload(payload);
+    case "cursor":
+      return isCursorHookEventName(asRecord(payload)["hook_event_name"]);
+    case "codex":
+      return isCodexHookPayload(payload);
+    case "opencode":
+      return isOpenCodeEventPayload(payload);
+    case "copilot":
+      return isCopilotHookPayload(payload);
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -131,14 +149,21 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 /**
- * The payload's `hook_event_name` for a diagnostic line. Length-capped and JSON-quoted: hook
- * event names are safe identifiers, but this is the one place hook output echoes the payload,
- * so it never grows unbounded and never reaches past that single field (no titles, no bodies).
+ * The payload's discriminating field for a diagnostic line — `hook_event_name` (Claude Code,
+ * Codex hooks, Cursor), else `type` (Codex notify, OpenCode). Length-capped and JSON-quoted:
+ * these are safe identifiers, but this is the one place hook output echoes the payload, so it
+ * never grows unbounded and never reaches past that single field (no titles, no bodies, no
+ * prompts). Copilot payloads have neither field — the caller gets "the payload".
  */
-function describeEventName(payload: unknown): string {
-  const name = asRecord(payload)["hook_event_name"];
-  if (typeof name !== "string") return "(absent)";
-  return JSON.stringify(name.length > 64 ? `${name.slice(0, 63)}…` : name);
+function describeDiscriminator(payload: unknown): string {
+  const record = asRecord(payload);
+  for (const field of ["hook_event_name", "type"] as const) {
+    const value = record[field];
+    if (typeof value !== "string") continue;
+    const capped = value.length > 64 ? `${value.slice(0, 63)}…` : value;
+    return `${field} ${JSON.stringify(capped)}`;
+  }
+  return "the payload";
 }
 
 /** Run one hook fire: select the harness runner and execute via the shared pipeline. */
@@ -310,8 +335,8 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       // DETACHED reading the payload on stdin (see {@link detachCodexNotifyWorker}) and return
       // immediately, so it outlives the reap. Scoped to notify only — lifecycle hooks arrive on
       // stdin. If the worker can't be launched we fall through and send in-line (best-effort).
-      // An empty trailing arg is not a real notify payload — fall through so it's `skipped`
-      // in-line rather than spawning a worker just to read an empty file.
+      // An empty trailing arg is not a real notify payload — fall through rather than spawning
+      // a worker just to read an empty file; the empty-payload diagnostic below reports it.
       const notifyPayload = ctx.args[1];
       if (
         harness === "codex" &&
@@ -323,16 +348,30 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
         return EXIT.OK; // the detached worker delivers; the notify process must not block codex
       }
 
-      // Bounded read: the trailing argv payload resolves instantly; a hung/never-closing
-      // stdin falls back to "" after the timeout so the hook ALWAYS returns fast (§9.3).
       // Copilot's second arg is the event name, not a JSON payload. Every Copilot payload must
       // therefore come from stdin; Codex retains its notify argv-payload behavior.
       const copilotEventName =
         harness === "copilot" && isCopilotHookEventName(ctx.args[1]) ? ctx.args[1] : undefined;
-      const raw = await withTimeout(
+      // birdybeep-agent-gcgp.14: without a usable event name the Copilot adapter cannot map
+      // anything, and this returned `skipped` at exit 0 — a hook that fires, does nothing, and
+      // says nothing. The installed config always passes one, so reaching here means the hook
+      // entry was hand-edited or something else is invoking the command.
+      if (harness === "copilot" && copilotEventName === undefined) {
+        ctx.io.errline(
+          `birdybeep hook copilot: second argument must be a Copilot hook event name, got ` +
+            `${JSON.stringify(ctx.args[1] ?? "(none)")} — nothing was sent.`,
+        );
+        return EXIT.USAGE;
+      }
+
+      // Bounded read: the trailing argv payload resolves instantly; a hung/never-closing
+      // stdin falls back after the timeout so the hook ALWAYS returns fast (§9.3). The
+      // fallback is `null` rather than "" so a timeout stays distinguishable from a harness
+      // that closed stdin without writing — both are drops, and each names itself below.
+      const read = await withTimeout<string | null>(
         readHookPayload(ctx.args, readStdin, harness === "copilot"),
         stdinTimeoutMs,
-        "",
+        null,
       );
 
       // If we ARE the detached notify worker (spawned by detachCodexNotifyWorker), the payload
@@ -353,19 +392,58 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
         }
       }
 
+      // birdybeep-agent-gcgp.14: every branch below produced `skipped` at exit 0 with NO
+      // output — the same invisible-drop shape as gcgp.1, and the one the 3s stdin cap turns
+      // into a silent data loss on a loaded machine. Each now names itself on stderr and exits
+      // non-zero. The payload itself is never echoed (it holds prompts, commands and tool
+      // output); an unparseable one is described by BYTE LENGTH only.
+      const drop = (reason: string, detail: string): number => {
+        ctx.io.result({ harness, outcome: "skipped", reason });
+        ctx.io.errline(`birdybeep hook ${harness}: ${detail} — nothing was sent.`);
+        return EXIT.ERROR;
+      };
+      if (read === null) {
+        return drop(
+          "stdin-timeout",
+          `timed out after ${stdinTimeoutMs}ms waiting for the payload on stdin`,
+        );
+      }
+      const raw = read;
+      if (raw.trim().length === 0) {
+        return drop("empty-payload", "the payload was empty");
+      }
       let payload: unknown;
       try {
         payload = JSON.parse(raw);
       } catch {
-        // Garbled/empty payload → skip silently + fast. Never error the harness.
-        ctx.io.result({ harness, outcome: "skipped" });
-        return EXIT.OK;
+        return drop("invalid-json", `the ${raw.length}-byte payload is not valid JSON`);
       }
 
-      const sender = makeSender(resolveApiUrl());
       // A foreign payload is handled by the harness it actually came from (see
       // resolveHookHarness) and reported as such, with `routedFrom` naming the hook that ran.
       const handler = resolveHookHarness(harness, payload);
+      const routedFrom = handler !== harness ? { routedFrom: harness } : {};
+      // birdybeep-agent-gcgp.1 + gcgp.14: a payload the handling adapter does not recognize
+      // means something else is driving this hook. Checked BEFORE the pipeline runs, because
+      // for Copilot "unmappable" is not the failure mode — its payloads carry no event
+      // discriminator, so a foreign one normalizes cleanly and a fabricated event goes out.
+      // A payload we DO recognize but don't map keeps its quiet exit 0 below.
+      if (!recognizesPayload(handler, payload)) {
+        ctx.io.result({
+          harness: handler,
+          ...routedFrom,
+          outcome: "skipped",
+          reason: "foreign-payload",
+        });
+        const article = handler === "opencode" ? "an" : "a"; // the only vowel-initial harness id
+        ctx.io.errline(
+          `birdybeep hook ${harness}: ${describeDiscriminator(payload)} is not ${article} ` +
+            `${handler} hook event — nothing was sent. Check which tool is running this hook.`,
+        );
+        return EXIT.ERROR;
+      }
+
+      const sender = makeSender(resolveApiUrl());
       const result = await runHookCommand(harness, payload, sender, copilotEventName);
       // Hot path: human mode is silent; --json emits the outcome for scripts/debugging.
       // Surface the backend's 202 decision (notified/suppressed/deduped) + HTTP status when
@@ -374,7 +452,7 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       // `doctor` and delivery debugging need to see.
       ctx.io.result({
         harness: handler,
-        ...(handler !== harness ? { routedFrom: harness } : {}),
+        ...routedFrom,
         ...(copilotEventName !== undefined ? { event: copilotEventName } : {}),
         outcome: result.outcome,
         eventType: result.eventType,
@@ -393,19 +471,8 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
             "Run `birdybeep pair` (or `birdybeep doctor` to see how many events this has cost).",
         );
       }
-      // birdybeep-agent-gcgp.1: a payload no adapter recognizes sent NOTHING, and a silent
-      // exit 0 is what hid the Cursor-bridge drop for months. Say so on stderr (harnesses log
-      // it — Cursor's hook log has a STDERR section, Claude Code shows it to the user) and
-      // exit non-zero so it registers as a failure. Deliberate skips — a recognized event we
-      // don't map, an empty/garbled payload — stay quiet and exit 0 as before, so normal
-      // operation never gets noisier.
-      if (result.outcome === "skipped" && !recognizesPayload(handler, payload)) {
-        ctx.io.errline(
-          `birdybeep hook ${harness}: hook_event_name ${describeEventName(payload)} is not a ` +
-            `${handler} hook event — nothing was sent. Check which tool is running this hook.`,
-        );
-        return EXIT.ERROR;
-      }
+      // A recognized event we deliberately don't map stays quiet at exit 0, so normal
+      // operation never gets noisier (gcgp.12: the deferred-but-real Claude Code events).
       return EXIT.OK; // delivered/queued/deduped/skipped all return fast + non-erroring
     },
   };

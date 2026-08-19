@@ -23,13 +23,14 @@ per event it can consume:
 | `beforeMCPExecution`   | an MCP tool call is waiting on your approval                            |
 | `preToolUse`           | a tool started                                                          |
 | `postToolUse`          | a tool finished                                                         |
+| `postToolUseFailure`   | a tool failed (not when you cancelled it yourself)                      |
 | `stop`                 | the agent finished its turn (IDE)                                       |
 | `subagentStart`        | a subagent started                                                      |
 | `subagentStop`         | a subagent finished                                                     |
 
-Three further events — `beforeSubmitPrompt`, `postToolUseFailure`, and `afterAgentResponse` — are
-registered too but have no BirdyBeep event to map to today, so the hook simply returns `skipped`.
-They are registered anyway so a future mapping needs no re-install.
+Cursor defines further hook events that BirdyBeep does not register, because they produce no Beep:
+running a hook for one spends a process per fire for nothing. Installing also removes BirdyBeep's own
+entries for `beforeSubmitPrompt` and `afterAgentResponse`, which earlier versions registered.
 
 Every entry is identical in shape:
 

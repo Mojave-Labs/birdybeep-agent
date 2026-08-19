@@ -19,10 +19,18 @@
  *   beforeMCPExecution                    → approval_required (MCP tool permission gate)
  *   preToolUse                            → tool_started
  *   postToolUse                           → tool_finished
+ *   postToolUseFailure {is_interrupt:false} → agent_failed (the failure beep — see below)
+ *   postToolUseFailure {is_interrupt:true}  → skipped (the user cancelled; not a failure)
  *   subagentStart                         → subagent_started
  *   subagentStop                          → subagent_completed
- *   anything else (beforeSubmitPrompt / postToolUseFailure / afterAgentResponse / unknown)
+ *   anything else (beforeSubmitPrompt / afterAgentResponse / unknown)
  *                                         → throw CursorMappingError → the hook returns "skipped"
+ *
+ * CRITICAL PRIVACY, TOOL FAILURE (gcgp.17): the `postToolUseFailure` payload carries
+ * `error_message` (the tool's raw error text — file paths, command output, credentials in a
+ * failing curl) and `tool_input` (the full arguments). Neither is read here. Only `tool_name`,
+ * `failure_type` and `duration_ms` — the same class of safe identifier `postToolUse` already
+ * carries — reach the event.
  *
  * CRITICAL PRIVACY, MCP (gcgp.9): the `beforeMCPExecution` payload carries `tool_input` (the
  * full tool arguments) and `command` / `mcp_server_url` (the server's launch line, which can
@@ -185,6 +193,37 @@ function mapCursorEvent(payload: Record<string, unknown>, name: string): MappedE
         metadata: { tool },
       };
     }
+    case "postToolUseFailure": {
+      // birdybeep-agent-gcgp.17: registered since the adapter shipped, mapped to nothing —
+      // every fire spawned a hook process and normalized to `skipped`. It is the only
+      // failure signal Cursor gives a hook, and `failed` is one of the six notification
+      // categories, so it earns a beep.
+      //
+      // `is_interrupt` means the user pressed stop: the tool was aborted, not broken, and the
+      // person who would receive the beep is the person who just cancelled. Skipped, which is
+      // a quiet exit 0 (a recognized event we don't map), not an error.
+      if (payload["is_interrupt"] === true) {
+        throw new CursorMappingError("postToolUseFailure was a user interrupt, not a failure");
+      }
+      // Status stays `running`, not `failed`: one tool erroring does not end the session, and
+      // the agent almost always retries. The event type is what makes this beep; the status is
+      // what the mobile session list renders, and marking the whole session failed there would
+      // be wrong until it actually is (sessionEnd carries that).
+      const tool = str(payload["tool_name"]);
+      return {
+        eventType: "agent_failed",
+        status: "running",
+        title: "Cursor tool failed",
+        body: tool ? `${tool} failed` : "A tool failed",
+        // error_message and tool_input are content and are NEVER copied out.
+        metadata: {
+          tool,
+          failure_type: str(payload["failure_type"]),
+          duration_ms:
+            typeof payload["duration_ms"] === "number" ? payload["duration_ms"] : undefined,
+        },
+      };
+    }
     case "subagentStart":
       return {
         eventType: "subagent_started",
@@ -202,8 +241,8 @@ function mapCursorEvent(payload: Record<string, unknown>, name: string): MappedE
         metadata: {},
       };
     default:
-      // beforeSubmitPrompt / postToolUseFailure / afterAgentResponse / anything unknown: no
-      // §10.1 target → skip (the hook returns "skipped"; never a malformed event).
+      // beforeSubmitPrompt / afterAgentResponse / anything unknown: no §10.1 target → skip
+      // (the hook returns "skipped"; never a malformed event).
       throw new CursorMappingError(`unsupported Cursor hook event: ${JSON.stringify(name)}`);
   }
 }

@@ -3,8 +3,10 @@
  * real captured payloads for each harness run through the hook command's pipeline to the
  * stub sink with the correct normalized event + hashed paths; offline → the event lands in
  * the temp-HOME queue and the command returns fast; a later invocation drains + delivers;
- * the full dispatch (hook <harness> [argv-payload | stdin]) routes correctly and always
- * exits 0; unknown harness → USAGE; garbled payload → skipped.
+ * the full dispatch (hook <harness> [argv-payload | stdin]) routes correctly and exits 0 for
+ * every normal outcome; unknown harness → USAGE; and every way a fire can send NOTHING —
+ * absent/empty/unparseable/timed-out payload, or a payload the handling adapter doesn't
+ * recognize — says so on stderr and exits non-zero (gcgp.1 + gcgp.14).
  */
 import { randomUUID } from "node:crypto";
 
@@ -391,39 +393,142 @@ describe("hook command dispatch (full CLI path)", () => {
     expect(out.text()).toContain("expected one of claude|codex|opencode|cursor|copilot");
   });
 
-  it("returns fast (skipped) when stdin hangs — never blocks the harness", async () => {
+  // UPDATED for birdybeep-agent-gcgp.14. This test previously asserted `EXIT.OK`: a stdin
+  // timeout was a silent exit 0, which is the failure mode that hid the Cursor-bridge drop —
+  // and the 3s cap fires exactly when a loaded machine is slow to flush the pipe, so the event
+  // is REAL and LOST. The invariant this test exists to protect is the FAST RETURN, and that
+  // is unchanged and still asserted; only the silence is gone.
+  it("returns fast when stdin hangs — never blocks the harness — and says the read timed out", async () => {
     const cmd = createHookCommand({
       createSender: () => createSender({ baseUrl: "http://127.0.0.1:1" }),
       readStdin: () => new Promise<string>(() => undefined), // hung stdin: never resolves
       stdinTimeoutMs: 50,
     });
     const out = capture();
+    const err = capture();
     const start = Date.now();
     const code = await runCli(["hook", "claude", "--json"], {
       commands: [cmd],
       stdout: out.writer,
-      stderr: out.writer,
+      stderr: err.writer,
       ensureConfig: false,
     });
-    expect(code).toBe(EXIT.OK);
     expect(Date.now() - start).toBeLessThan(2000); // bounded by the 50ms stdin timeout
-    expect(JSON.parse(out.text())).toMatchObject({ outcome: "skipped" });
+    expect(code).toBe(EXIT.ERROR); // was EXIT.OK — a timed-out read dropped the event in silence
+    expect(JSON.parse(out.text())).toMatchObject({ outcome: "skipped", reason: "stdin-timeout" });
+    expect(err.text()).toContain("timed out after 50ms");
+    expect(err.text()).toContain("nothing was sent");
   });
 
-  it("garbled payload → skipped + exit 0 (never errors the harness)", async () => {
+  // UPDATED for birdybeep-agent-gcgp.14. Previously "garbled payload → skipped + exit 0 (never
+  // errors the harness)". The old title conflated two things: a hook must never THROW into the
+  // harness (still true — this returns an exit code, it does not crash), and it must never
+  // report a failure (false: a payload we cannot parse is a dropped event, and gcgp.1 already
+  // settled that a drop exits non-zero with a stderr line the harness logs).
+  it("unparseable payload → a stderr line naming the size, and a non-zero exit", async () => {
     const cmd = createHookCommand({
       createSender: () => createSender({ baseUrl: "http://127.0.0.1:1" }),
       readStdin: () => Promise.resolve("not json {{"),
     });
     const out = capture();
+    const err = capture();
     const code = await runCli(["hook", "claude", "--json"], {
       commands: [cmd],
       stdout: out.writer,
-      stderr: out.writer,
+      stderr: err.writer,
       ensureConfig: false,
     });
-    expect(code).toBe(EXIT.OK);
-    expect(JSON.parse(out.text())).toMatchObject({ outcome: "skipped" });
+    expect(code).toBe(EXIT.ERROR); // was EXIT.OK
+    expect(JSON.parse(out.text())).toMatchObject({ outcome: "skipped", reason: "invalid-json" });
+    expect(err.text()).toContain("the 11-byte payload is not valid JSON");
+    // The payload is never echoed — it holds prompts, commands and tool output.
+    expect(err.text()).not.toContain("not json {{");
+  });
+});
+
+/**
+ * birdybeep-agent-gcgp.14 (1) — an empty, absent, unparseable or timed-out payload was
+ * `skipped` at exit 0 with NO output whatsoever: a hook that fires, does nothing, and says
+ * nothing. Every branch now names itself, and none of them echoes the payload.
+ */
+describe("a fire that sends nothing is never silent (gcgp.14)", () => {
+  async function fireRaw(
+    argv: string[],
+    stdin: string,
+  ): Promise<{ code: number; text: string; err: string }> {
+    const cmd = createHookCommand({
+      createSender: () => createSender({ baseUrl: "http://127.0.0.1:1" }),
+      readStdin: () => Promise.resolve(stdin),
+    });
+    const out = capture();
+    const err = capture();
+    const code = await runCli([...argv, "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: err.writer,
+      ensureConfig: false,
+    });
+    return { code, text: out.text(), err: err.text() };
+  }
+
+  for (const harness of HOOK_HARNESSES) {
+    // Copilot takes its event name from argv; every harness reads the payload from stdin.
+    const argv = harness === "copilot" ? ["hook", harness, "sessionStart"] : ["hook", harness];
+
+    it(`${harness}: an empty payload is reported, not dropped in silence`, async () => {
+      const { code, text, err } = await fireRaw(argv, "");
+      expect(code).toBe(EXIT.ERROR);
+      expect(JSON.parse(text)).toMatchObject({ outcome: "skipped", reason: "empty-payload" });
+      expect(err).toContain(`birdybeep hook ${harness}: the payload was empty`);
+    });
+
+    it(`${harness}: a whitespace-only payload is the same drop`, async () => {
+      const { code, text } = await fireRaw(argv, "\n  \n");
+      expect(code).toBe(EXIT.ERROR);
+      expect(JSON.parse(text)).toMatchObject({ reason: "empty-payload" });
+    });
+  }
+
+  it("a JSON payload that is not an object is a drop, not a fabricated event", async () => {
+    const { code, err } = await fireRaw(["hook", "claude"], "null");
+    expect(code).toBe(EXIT.ERROR);
+    expect(err).toContain("is not a claude hook event");
+  });
+
+  it("codex notify with an EMPTY argv payload is reported (it never reaches a worker)", async () => {
+    let detachCalls = 0;
+    const cmd = createHookCommand({
+      createSender: () => createSender({ baseUrl: "http://127.0.0.1:1" }),
+      readStdin: () => Promise.resolve(""),
+      detachCodexNotify: () => {
+        detachCalls += 1;
+        return true;
+      },
+    });
+    const out = capture();
+    const err = capture();
+    const code = await runCli(["hook", "codex", "", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: err.writer,
+      ensureConfig: false,
+    });
+    expect(detachCalls).toBe(0); // an empty arg is not a notify payload — no worker spawned
+    expect(code).toBe(EXIT.ERROR);
+    expect(JSON.parse(out.text())).toMatchObject({ reason: "empty-payload" });
+  });
+
+  it("copilot without a usable event name is a USAGE error, not a silent skip", async () => {
+    const { code, err } = await fireRaw(["hook", "copilot", "bogusEvent"], "{}");
+    expect(code).toBe(EXIT.USAGE);
+    expect(err).toContain("must be a Copilot hook event name");
+    expect(err).toContain("bogusEvent");
+  });
+
+  it("copilot with NO second argument is a USAGE error too", async () => {
+    const { code, err } = await fireRaw(["hook", "copilot"], "{}");
+    expect(code).toBe(EXIT.USAGE);
+    expect(err).toContain("(none)");
   });
 });
 
@@ -557,6 +662,223 @@ describe("Cursor's Claude bridge (gcgp.1): `hook claude` fed a Cursor payload", 
     expect(code).toBe(EXIT.ERROR);
     expect(err).toContain("SubagentStart");
     expect(sink!.received()).toHaveLength(0);
+  });
+});
+
+/**
+ * birdybeep-agent-gcgp.14 (2) — before this, `recognizesPayload` answered only for claude and
+ * cursor: codex, opencode and copilot returned `true` unconditionally, so a foreign payload at
+ * those hooks skipped quietly at exit 0. Copilot was worse than quiet — its payloads carry no
+ * event discriminator, so a foreign one normalized into a FABRICATED Copilot event and was
+ * SENT (reproduced: a real Cursor sessionStart piped into `hook copilot sessionStart`
+ * delivered a `session_started`).
+ *
+ * The intruder below is the real captured Cursor 3.14.27 payload — the one payload we KNOW
+ * travels to the wrong hook command, because Cursor's own Claude bridge sends it there.
+ */
+describe("every harness recognizes a foreign payload (gcgp.14)", () => {
+  const FOREIGN = BRIDGE_SESSION_START; // a real Cursor payload, captured from Cursor's hook log
+
+  async function fireForeign(
+    argv: string[],
+    payload: unknown,
+  ): Promise<{ code: number; text: string; err: string }> {
+    sink = await StubEventSink.start();
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const sinkUrl = sink.url;
+    const cmd = createHookCommand({
+      createSender: () => createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY }),
+      readStdin: () => Promise.resolve(JSON.stringify(payload)),
+    });
+    const out = capture();
+    const err = capture();
+    const code = await runCli([...argv, "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: err.writer,
+      ensureConfig: false,
+    });
+    return { code, text: out.text(), err: err.text() };
+  }
+
+  it("codex: a foreign payload fails loudly and sends nothing", async () => {
+    const { code, err } = await fireForeign(["hook", "codex"], FOREIGN);
+    expect(code).toBe(EXIT.ERROR);
+    expect(err).toContain("is not a codex hook event");
+    expect(err).toContain("sessionStart");
+    expect(sink!.received()).toHaveLength(0);
+  });
+
+  it("codex: a third-party program chained into the notify slot fails loudly", async () => {
+    // The live risk: `notify` is a single-valued scalar other tools claim, and a chain that
+    // forwards to `birdybeep hook codex` can hand us any shape at all.
+    const { code, err } = await fireForeign(["hook", "codex"], {
+      type: "task.finished",
+      payload: { ok: true },
+    });
+    expect(code).toBe(EXIT.ERROR);
+    expect(err).toContain('type "task.finished"');
+    expect(sink!.received()).toHaveLength(0);
+  });
+
+  it("opencode: a foreign payload fails loudly and sends nothing", async () => {
+    const { code, err } = await fireForeign(["hook", "opencode"], FOREIGN);
+    expect(code).toBe(EXIT.ERROR);
+    expect(err).toContain("is not an opencode hook event");
+    expect(sink!.received()).toHaveLength(0);
+  });
+
+  it("copilot: a foreign payload is REFUSED instead of becoming a fabricated event", async () => {
+    const { code, text, err } = await fireForeign(["hook", "copilot", "sessionStart"], FOREIGN);
+    expect(code).toBe(EXIT.ERROR);
+    expect(err).toContain("is not a copilot hook event");
+    // The regression: this used to deliver a Copilot session_started built from a Cursor payload.
+    expect(sink!.received()).toHaveLength(0);
+    expect(JSON.parse(text)).toMatchObject({
+      harness: "copilot",
+      outcome: "skipped",
+      reason: "foreign-payload",
+    });
+  });
+
+  // The recognizers must not become a wall: every real payload still delivers at its own hook.
+  // One sink for all five (distinct harnesses → distinct dedup identities → five deliveries).
+  it("every harness's own real payload still delivers through the same gate", async () => {
+    sink = await StubEventSink.start();
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const sinkUrl = sink.url;
+
+    for (const { harness, payload, eventType, copilotEventName } of PAYLOADS) {
+      const cmd = createHookCommand({
+        createSender: () => createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY }),
+        readStdin: () => Promise.resolve(JSON.stringify(payload)),
+      });
+      const argv =
+        copilotEventName !== undefined ? ["hook", harness, copilotEventName] : ["hook", harness];
+      const out = capture();
+      const err = capture();
+      const code = await runCli([...argv, "--json"], {
+        commands: [cmd],
+        stdout: out.writer,
+        stderr: err.writer,
+        ensureConfig: false,
+      });
+      expect(code, harness).toBe(EXIT.OK);
+      expect(JSON.parse(out.text()), harness).toMatchObject({ outcome: "delivered", eventType });
+      expect(err.text(), harness).toBe("");
+    }
+    expect(sink.received()).toHaveLength(PAYLOADS.length);
+  });
+});
+
+/**
+ * birdybeep-agent-gcgp.17 — the Cursor tool-failure Beep, driven through the FULL CLI dispatch
+ * (argv → stdin → adapter → pipeline → sink). Payload is the canonical fixture
+ * `packages/cursor/src/__fixtures__/postToolUseFailure.json`, whose field set is Cursor's own
+ * `agent.v1.PostToolUseFailureRequestQuery` schema.
+ */
+describe("Cursor postToolUseFailure through the CLI (gcgp.17)", () => {
+  const FAILURE = {
+    conversation_id: "00000000-0000-4000-8000-000000000002",
+    generation_id: "00000000-0000-4000-8000-000000000003",
+    session_id: "00000000-0000-4000-8000-000000000002",
+    hook_event_name: "postToolUseFailure",
+    cursor_version: "3.14.27",
+    workspace_roots: [RAW_CWD],
+    user_email: "leak@example.com",
+    transcript_path: "/Users/dev/.cursor/transcripts/x.jsonl",
+    tool_name: "Bash",
+    tool_input: '{"command":"psql postgres://user:sbp_TESTONLY_secret@db/app"}',
+    error_message: "FATAL: password authentication failed (/Users/dev/code/secret-project/.env)",
+    failure_type: "tool_error",
+    duration_ms: 1843,
+    is_interrupt: false,
+  };
+
+  async function fire(payload: unknown): Promise<{ code: number; text: string; err: string }> {
+    sink = await StubEventSink.start();
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const sinkUrl = sink.url;
+    const cmd = createHookCommand({
+      createSender: () => createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY }),
+      readStdin: () => Promise.resolve(JSON.stringify(payload)),
+    });
+    const out = capture();
+    const err = capture();
+    const code = await runCli(["hook", "cursor", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: err.writer,
+      ensureConfig: false,
+    });
+    return { code, text: out.text(), err: err.text() };
+  }
+
+  it("delivers agent_failed — the Beep a tool failure has never produced", async () => {
+    const { code, text, err } = await fire(FAILURE);
+    expect(code).toBe(EXIT.OK);
+    expect(JSON.parse(text)).toMatchObject({
+      harness: "cursor",
+      outcome: "delivered", // the regression: this used to be "skipped"
+      eventType: "agent_failed",
+    });
+    expect(err).toBe("");
+    expect(sink!.received()).toHaveLength(1);
+
+    const delivered = sink!.received()[0]!;
+    assertPathsHashed(delivered, [RAW_CWD, sandbox!.home, sandbox!.realHome]);
+    assertNoAbsolutePaths(delivered);
+    const all = JSON.stringify(delivered.body);
+    expect(all).not.toContain("sbp_TESTONLY_secret"); // a credential in the failing command
+    expect(all).not.toContain("password authentication failed");
+    expect(all).not.toContain("leak@example.com");
+  });
+
+  it("a user interrupt stays a quiet skip — exit 0, nothing sent, no noise", async () => {
+    const { code, text, err } = await fire({ ...FAILURE, is_interrupt: true });
+    expect(code).toBe(EXIT.OK);
+    expect(JSON.parse(text)).toMatchObject({ harness: "cursor", outcome: "skipped" });
+    expect(err).toBe("");
+    expect(sink!.received()).toHaveLength(0);
+  });
+
+  // De-registered by gcgp.17, but a config an earlier release patched still fires them: they
+  // are real Cursor events we simply don't map, so they stay a quiet exit 0.
+  it("the de-registered steps stay quiet if an old config still fires them", async () => {
+    sink = await StubEventSink.start();
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const sinkUrl = sink.url;
+
+    for (const name of ["beforeSubmitPrompt", "afterAgentResponse"]) {
+      const cmd = createHookCommand({
+        createSender: () => createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY }),
+        readStdin: () =>
+          Promise.resolve(
+            JSON.stringify({
+              hook_event_name: name,
+              session_id: "sess-cur",
+              cursor_version: "3.14.27",
+              workspace_roots: [RAW_CWD],
+            }),
+          ),
+      });
+      const out = capture();
+      const err = capture();
+      const code = await runCli(["hook", "cursor", "--json"], {
+        commands: [cmd],
+        stdout: out.writer,
+        stderr: err.writer,
+        ensureConfig: false,
+      });
+      expect(code, name).toBe(EXIT.OK);
+      expect(JSON.parse(out.text()), name).toMatchObject({ harness: "cursor", outcome: "skipped" });
+      expect(err.text(), name).toBe("");
+    }
+    expect(sink.received()).toHaveLength(0);
   });
 });
 

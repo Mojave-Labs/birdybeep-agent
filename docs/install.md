@@ -236,10 +236,9 @@ A managed hook entry looks like this:
 - **Change:** ensures the `"version": 1` scaffold Cursor requires (only if absent — an existing
   value is left alone) and appends a BirdyBeep-managed entry to each consumed hook event:
   `sessionStart`, `sessionEnd`, `beforeShellExecution`, `beforeMCPExecution`, `preToolUse`,
-  `postToolUse`, `stop`, `subagentStart`, `subagentStop`, plus `beforeSubmitPrompt`,
-  `postToolUseFailure`, and `afterAgentResponse` (registered for forward-compatibility; they have no
-  mapping today and the hook returns `skipped`). Each entry runs `birdybeep hook cursor`. Your own
-  hooks are preserved.
+  `postToolUse`, `postToolUseFailure`, `stop`, `subagentStart`, `subagentStop`. Each entry runs
+  `birdybeep hook cursor`. Your own hooks are preserved. Installing also removes BirdyBeep's own
+  entries for `beforeSubmitPrompt` and `afterAgentResponse`, which earlier versions registered.
 - **Status:** `installed`. Cursor reads `hooks.json` live — no restart, no trust step.
 
 ```json

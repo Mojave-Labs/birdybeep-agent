@@ -19,7 +19,12 @@ export {
   staleOpenCodeLauncherPaths,
   writeOpenCodeLauncher,
 } from "./install";
-export { normalizeOpenCodeEvent, OpenCodeMappingError } from "./normalize";
+export {
+  isOpenCodeEventPayload,
+  normalizeOpenCodeEvent,
+  OPENCODE_EVENT_TYPES,
+  OpenCodeMappingError,
+} from "./normalize";
 export {
   opencodeConfigDir,
   opencodeConfigFile,

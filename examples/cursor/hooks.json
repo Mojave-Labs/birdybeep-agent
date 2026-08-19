@@ -13,12 +13,6 @@
         "timeout": 30
       }
     ],
-    "beforeSubmitPrompt": [
-      {
-        "command": "birdybeep hook cursor",
-        "timeout": 30
-      }
-    ],
     "preToolUse": [
       {
         "command": "birdybeep hook cursor",
@@ -50,12 +44,6 @@
       }
     ],
     "stop": [
-      {
-        "command": "birdybeep hook cursor",
-        "timeout": 30
-      }
-    ],
-    "afterAgentResponse": [
       {
         "command": "birdybeep hook cursor",
         "timeout": 30
