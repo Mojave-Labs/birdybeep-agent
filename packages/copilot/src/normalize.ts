@@ -13,9 +13,16 @@ import {
   normalizeEvent,
   type NormalizeOptions,
   type RepoContext,
+  sanitizeHarnessVersion,
 } from "@birdybeep/agent-core";
 
 import { type CopilotHookEventName, isCopilotHookEventName } from "./install";
+
+/** Options for {@link normalizeCopilotEvent}; extends the shared normalizer options. */
+export interface CopilotNormalizeOptions extends NormalizeOptions {
+  /** Environment Copilot exported into this hook (default `process.env`). Tests override. */
+  env?: NodeJS.ProcessEnv;
+}
 
 export class CopilotMappingError extends Error {
   constructor(message: string) {
@@ -50,6 +57,18 @@ function repoLabel(context: RepoContext): string | undefined {
 function bestEffortSessionId(eventName: string, payload: Record<string, unknown>): string {
   const seed = `${str(payload["cwd"]) ?? ""}|${eventName}`;
   return `cop_${createHash("sha256").update(seed).digest("hex").slice(0, 16)}`;
+}
+
+/**
+ * The Copilot CLI version that fired this hook (birdybeep-agent-gcgp.7), or undefined.
+ *
+ * Copilot's camelCase payloads carry no version, but the CLI exports
+ * `COPILOT_CLI_BINARY_VERSION` into every hook child — captured live from Copilot CLI 1.0.78,
+ * matching `copilot --version`. Reading the env costs nothing and names the binary that
+ * actually ran, which a PATH probe would only coincidentally agree with.
+ */
+function copilotVersion(env: NodeJS.ProcessEnv): string | undefined {
+  return sanitizeHarnessVersion(env["COPILOT_CLI_BINARY_VERSION"]);
 }
 
 function mapCopilotEvent(
@@ -152,7 +171,7 @@ function mapCopilotEvent(
 export function normalizeCopilotEvent(
   eventName: string,
   input: unknown,
-  options: NormalizeOptions = {},
+  options: CopilotNormalizeOptions = {},
 ): Promise<BirdyBeepAgentEvent> {
   try {
     if (!isCopilotHookEventName(eventName)) {
@@ -165,6 +184,7 @@ export function normalizeCopilotEvent(
     const machine = getMachineIdentity();
     const repo = detectRepoContext(cwd);
     const label = repoLabel(repo);
+    const harnessVersion = copilotVersion(options.env ?? process.env);
 
     return Promise.resolve(
       normalizeEvent(
@@ -172,6 +192,7 @@ export function normalizeCopilotEvent(
           event_type: mapped.eventType,
           status: mapped.status,
           harness: "copilot",
+          ...(harnessVersion ? { harness_version: harnessVersion } : {}),
           source_session_id:
             sessionId && sessionId.length > 0 ? sessionId : bestEffortSessionId(eventName, payload),
           machine: { label: machine.label, os: machine.os },

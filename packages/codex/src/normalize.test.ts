@@ -9,9 +9,13 @@
  * notify = argv JSON, kebab-case keys, keyed by `type`; hooks = stdin JSON, snake_case
  * keys, keyed by `hook_event_name`.
  */
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { CodexMappingError, normalizeCodexEvent } from "./normalize";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { cliVersionFromRollout, CodexMappingError, normalizeCodexEvent } from "./normalize";
 
 const OPTS = { now: () => "2026-06-14T00:00:00.000Z", generateId: () => "evt_test_1" } as const;
 const CWD = "/Users/alice/project";
@@ -244,5 +248,136 @@ describe("unknown / garbled inputs reject (caught + skipped by runAgentHook)", (
 
   it("rejects a payload with neither hook_event_name nor type", async () => {
     await expect(normalizeCodexEvent({ cwd: CWD })).rejects.toBeInstanceOf(CodexMappingError);
+  });
+});
+
+/**
+ * birdybeep-agent-gcgp.7 — Codex's terminal CLI and the build bundled inside ChatGPT.app
+ * share ONE `~/.codex/config.toml`: same hooks, same trust state, same everything. The only
+ * thing that separates them on the wire is the `cli_version` each writes into the
+ * `session_meta` line that opens its own rollout, which every hook payload points at via
+ * `transcript_path` (required on all ten hook events by Codex's own payload schemas).
+ *
+ * The two versions below are real: one sandbox CODEX_HOME, two binaries, captured 2026-08-16 —
+ * `codex-cli 0.135.0` (npm) and `codex-cli 0.148.0-alpha.9` (/Applications/ChatGPT.app).
+ */
+describe("harness_version from the rollout session_meta (gcgp.7)", () => {
+  const rollouts: string[] = [];
+  /** A real-shaped rollout: JSONL whose first record is `session_meta`. */
+  function rollout(meta: Record<string, unknown>, extra = ""): string {
+    const dir = mkdtempSync(join(tmpdir(), "bb-cx-rollout-"));
+    rollouts.push(dir);
+    const file = join(dir, "rollout-2026-08-16T21-15-27-01a00d80.jsonl");
+    const first = JSON.stringify({
+      timestamp: "2026-08-17T02:15:27.218Z",
+      type: "session_meta",
+      payload: meta,
+    });
+    writeFileSync(file, `${first}\n${extra}`);
+    return file;
+  }
+  afterEach(() => {
+    for (const dir of rollouts.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  const hook = (transcript: string) => ({
+    hook_event_name: "Stop",
+    session_id: "sess-hv",
+    cwd: CWD,
+    transcript_path: transcript,
+    turn_id: "turn-1",
+    model: "gpt-5.5",
+  });
+
+  it("reads the npm terminal CLI's version", async () => {
+    const file = rollout({ originator: "codex_exec", cli_version: "0.135.0", source: "exec" });
+    const ev = await normalizeCodexEvent(hook(file), OPTS);
+    expect(ev.harness_version).toBe("0.135.0");
+  });
+
+  it("reads the ChatGPT.app-bundled build's version from the same config", async () => {
+    const file = rollout({ originator: "codex_exec", cli_version: "0.148.0-alpha.9" });
+    const ev = await normalizeCodexEvent(hook(file), OPTS);
+    expect(ev.harness_version).toBe("0.148.0-alpha.9");
+  });
+
+  it("rides every trust-gated hook event, not just SessionStart", async () => {
+    const file = rollout({ cli_version: "0.148.0-alpha.9" });
+    for (const name of [
+      "SessionStart",
+      "PermissionRequest",
+      "PostToolUse",
+      "SubagentStart",
+      "SubagentStop",
+      "Stop",
+    ]) {
+      const ev = await normalizeCodexEvent(
+        { ...hook(file), hook_event_name: name, source: "startup" },
+        OPTS,
+      );
+      expect(ev.harness_version, name).toBe("0.148.0-alpha.9");
+    }
+  });
+
+  it("carries nothing else out of the rollout (it also holds the user's prompts)", async () => {
+    const file = rollout(
+      { cli_version: "0.135.0", cwd: "/Users/alice/secret-dir" },
+      `${JSON.stringify({ type: "message", text: "PRIVATE PROMPT" })}\n`,
+    );
+    const serialized = JSON.stringify(await normalizeCodexEvent(hook(file), OPTS));
+    expect(serialized).toContain("0.135.0");
+    expect(serialized).not.toContain("PRIVATE PROMPT");
+    expect(serialized).not.toContain("secret-dir");
+  });
+
+  it("is omitted for a notify payload (no transcript path on that surface)", async () => {
+    const ev = await normalizeCodexEvent(
+      { type: "agent-turn-complete", "thread-id": "t", "turn-id": "u", cwd: CWD },
+      OPTS,
+    );
+    expect(ev.harness_version).toBeUndefined();
+  });
+
+  it("fails soft on a missing / garbled / non-session_meta rollout", async () => {
+    const missing = join(tmpdir(), "bb-cx-does-not-exist", "rollout.jsonl");
+    expect((await normalizeCodexEvent(hook(missing), OPTS)).harness_version).toBeUndefined();
+
+    const dir = mkdtempSync(join(tmpdir(), "bb-cx-rollout-"));
+    rollouts.push(dir);
+    const garbled = join(dir, "garbled.jsonl");
+    writeFileSync(garbled, "{not json at all\n");
+    expect((await normalizeCodexEvent(hook(garbled), OPTS)).harness_version).toBeUndefined();
+
+    const wrongType = join(dir, "wrong.jsonl");
+    writeFileSync(wrongType, `${JSON.stringify({ type: "message", cli_version: "9.9.9" })}\n`);
+    expect((await normalizeCodexEvent(hook(wrongType), OPTS)).harness_version).toBeUndefined();
+  });
+
+  it("refuses a rollout whose first line never ends (never scans unbounded)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bb-cx-rollout-"));
+    rollouts.push(dir);
+    const huge = join(dir, "huge.jsonl");
+    writeFileSync(
+      huge,
+      `{"type":"session_meta","payload":{"cli_version":"0.135.0","pad":"${"x".repeat(300_000)}"`,
+    );
+    expect((await normalizeCodexEvent(hook(huge), OPTS)).harness_version).toBeUndefined();
+  });
+
+  it("rejects a non-version cli_version instead of forwarding it", async () => {
+    const file = rollout({ cli_version: "/Users/alice/.codex; rm -rf /" });
+    const ev = await normalizeCodexEvent(hook(file), OPTS);
+    expect(ev.harness_version).toBeUndefined();
+    expect(JSON.stringify(ev)).not.toContain("rm -rf");
+  });
+
+  it("cliVersionFromRollout is the injectable production reader", async () => {
+    const file = rollout({ cli_version: "0.135.0" });
+    expect(cliVersionFromRollout(file)).toBe("0.135.0");
+    const ev = await normalizeCodexEvent(hook("/nowhere/rollout.jsonl"), {
+      ...OPTS,
+      readRolloutVersion: () => "1.2.3",
+    });
+    expect(ev.harness_version).toBe("1.2.3");
   });
 });

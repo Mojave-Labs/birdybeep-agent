@@ -25,6 +25,7 @@ import {
   normalizeEvent,
   type NormalizeOptions,
   type RepoContext,
+  sanitizeHarnessVersion,
   SESSION_NAME_METADATA_KEY,
 } from "@birdybeep/agent-core";
 
@@ -42,6 +43,8 @@ export interface ClaudeCodeNormalizeOptions extends NormalizeOptions {
   sessionStateTtlMs?: number;
   /** Injectable clock (ms) for the session-name store (default wall clock). Tests override. */
   sessionStateNow?: () => number;
+  /** Environment the engine exported into this hook (default `process.env`). Tests override. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /** Thrown for an unknown/garbled Claude Code hook payload (never a malformed event). */
@@ -156,6 +159,46 @@ function repoLabel(ctx: RepoContext): string | undefined {
 function bestEffortSessionId(payload: Record<string, unknown>): string {
   const seed = `${str(payload["cwd"]) ?? ""}|${str(payload["transcript_path"]) ?? ""}|${str(payload["hook_event_name"]) ?? ""}`;
   return `cc_${createHash("sha256").update(seed).digest("hex").slice(0, 16)}`;
+}
+
+// --- harness_version (birdybeep-agent-gcgp.7) ---------------------------------------
+// Claude Code's hook PAYLOAD carries no version — captured live on 2.1.227 and on the
+// desktop-bundled 2.1.229, every event is exactly {session_id, transcript_path, cwd,
+// hook_event_name, …per-event extras}. The engine does export its identity into the hook
+// child's ENVIRONMENT, which costs nothing to read and — unlike a `claude --version` probe —
+// names the engine that ACTUALLY fired this hook.
+//
+// That distinction is the whole point of the field. Claude Code ships on two independent
+// update channels on the same machine: the terminal CLI under `~/.local/bin/claude`, and the
+// desktop app's bundled engine under `~/Library/Application Support/Claude/claude-code/<v>/`.
+// They drift (2.1.227 vs 2.1.229 as this landed), and only ONE of them is on PATH — so a
+// probe would report the terminal version for a desktop session and quietly erase the split
+// this field exists to measure.
+/** Desktop launcher's engine path: `…/Claude/claude-code/2.1.229/claude.app/…`. */
+const EXECPATH_VERSION_RE = /[\\/]claude-code[\\/](\d+\.\d+\.\d+[\w.+-]*)[\\/]/;
+/** `AI_AGENT=claude-code_2-1-229_harness` — dots are encoded as dashes in this one. */
+const AI_AGENT_VERSION_RE = /^claude-code_(\d+(?:-\d+)+)_/;
+
+/**
+ * The version of the Claude Code engine that fired this hook, or undefined when it did not
+ * say. Two sources, both observed in a real hook child's env:
+ *   1. `CLAUDE_CODE_EXECPATH` — set by the desktop launcher; an exact dotted version sits in
+ *      the path. Only the version substring is ever read; the path itself never leaves here.
+ *   2. `AI_AGENT` — set by every entrypoint (`claude-code_2-1-227_harness` from the terminal
+ *      CLI, `claude-code_2-1-229_…` from the desktop bundle). Dashes decode back to dots.
+ * `AI_AGENT` is generically named, so the `claude-code_` prefix is required: a foreign tool's
+ * value is ignored rather than reported as a Claude version. Nested harnesses are fine — the
+ * innermost engine overwrites it for its own children, which is the engine we want.
+ */
+function claudeCodeVersion(env: NodeJS.ProcessEnv): string | undefined {
+  const execPath = env["CLAUDE_CODE_EXECPATH"];
+  const fromPath = typeof execPath === "string" ? EXECPATH_VERSION_RE.exec(execPath) : null;
+  const fromPathVersion = sanitizeHarnessVersion(fromPath?.[1]);
+  if (fromPathVersion) return fromPathVersion;
+
+  const aiAgent = env["AI_AGENT"];
+  const fromAgent = typeof aiAgent === "string" ? AI_AGENT_VERSION_RE.exec(aiAgent) : null;
+  return sanitizeHarnessVersion(fromAgent?.[1]?.replace(/-/g, "."));
 }
 
 /**
@@ -331,10 +374,14 @@ function buildAndNormalize(input: unknown, opts: ClaudeCodeNormalizeOptions): Bi
     ...mapped.metadata,
     ...(sessionName ? { [SESSION_NAME_METADATA_KEY]: sessionName } : {}),
   };
+  // Which Claude Code engine fired this — terminal CLI or the desktop app's bundled build.
+  // Omitted entirely when the engine didn't say: an empty string would read as a real answer.
+  const harnessVersion = claudeCodeVersion(opts.env ?? process.env);
   const draft = {
     event_type: mapped.eventType,
     status: mapped.status,
     harness: "claude_code",
+    ...(harnessVersion ? { harness_version: harnessVersion } : {}),
     source_session_id: realSessionId ?? bestEffortSessionId(payload),
     machine: { label: machine.label, os: machine.os },
     workspace: {

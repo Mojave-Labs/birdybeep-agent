@@ -124,3 +124,32 @@ describe("normalizeCopilotEvent", () => {
     await expect(normalizeCopilotEvent("", base)).rejects.toBeInstanceOf(CopilotMappingError);
   });
 });
+
+/**
+ * birdybeep-agent-gcgp.7 — Copilot's payloads carry no version, but the CLI exports
+ * `COPILOT_CLI_BINARY_VERSION` into every hook child. Captured live from a real
+ * `copilot -p` run on 2026-08-16: 1.0.78, matching `copilot --version`.
+ */
+describe("harness_version from COPILOT_CLI_BINARY_VERSION (gcgp.7)", () => {
+  const env = { COPILOT_CLI_BINARY_VERSION: "1.0.78" };
+
+  it("rides every mapped event", async () => {
+    for (const [eventName, payload] of CASES) {
+      const ev = await normalizeCopilotEvent(eventName, payload, { env });
+      expect(ev.harness_version, eventName).toBe("1.0.78");
+    }
+  });
+
+  it("is omitted, never guessed, when Copilot exports nothing", async () => {
+    const ev = await normalizeCopilotEvent("sessionStart", base, { env: {} });
+    expect(ev.harness_version).toBeUndefined();
+  });
+
+  it("rejects a junk value instead of forwarding it", async () => {
+    const ev = await normalizeCopilotEvent("sessionStart", base, {
+      env: { COPILOT_CLI_BINARY_VERSION: "/usr/local/bin/copilot --version" },
+    });
+    expect(ev.harness_version).toBeUndefined();
+    expect(JSON.stringify(ev)).not.toContain("/usr/local/bin");
+  });
+});

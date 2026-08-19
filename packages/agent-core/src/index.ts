@@ -13,6 +13,7 @@ export * from "./api";
 export * from "./dedup";
 export * from "./event";
 export * from "./fingerprint";
+export * from "./harness-version";
 export * from "./hook";
 export * from "./hook-command";
 export * from "./integrations";

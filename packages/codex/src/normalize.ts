@@ -33,13 +33,27 @@
  * has. Nothing to emit until Codex surfaces a real name.
  */
 import { createHash } from "node:crypto";
+import { closeSync, openSync, readSync } from "node:fs";
 
 import {
   type BirdyBeepAgentEvent,
   getMachineIdentity,
   normalizeEvent,
   type NormalizeOptions,
+  sanitizeHarnessVersion,
 } from "@birdybeep/agent-core";
+
+/**
+ * Options for {@link normalizeCodexEvent}. Extends the shared normalizer options with an
+ * injectable rollout reader so the version lookup is testable without a real rollout file.
+ */
+export interface CodexNormalizeOptions extends NormalizeOptions {
+  /**
+   * Resolve the Codex CLI version from the session rollout at `transcriptPath`
+   * (default {@link cliVersionFromRollout}). Tests override; production uses the real read.
+   */
+  readRolloutVersion?: (transcriptPath: string) => string | undefined;
+}
 
 /** Thrown for an unknown/garbled Codex payload (never a malformed event). */
 export class CodexMappingError extends Error {
@@ -78,6 +92,60 @@ function bestEffortSessionId(payload: Record<string, unknown>): string {
 function deriveSessionId(payload: Record<string, unknown>): string {
   const explicit = str(payload["session_id"]) ?? str(payload["thread-id"]);
   return explicit && explicit.length > 0 ? explicit : bestEffortSessionId(payload);
+}
+
+// --- harness_version (birdybeep-agent-gcgp.7) ---------------------------------------
+// Codex hook payloads carry no version field (captured live from codex-cli 0.135.0 and from
+// the ChatGPT.app-bundled 0.148.0-alpha.9), and it exports no version env var either — the
+// npm install sets CODEX_MANAGED_PACKAGE_ROOT, the bundled build sets nothing. What EVERY
+// hook payload does carry is `transcript_path`: Codex's own embedded payload schemas list it
+// as required for all ten hook events (SessionStart, PermissionRequest, Pre/PostToolUse,
+// Subagent{Start,Stop}, Stop, UserPromptSubmit, Pre/PostCompact). The first line of that
+// rollout is a `session_meta` record holding `cli_version`, written before the first hook fires.
+//
+// This matters more for Codex than for any other harness: the terminal CLI and the
+// ChatGPT-desktop-bundled build SHARE ONE `~/.codex/config.toml` — same hooks, same trust
+// state, same everything — so the rollout's own `cli_version` is the only thing that tells
+// the two apart. Verified: one sandbox CODEX_HOME, two binaries, 0.135.0 vs 0.148.0-alpha.9.
+//
+// The `notify` surface has no transcript path (a different, kebab-case payload), so notify
+// events simply carry no version — the field stays absent rather than guessed.
+/** Head bytes scanned for the rollout's first line (~22 KB observed; cap well clear of it). */
+const ROLLOUT_HEAD_MAX_BYTES = 256 * 1024;
+
+/**
+ * Read `cli_version` out of the `session_meta` line that opens a Codex rollout, or undefined.
+ *
+ * Bounded and fail-soft by construction — this runs on the hook path, which must never block
+ * or slow the harness: ONE synchronous read of at most {@link ROLLOUT_HEAD_MAX_BYTES}, only
+ * the first line is parsed, and every failure (missing file, truncated line, unparseable JSON,
+ * a different record type) returns undefined instead of throwing. Nothing but the version
+ * string is read out of the record — a rollout also holds the user's prompts, which must never
+ * enter an event (§15).
+ */
+export function cliVersionFromRollout(transcriptPath: string): string | undefined {
+  let fd: number | undefined;
+  try {
+    fd = openSync(transcriptPath, "r");
+    const buffer = Buffer.allocUnsafe(ROLLOUT_HEAD_MAX_BYTES);
+    const read = readSync(fd, buffer, 0, ROLLOUT_HEAD_MAX_BYTES, 0);
+    const head = buffer.toString("utf8", 0, read);
+    const newline = head.indexOf("\n");
+    if (newline < 0) return undefined; // first line longer than the cap → give up, never guess
+    const meta = asRecord(JSON.parse(head.slice(0, newline)));
+    if (meta["type"] !== "session_meta") return undefined;
+    return sanitizeHarnessVersion(asRecord(meta["payload"])["cli_version"]);
+  } catch {
+    return undefined; // absent/unreadable/garbled rollout is not an error — the field is optional
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        /* nothing to do; never let cleanup break event delivery */
+      }
+    }
+  }
 }
 
 /** Map a Codex lifecycle hook payload (keyed by `hook_event_name`). */
@@ -184,14 +252,20 @@ export function isCodexLifecycleHookPayload(input: unknown): boolean {
   return typeof asRecord(input)["hook_event_name"] === "string";
 }
 
-function buildAndNormalize(input: unknown, opts: NormalizeOptions): BirdyBeepAgentEvent {
+function buildAndNormalize(input: unknown, opts: CodexNormalizeOptions): BirdyBeepAgentEvent {
   const payload = asRecord(input);
   const mapped = mapCodexPayload(payload); // throws CodexMappingError on unknown
   const machine = getMachineIdentity();
+  // Which Codex build fired this — the terminal CLI or the ChatGPT desktop bundle. Both share
+  // one config, so the rollout's own cli_version is the only thing that separates them.
+  const transcriptPath = str(payload["transcript_path"]);
+  const readVersion = opts.readRolloutVersion ?? cliVersionFromRollout;
+  const harnessVersion = transcriptPath ? readVersion(transcriptPath) : undefined;
   const draft = {
     event_type: mapped.eventType,
     status: mapped.status,
     harness: "codex",
+    ...(harnessVersion ? { harness_version: harnessVersion } : {}),
     source_session_id: deriveSessionId(payload),
     machine: { label: machine.label, os: machine.os },
     workspace: { cwd: str(payload["cwd"]) ?? "unknown" },
@@ -207,7 +281,7 @@ function buildAndNormalize(input: unknown, opts: NormalizeOptions): BirdyBeepAge
 /** Map + normalize a raw Codex notify/hook payload into a validated canonical event. */
 export function normalizeCodexEvent(
   input: unknown,
-  opts: NormalizeOptions = {},
+  opts: CodexNormalizeOptions = {},
 ): Promise<BirdyBeepAgentEvent> {
   try {
     return Promise.resolve(buildAndNormalize(input, opts));
