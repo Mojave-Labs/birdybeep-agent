@@ -89,8 +89,9 @@ The equivalent for the other harnesses:
 ```
 
 **Fix** — BirdyBeep could not detect the harness binary. Install (or fix the `PATH` for) the harness,
-then re-run the matching install command. Once the harness is detected, the rest of that harness's
-checks appear.
+then re-run the matching install command — or `birdybeep setup`, which wires up every harness it
+finds and skips pairing when the machine already has a token. Once the harness is detected, the
+rest of that harness's checks appear.
 
 ---
 

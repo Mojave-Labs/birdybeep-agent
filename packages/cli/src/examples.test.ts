@@ -16,7 +16,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { AgentAdapter } from "@birdybeep/agent-core";
+import { type AgentAdapter, unavailableKeychainBackend } from "@birdybeep/agent-core";
 import {
   BIRDYBEEP_HOOK_EVENTS as CLAUDE_HOOK_EVENTS,
   claudeCodeAdapter,
@@ -117,6 +117,9 @@ afterAll(() => {
 });
 
 /** Force detection so the installer never skips a harness that isn't on this machine. */
+/** The pairing check `agent install` now runs must never reach the real OS keychain. */
+const FILE_ONLY = { backend: unavailableKeychainBackend };
+
 function detected(adapter: AgentAdapter): AgentAdapter {
   return { ...adapter, detect: () => Promise.resolve({ detected: true, version: "test" }) };
 }
@@ -133,7 +136,9 @@ describe("examples/ match what the installers really write", () => {
     it(`${harness.target}: the committed example is byte-for-byte the generated config`, async () => {
       sandbox = createSandbox();
       const code = await runCli(["agent", "install", harness.target], {
-        commands: [createAgentCommand({ adapters: [detected(harness.adapter)] })],
+        commands: [
+          createAgentCommand({ adapters: [detected(harness.adapter)], tokenOptions: FILE_ONLY }),
+        ],
         ...quiet(),
         ensureConfig: false,
       });

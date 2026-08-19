@@ -158,6 +158,7 @@ describe("birdybeep pair", () => {
   it("pairs via the device-code flow and stores the token securely (not in config)", async () => {
     sandbox = createSandbox();
     const cmd = createPairCommand({
+      setup: false,
       fetchImpl: stubPairing(),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
@@ -188,6 +189,7 @@ describe("birdybeep pair", () => {
   it("renders a scannable QR matrix on a TTY, above the plain link fallback (pe1)", async () => {
     sandbox = createSandbox();
     const cmd = createPairCommand({
+      setup: false,
       fetchImpl: stubPairing(),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
@@ -215,6 +217,7 @@ describe("birdybeep pair", () => {
   it("prints NO matrix when stdout is not a TTY (piped/CI output stays greppable)", async () => {
     sandbox = createSandbox();
     const cmd = createPairCommand({
+      setup: false,
       fetchImpl: stubPairing(),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
@@ -243,6 +246,7 @@ describe("birdybeep pair", () => {
     sandbox = createSandbox();
     let startBody: Record<string, unknown> | undefined;
     const cmd = createPairCommand({
+      setup: false,
       fetchImpl: stubPairing({ onStartBody: (b) => (startBody = b as Record<string, unknown>) }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
@@ -271,6 +275,7 @@ describe("birdybeep pair", () => {
   it("--json emits NDJSON: pairing_started (complete QR payload up front) then paired (pe1)", async () => {
     sandbox = createSandbox();
     const cmd = createPairCommand({
+      setup: false,
       fetchImpl: stubPairing(),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
@@ -309,6 +314,7 @@ describe("birdybeep pair", () => {
     sandbox = createSandbox();
     let t = 0;
     const cmd = createPairCommand({
+      setup: false,
       fetchImpl: stubPairing({ expiresAt: new Date(1_000_000).toISOString(), alwaysPending: true }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
@@ -342,6 +348,7 @@ describe("birdybeep pair", () => {
     // polling into a 10-min silent timeout. It must now fail fast with the reason.
     sandbox = createSandbox();
     const cmd = createPairCommand({
+      setup: false,
       fetchImpl: stubPairing({
         terminalError: "quota_exceeded",
         terminalMessage:
@@ -368,6 +375,7 @@ describe("birdybeep pair", () => {
   it("--json emits a terminal {paired:false, reason:<code>} on a hard error (scripts see the code)", async () => {
     sandbox = createSandbox();
     const cmd = createPairCommand({
+      setup: false,
       fetchImpl: stubPairing({ terminalError: "quota_exceeded" }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
@@ -397,6 +405,7 @@ describe("birdybeep pair", () => {
     sandbox = createSandbox();
     let c = 0;
     const cmd = createPairCommand({
+      setup: false,
       fetchImpl: stubPairing({ expiresAt: new Date(10_000_000_000_000).toISOString() }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
@@ -429,6 +438,7 @@ describe("birdybeep pair", () => {
     let startBody: Record<string, unknown> | undefined;
     const tokenBodies: Record<string, unknown>[] = [];
     const cmd = createPairCommand({
+      setup: false,
       // alwaysPending until poll #2 → at least two /pair/token calls, so we prove the verifier
       // rides EVERY poll (the server checks it on the mint, which may not be the first poll).
       fetchImpl: stubPairing({
@@ -470,6 +480,7 @@ describe("birdybeep pair", () => {
   it("surfaces approved_by_email from the /pair/token response when present (dgxd)", async () => {
     sandbox = createSandbox();
     const cmd = createPairCommand({
+      setup: false,
       fetchImpl: stubPairing({ tokenResponseExtra: { approved_by_email: "becs@example.com" } }),
       tokenOptions: FILE_ONLY,
       sleep: () => Promise.resolve(),
@@ -492,6 +503,7 @@ describe("birdybeep pair", () => {
     sandbox = createSandbox();
     let t = 0;
     const cmd = createPairCommand({
+      setup: false,
       // expires_at fixed at epoch 1,000,000 ms; the injected clock crosses it after one poll.
       fetchImpl: stubPairing({ expiresAt: new Date(1_000_000).toISOString(), alwaysPending: true }),
       tokenOptions: FILE_ONLY,
@@ -729,9 +741,13 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
 
   describe("parsePairFlags / isAffirmative", () => {
     it("parses --yes/-y and both --expect-email spellings", () => {
-      expect(parsePairFlags([])).toEqual({ yes: false });
-      expect(parsePairFlags(["--yes"])).toEqual({ yes: true });
+      const DEFAULTS = { yes: false, noInstall: false, noTest: false };
+      expect(parsePairFlags([])).toEqual(DEFAULTS);
+      expect(parsePairFlags(["--yes"])).toEqual({ ...DEFAULTS, yes: true });
       expect(parsePairFlags(["-y"]).yes).toBe(true);
+      // gcgp.5: the two escape hatches out of the one-step chain.
+      expect(parsePairFlags(["--no-install"])).toEqual({ ...DEFAULTS, noInstall: true });
+      expect(parsePairFlags(["--no-test"])).toEqual({ ...DEFAULTS, noTest: true });
       expect(parsePairFlags(["--expect-email", APPROVER]).expectEmail).toBe(APPROVER);
       expect(parsePairFlags([`--expect-email=${APPROVER}`]).expectEmail).toBe(APPROVER);
       expect(parsePairFlags(["--yes", "--expect-email", APPROVER])).toMatchObject({
@@ -759,6 +775,7 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
       approvedByEmail: string | undefined = APPROVER,
     ): ReturnType<typeof createPairCommand> {
       return createPairCommand({
+        setup: false,
         fetchImpl: stubPairing({
           ...(approvedByEmail !== undefined
             ? { tokenResponseExtra: { approved_by_email: approvedByEmail } }
@@ -1009,6 +1026,7 @@ describe("birdybeep pair — approving-account confirm gate (md60)", () => {
       sandbox = createSandbox();
       let calls = 0;
       const cmd = createPairCommand({
+        setup: false,
         fetchImpl: (() => {
           calls += 1;
           return Promise.reject(new Error("must not be called"));

@@ -48,16 +48,34 @@ never blocks your harness.
 ```bash
 npm install -g @birdybeep/cli   # or pnpm add -g / yarn global add
 
-birdybeep pair                  # device-flow pairing: scan its QR or open the complete link,
-                                # then confirm the account that approved it
-birdybeep agent install all     # detect installed agents and wire them up
-                                # (or one of: claude | codex | opencode | cursor | copilot)
-birdybeep status                # confirm machine, pairing, and per-harness integration state
+birdybeep setup                 # pair, wire up every coding agent on this machine, send a test Beep
 ```
 
-`agent install` is idempotent — re-running it produces the same result. It backs up existing
-config, adds only BirdyBeep-managed entries, prints the files it changed and any action you still
-need to take, and installs at the user/global level.
+`setup` scans its QR (or open the complete link), asks you to confirm the account that approved it,
+installs every supported harness it finds, and prints what each installed build will do:
+
+```text
+✓ Paired to you@example.com.
+
+coverage
+   harness             build                        state
+✓  Claude Code         terminal CLI 2.1.227         ready
+✓  Claude Code         Claude desktop app 2.1.229   ready
+!  Codex               terminal CLI 0.147.0         needs you
+     → Codex may require one-time hook trust. Open Codex and run /hooks.
+–  OpenCode            —                            not installed
+
+Not installed: OpenCode. Install any of them, then run `birdybeep setup` again to wire it up.
+
+✓ Test event delivered — check your phone for a test Beep.
+```
+
+Run it again after installing a new coding agent — it skips the phone step when the machine is
+already paired. `birdybeep pair` runs the identical flow.
+
+Installs are idempotent — re-running produces the same result. They back up existing config, add
+only BirdyBeep-managed entries, print the files they changed, and install at the user/global level.
+To do one harness at a time, use `birdybeep agent install <harness>`.
 
 Some harnesses need one extra step after install — see [Per-harness details](#per-harness-details).
 
@@ -78,7 +96,8 @@ Run `birdybeep <command> --help` for per-command help.
 
 | Command                                                                     | What it does                                                                                                                                                                          |
 | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `birdybeep pair`                                                            | Device-flow pairing — scan the QR or open its complete link, confirm the approving account, then store the machine token.                                                             |
+| `birdybeep setup`                                                           | The one-step setup: pair, install every detected harness, print a per-build coverage table, and send a test Beep. Skips pairing when the machine already has a token.                 |
+| `birdybeep pair [--no-install] [--no-test]`                                 | The same flow, always re-pairing. `--no-install` stops after the machine token; `--no-test` skips the closing Beep.                                                                   |
 | `birdybeep logout`                                                          | Removes the machine token (keychain + file fallback). Idempotent. Same as `unpair`.                                                                                                   |
 | `birdybeep unpair`                                                          | Unpairs this machine — removes the machine token (keychain + file fallback). Idempotent. Same as `logout`.                                                                            |
 | `birdybeep status`                                                          | Machine + pairing state, per-harness integration status, and queue depth. Drains the queue opportunistically; exits non-zero if not paired.                                           |

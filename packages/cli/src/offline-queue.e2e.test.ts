@@ -80,7 +80,7 @@ describe("CLI-OFFLINE-QUEUE-E2E", () => {
 
     // Real install (faithful scenario).
     await runCli(["agent", "install", "codex"], {
-      commands: [createAgentCommand({ adapters: [detectedCodex] })],
+      commands: [createAgentCommand({ adapters: [detectedCodex], tokenOptions: FILE_ONLY })],
       ...quiet(),
       ensureConfig: false,
     });

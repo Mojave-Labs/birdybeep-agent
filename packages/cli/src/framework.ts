@@ -82,6 +82,14 @@ export interface Command {
   summary: string;
   /** One-line usage shown in the command's own `--help`. */
   usage?: string;
+  /**
+   * When set, this command is featured in a "Getting started" block ABOVE the command list in
+   * the root help, described by this line (birdybeep-agent-gcgp.5). `--help` listed ten commands
+   * in registry order with nothing saying which one a new user runs first, so the verb that sets
+   * the product up was exactly as discoverable as `report-status`. The framework stays
+   * command-independent: it renders whatever the registry marks, and knows no command by name.
+   */
+  gettingStarted?: string;
   /** Nested subcommands (e.g. `agent install` / `agent uninstall`). */
   subcommands?: Command[];
   /**
@@ -171,11 +179,19 @@ function isUnknownFlag(token: string, allowed: ReadonlySet<string>): boolean {
 function renderRootHelp(version: string, commands: Command[]): string {
   const width = Math.max(...commands.map((c) => c.name.length));
   const lines = commands.map((c) => `  ${c.name.padEnd(width)}  ${c.summary}`);
+  const featured = commands.filter((c) => c.gettingStarted !== undefined);
   return [
     `birdybeep ${version} — stream coding-agent lifecycle events to BirdyBeep.`,
     "",
     "Usage:",
     "  birdybeep <command> [options]",
+    ...(featured.length > 0
+      ? [
+          "",
+          "Getting started:",
+          ...featured.map((c) => `  birdybeep ${c.name}  ${c.gettingStarted ?? ""}`),
+        ]
+      : []),
     "",
     "Commands:",
     ...lines,
@@ -293,7 +309,11 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
   if (rest.length === 0 || (flags.help && command === undefined)) {
     io.emit(renderRootHelp(deps.version, deps.commands), {
       version: deps.version,
-      commands: deps.commands.map((c) => ({ name: c.name, summary: c.summary })),
+      commands: deps.commands.map((c) => ({
+        name: c.name,
+        summary: c.summary,
+        ...(c.gettingStarted !== undefined ? { gettingStarted: c.gettingStarted } : {}),
+      })),
     });
     return EXIT.OK;
   }

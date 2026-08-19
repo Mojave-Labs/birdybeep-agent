@@ -104,7 +104,7 @@ describe("gcgp.4: an unpaired machine is not a silent one", () => {
 
     // Real install, so this is a faithful "hooks are wired up but the machine isn't paired".
     await runCli(["agent", "install", "claude"], {
-      commands: [createAgentCommand({ adapters: [detectedClaude] })],
+      commands: [createAgentCommand({ adapters: [detectedClaude], tokenOptions: FILE_ONLY })],
       stdout: capture().writer,
       stderr: capture().writer,
       ensureConfig: false,
@@ -211,6 +211,7 @@ describe("gcgp.4: an unpaired machine is not a silent one", () => {
     const paired = await runCli(["pair"], {
       commands: [
         createPairCommand({
+          setup: false,
           fetchImpl: stubPairing(),
           tokenOptions: FILE_ONLY,
           sleep: () => Promise.resolve(),
@@ -264,6 +265,7 @@ describe("gcgp.4: an unpaired machine is not a silent one", () => {
     await runCli(["pair"], {
       commands: [
         createPairCommand({
+          setup: false,
           fetchImpl: stubPairing(),
           tokenOptions: FILE_ONLY,
           sleep: () => Promise.resolve(),

@@ -1,7 +1,7 @@
 # Installing BirdyBeep
 
-Install the CLI, pair your machine, install the agent adapters, and verify that events flow. Every
-step is reversible.
+`birdybeep setup` does the whole job in one command. The sections after it are the same steps
+individually, for when you want one harness or one half. Every step is reversible.
 
 - **Installs are non-destructive.** Each adapter adds only BirdyBeep-managed entries to your existing
   config, backs up the original once before its first change, and is fully reversible.
@@ -59,7 +59,58 @@ The CLI works on macOS, Linux, and Windows.
 
 ---
 
-## 2. Pair your machine — `birdybeep pair`
+## 2. Set it all up — `birdybeep setup`
+
+```bash
+birdybeep setup
+```
+
+One command does the whole job: it pairs this machine, installs every supported harness it finds,
+prints a row per installed build saying what that build will do, and sends a test Beep.
+
+```text
+✓ Paired to you@example.com.
+
+coverage
+   harness             build                        state
+✓  Claude Code         terminal CLI 2.1.227         ready
+✓  Claude Code         Claude desktop app 2.1.229   ready
+!  Codex               terminal CLI 0.147.0         needs you
+!  Codex               ChatGPT desktop app          needs you
+     → Codex hooks installed.
+     → Codex may require one-time hook trust. Open Codex and run /hooks.
+     → After trust is granted, Codex sessions on this machine will be tracked automatically.
+–  OpenCode            —                            not installed
+✓  Cursor              cursor-agent CLI 2026.07.09  ready
+✓  Cursor              Cursor.app 2.1.9             ready
+–  GitHub Copilot CLI  —                            not installed
+
+Not installed: OpenCode, GitHub Copilot CLI. Install any of them, then run `birdybeep setup` again to wire it up.
+
+✓ Test event delivered — check your phone for a test Beep.
+```
+
+| State           | What it means                                                                                |
+| --------------- | -------------------------------------------------------------------------------------------- |
+| `ready`         | Wired up. It beeps on the next turn.                                                         |
+| `beeping`       | Events from this build have already arrived.                                                 |
+| `needs you`     | Installed, waiting on the one-time step under the row (Codex `/hooks`, an OpenCode restart). |
+| `not covered`   | Another build of the same harness is delivering and this one never has — fix under the row.  |
+| `not installed` | The harness isn't on this machine.                                                           |
+| `failed`        | Its install errored; the message and a retry command are under the row.                      |
+
+Re-run `birdybeep setup` after installing a new coding agent. It skips the phone step when the
+machine already has a token, so it costs one command and no QR scan.
+
+Flags: `--yes` / `--expect-email <addr>` behave as they do on `pair` (below); `--no-install` stops
+after the machine token; `--no-test` skips the closing Beep.
+
+The next two sections are the same two halves on their own — `birdybeep pair` for the token,
+`birdybeep agent install` for one harness at a time.
+
+---
+
+## 3. Pair your machine — `birdybeep pair`
 
 Pairing links this machine to your BirdyBeep account so events can be delivered to you.
 
@@ -82,8 +133,11 @@ trusts anything:
 
 ```text
 Pair this machine to you@example.com? [y/N] y
-✓ Paired to you@example.com. Run `birdybeep test` to send a test Beep.
+✓ Paired to you@example.com.
 ```
+
+`pair` then runs the same harness half `setup` does — coverage table and test Beep included. Pass
+`--no-install` to stop at the machine token.
 
 Answer anything but `y`/`yes` and **no token is stored** (exit code 1). On a headless box or in CI,
 pass `--expect-email <addr>` to pin the account that must have approved it (recommended) or `--yes`
@@ -107,7 +161,7 @@ It's idempotent (safe to run when already logged out).
 
 ---
 
-## 3. Install the agent adapters — `birdybeep agent install`
+## 4. Install the agent adapters — `birdybeep agent install`
 
 Adapters are the per-harness integrations. Installing one patches that harness's config so its
 lifecycle hooks call back into `birdybeep hook <harness>`.
@@ -274,7 +328,7 @@ against installer drift in tests.
 
 ---
 
-## 4. Per-harness gotchas
+## 5. Per-harness gotchas
 
 Two of the five harnesses need one extra action before they're live (Claude Code, Cursor, and
 GitHub Copilot CLI are live the moment install finishes). The CLI surfaces this for you, both in
@@ -299,7 +353,7 @@ restart confirms the plugin is live.
 
 ---
 
-## 5. Verify it works — `birdybeep status` and `birdybeep test`
+## 6. Verify it works — `birdybeep status` and `birdybeep test`
 
 Check the overall state:
 
@@ -354,7 +408,7 @@ queue as it goes and exits non-zero if anything is wrong.
 
 ---
 
-## 6. Staying up to date
+## 7. Staying up to date
 
 When you run any command, the CLI prints a one-line notice to **stderr** if a newer
 `@birdybeep/cli` has been published:
@@ -381,7 +435,7 @@ adapter config that changed between versions.
 
 ---
 
-## 7. Uninstalling — `birdybeep agent uninstall`
+## 8. Uninstalling — `birdybeep agent uninstall`
 
 Uninstall is the exact inverse of install: it removes only BirdyBeep-managed entries and restores
 your config from the backup.
