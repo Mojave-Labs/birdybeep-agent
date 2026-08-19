@@ -25,6 +25,7 @@ import {
   deriveCodeChallengeS256,
   generateCodeVerifier,
   getMachineIdentity,
+  getToken,
   LocalEventQueue,
   setToken,
   type TokenStoreOptions,
@@ -35,9 +36,10 @@ import {
 import { renderUnicodeCompact } from "uqr";
 
 import { cliConfigPath, readCliConfig, resolveApiUrl, writeCliConfig } from "../config";
-import { type Command, EXIT } from "../framework";
+import { type Command, type CommandContext, EXIT } from "../framework";
 import { pairStart, pairTokenPoll, type PairTokenResult } from "../pairing";
 import { CLI_VERSION } from "../version";
+import { failedSetupReport, runHarnessSetup, type SetupDeps, type SetupReport } from "./setup";
 
 /** Default delay between `/pair/token` polls (the start response has no interval). */
 export const DEFAULT_POLL_INTERVAL_MS = 2000;
@@ -64,22 +66,30 @@ export interface PairFlags {
   yes: boolean;
   /** `--expect-email <addr>`: pin the identity that must have approved this pairing. */
   expectEmail?: string;
+  /** `--no-install`: stop after the token — don't detect or install any harness (gcgp.5). */
+  noInstall: boolean;
+  /** `--no-test`: don't send the closing test Beep (gcgp.5). */
+  noTest: boolean;
   /** A usage problem (unknown value, stray argument) — the command exits EXIT.USAGE. */
   error?: string;
 }
 
 /**
- * Parse `pair`'s own flags out of the post-global argv. Accepts `--expect-email addr` and
- * `--expect-email=addr`; any stray positional is a usage error (pair takes none), so a
+ * Parse `pair`/`setup`'s own flags out of the post-global argv. Accepts `--expect-email addr` and
+ * `--expect-email=addr`; any stray positional is a usage error (neither verb takes one), so a
  * fat-fingered `birdybeep pair becs@example.com` can never be silently ignored while the
  * confirm gate falls back to prompting.
  */
 export function parsePairFlags(args: string[]): PairFlags {
-  const flags: PairFlags = { yes: false };
+  const flags: PairFlags = { yes: false, noInstall: false, noTest: false };
   for (let i = 0; i < args.length; i += 1) {
     const token = args[i] ?? "";
     if (token === "--yes" || token === "-y") {
       flags.yes = true;
+    } else if (token === "--no-install") {
+      flags.noInstall = true;
+    } else if (token === "--no-test") {
+      flags.noTest = true;
     } else if (token === "--expect-email" || token.startsWith("--expect-email=")) {
       const inline = token.startsWith("--expect-email=")
         ? token.slice("--expect-email=".length)
@@ -400,9 +410,65 @@ export interface PairCommandDeps {
   promptLine?: (question: string, on: "stdin" | "controlling-terminal") => Promise<string>;
   /** The pinned identity from config (default: the `expectEmail` key of the CLI config). */
   configuredExpectEmail?: () => string | undefined;
+  /**
+   * The one-step chain that runs once the token is stored (gcgp.5): detect + install every
+   * harness, print the per-build coverage table, send a real test Beep. On by default — that
+   * chain IS the product's setup. `false` turns it off for tests about the pairing handshake
+   * alone, which must never touch real adapters or the network.
+   */
+  setup?: SetupDeps | false;
 }
 
-export function createPairCommand(deps: PairCommandDeps = {}): Command {
+/**
+ * Run the post-pairing chain. ALWAYS returns a report — a failed one when the chain could not
+ * complete — because the caller reads it for both the exit code and the `--json` object.
+ *
+ * Two things this must keep apart, because they have different causes and different fixes:
+ *
+ *   - A HARNESS's adapter throwing is handled inside the chain, per adapter (a CLI that ships on
+ *     npm meets harnesses newer than itself, since users upgrade when they feel like it). It
+ *     becomes one `failed` ROW, the other harnesses are still wired up, and the run completes.
+ *     Never a crash on top of a machine that IS paired.
+ *   - THE CHAIN failing outright is what this catch is for, and it is NOT the same thing. It used
+ *     to return nothing, which the caller read as "no setup ran": exit 0, `setup` dropped from the
+ *     report. The human saw the failure and every machine consumer was told it succeeded.
+ *
+ * Pairing itself is untouched either way. The token is already stored by the time this runs, and
+ * a genuine pairing must never be reported as a failure.
+ */
+async function runSetupChain(
+  ctx: CommandContext,
+  deps: SetupDeps,
+  flags: PairFlags,
+): Promise<SetupReport> {
+  try {
+    return await runHarnessSetup(ctx, { sendTest: !flags.noTest }, deps);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    ctx.io.errline(
+      `This machine is paired, but wiring up your coding agents failed: ${message}. ` +
+        "Run `birdybeep agent install all` to do it on its own, then `birdybeep doctor`.",
+    );
+    return failedSetupReport(message);
+  }
+}
+
+/** How the two verbs that run this flow differ — everything else about them is identical. */
+interface PairingVerb {
+  name: string;
+  summary: string;
+  usage: string;
+  /** One-line "start here" hint; makes the verb the featured entry in the root help. */
+  gettingStarted?: string;
+  /**
+   * Go straight to the harness half when a token already exists, instead of minting another one.
+   * `setup` is the verb people re-run after installing a harness, and forcing a phone round-trip
+   * for that would make the re-run advice this ticket prints a lie. `pair` always re-pairs.
+   */
+  skipWhenPaired: boolean;
+}
+
+function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Command {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const clock = deps.now ?? (() => Date.now());
@@ -421,9 +487,10 @@ export function createPairCommand(deps: PairCommandDeps = {}): Command {
     });
 
   return {
-    name: "pair",
-    summary: "Pair this machine with your BirdyBeep account (QR or manual)",
-    usage: "birdybeep pair [--yes] [--expect-email <addr>] [--json]",
+    name: verb.name,
+    summary: verb.summary,
+    usage: verb.usage,
+    ...(verb.gettingStarted !== undefined ? { gettingStarted: verb.gettingStarted } : {}),
     options: [
       {
         flag: "--yes",
@@ -435,13 +502,50 @@ export function createPairCommand(deps: PairCommandDeps = {}): Command {
         value: "<addr>",
         summary: "Only trust the pairing if this account approved it (else fail)",
       },
+      {
+        flag: "--no-install",
+        summary: "Stop after pairing — don't detect or wire up any coding agent",
+      },
+      {
+        flag: "--no-test",
+        summary: "Don't send the test Beep at the end",
+      },
     ],
     run: async (ctx) => {
       const pairFlags = parsePairFlags(ctx.args);
       if (pairFlags.error !== undefined) {
-        ctx.io.errline(`birdybeep pair: ${pairFlags.error}.`);
+        ctx.io.errline(`birdybeep ${verb.name}: ${pairFlags.error}.`);
         return EXIT.USAGE;
       }
+      const chain = deps.setup === false || pairFlags.noInstall ? undefined : (deps.setup ?? {});
+      // The token store this command was given is the one the chain's test Beep has to read from,
+      // so it carries through unless the caller pinned a different one for the chain itself.
+      const setupDeps: SetupDeps = {
+        ...(deps.tokenOptions !== undefined ? { tokenOptions: deps.tokenOptions } : {}),
+        ...chain,
+      };
+
+      // `setup` re-run on an already-paired machine goes straight to the harness half. That is
+      // the whole point of the "install it, then run `birdybeep setup` again" advice this flow
+      // prints — a second phone round-trip for it would be busywork.
+      if (verb.skipWhenPaired && (await getToken(deps.tokenOptions ?? {})) !== null) {
+        ctx.io.line(
+          chain !== undefined
+            ? "✓ Already paired — checking which coding agents are wired up."
+            : "✓ Already paired. Nothing else to do with --no-install.",
+        );
+        // `undefined` here means the chain was never RUN (--no-install) — the only remaining
+        // reason `setup` is absent from the report. A chain that ran and failed reports itself.
+        const report =
+          chain !== undefined ? await runSetupChain(ctx, setupDeps, pairFlags) : undefined;
+        ctx.io.result({
+          paired: true,
+          alreadyPaired: true,
+          ...(report !== undefined ? { setup: report } : {}),
+        });
+        return report !== undefined && !report.ok ? EXIT.ERROR : EXIT.OK;
+      }
+
       const apiUrl = resolveApiUrl();
       const identity = getMachineIdentity(); // { label, os, fingerprintHash }
       // PKCE (dgxd): commit to a fresh random verifier by sending only its S256 challenge on
@@ -603,16 +707,63 @@ export function createPairCommand(deps: PairCommandDeps = {}): Command {
         discarded > 0
           ? ` Discarded ${discarded} event(s) queued before pairing — you won't be beeped about them.`
           : "";
-      ctx.io.emit(
-        `✓ Paired${humanSuffix}. Run \`birdybeep test\` to send a test Beep.${discardedSuffix}`,
-        {
-          paired: true,
-          machineId: paired.machineId,
-          discardedPrePairingEvents: discarded,
-          ...(approvedBy !== undefined ? { approvedByEmail: approvedBy } : {}),
-        },
-      );
-      return EXIT.OK;
+      // gcgp.5: pairing is the WHOLE of setup, so the token is not the end of the run — the
+      // harness half follows and the line above it just says what happened. The old copy pointed
+      // at `birdybeep test`, which is why a user could pair, get a Beep, and stop with nothing
+      // wired up. It only points anywhere now when the chain has been turned off.
+      const nextStep =
+        chain === undefined ? " Run `birdybeep setup` to wire up your coding agents." : "";
+      ctx.io.line(`✓ Paired${humanSuffix}.${nextStep}${discardedSuffix}`);
+
+      const report =
+        chain !== undefined ? await runSetupChain(ctx, setupDeps, pairFlags) : undefined;
+
+      // The pairing is reported as the success it was; the chain reports itself separately, so a
+      // failed chain can never ride out on pairing's exit code.
+      ctx.io.result({
+        paired: true,
+        machineId: paired.machineId,
+        discardedPrePairingEvents: discarded,
+        ...(approvedBy !== undefined ? { approvedByEmail: approvedBy } : {}),
+        ...(report !== undefined ? { setup: report } : {}),
+      });
+      return report !== undefined && !report.ok ? EXIT.ERROR : EXIT.OK;
     },
   };
+}
+
+/**
+ * `birdybeep pair` — mint a machine token, then wire up every coding agent on the machine.
+ * Always re-pairs, even when a token is already present.
+ */
+export function createPairCommand(deps: PairCommandDeps = {}): Command {
+  return createPairingCommand(
+    {
+      name: "pair",
+      summary: "Pair this machine and wire up every coding agent on it",
+      usage: "birdybeep pair [--yes] [--expect-email <addr>] [--no-install] [--no-test] [--json]",
+      skipWhenPaired: false,
+    },
+    deps,
+  );
+}
+
+/**
+ * `birdybeep setup` — the same flow under the verb people look for. `pair` describes the
+ * handshake; `setup` describes the job, and it is the one the root help features. It skips
+ * straight to the harness half on a machine that already has a token, so re-running it after
+ * installing a new harness costs nothing.
+ */
+export function createSetupCommand(deps: PairCommandDeps = {}): Command {
+  return createPairingCommand(
+    {
+      name: "setup",
+      summary: "Set up BirdyBeep here: pair, wire up every coding agent, test",
+      usage: "birdybeep setup [--yes] [--expect-email <addr>] [--no-install] [--no-test] [--json]",
+      gettingStarted:
+        "Pair this machine, wire up every coding agent it finds, and send a test Beep.",
+      skipWhenPaired: true,
+    },
+    deps,
+  );
 }

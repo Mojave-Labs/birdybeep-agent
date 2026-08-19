@@ -55,6 +55,7 @@ There is **no** local background daemon in MVP. Local delivery behavior:
 ## 4. CLI commands (PRD §9.4)
 
 ```bash
+birdybeep setup
 birdybeep pair
 birdybeep logout
 birdybeep unpair
@@ -79,6 +80,8 @@ birdybeep hook opencode
 birdybeep hook cursor
 birdybeep hook copilot <event-name>
 ```
+
+`setup` and `pair` run the same flow: mint the machine token, then detect + install every supported harness, print a per-build coverage table, and send a test event. `setup` skips the token half when one already exists; `--no-install` stops at the token.
 
 Install behavior is **idempotent**, backs up existing config, adds only BirdyBeep-managed entries, prints changed files + any required user action, and installs at the **user/global** level (project-level is not MVP). Uninstall removes only BirdyBeep-managed entries.
 

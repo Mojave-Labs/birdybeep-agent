@@ -10,7 +10,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 
-import type { AgentAdapter } from "@birdybeep/agent-core";
+import { type AgentAdapter, setToken, unavailableKeychainBackend } from "@birdybeep/agent-core";
 import {
   BIRDYBEEP_HOOK_COMMAND as CLAUDE_HOOK,
   claudeCodeAdapter,
@@ -34,6 +34,9 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../cli";
 import { EXIT } from "../framework";
 import { createAgentCommand, selectAdapters } from "./agent";
+
+/** `agent install` now reports whether the machine is paired; keep that off the real keychain. */
+const FILE_ONLY = { backend: unavailableKeychainBackend };
 
 let sandbox: Sandbox | undefined;
 const ORIGINAL_CODEX_HOME = process.env["CODEX_HOME"];
@@ -104,7 +107,7 @@ describe("agent install all", () => {
     seedAll(home);
     const out = capture();
     const code = await runCli(["agent", "install", "all", "--json"], {
-      commands: [createAgentCommand({ adapters: adapters() })],
+      commands: [createAgentCommand({ adapters: adapters(), tokenOptions: FILE_ONLY })],
       stdout: out.writer,
       stderr: out.writer,
       ensureConfig: false,
@@ -152,7 +155,7 @@ describe("agent install all", () => {
     sandbox = createSandbox();
     const home = sandbox.home;
     seedAll(home);
-    const cmd = createAgentCommand({ adapters: adapters() });
+    const cmd = createAgentCommand({ adapters: adapters(), tokenOptions: FILE_ONLY });
     const run = () =>
       runCli(["agent", "install", "all"], {
         commands: [cmd],
@@ -184,7 +187,7 @@ describe("agent install all", () => {
     seedAll(sandbox.home);
     const out = capture();
     await runCli(["agent", "install", "all"], {
-      commands: [createAgentCommand({ adapters: adapters() })],
+      commands: [createAgentCommand({ adapters: adapters(), tokenOptions: FILE_ONLY })],
       stdout: out.writer,
       stderr: out.writer,
       ensureConfig: false,
@@ -202,7 +205,7 @@ describe("agent install <harness> + edge cases", () => {
     const home = sandbox.home;
     const out = capture();
     await runCli(["agent", "install", "codex", "--json"], {
-      commands: [createAgentCommand({ adapters: adapters() })],
+      commands: [createAgentCommand({ adapters: adapters(), tokenOptions: FILE_ONLY })],
       stdout: out.writer,
       stderr: out.writer,
       ensureConfig: false,
@@ -224,7 +227,7 @@ describe("agent install <harness> + edge cases", () => {
     };
     const out = capture();
     const code = await runCli(["agent", "install", "codex", "--json"], {
-      commands: [createAgentCommand({ adapters: [notThere] })],
+      commands: [createAgentCommand({ adapters: [notThere], tokenOptions: FILE_ONLY })],
       stdout: out.writer,
       stderr: out.writer,
       ensureConfig: false,
@@ -234,11 +237,59 @@ describe("agent install <harness> + edge cases", () => {
     expect(parsed.results[0]).toMatchObject({ harness: "codex", detected: false });
   });
 
+  // gcgp.5 — the two ends of setup used to be silent about each other. A skipped harness was a
+  // dead end (no way to finish the job later), and installing hooks on an unpaired machine wired
+  // up a pipe to nowhere without a word about it.
+  it("tells you how to finish the job for a harness that is not installed yet", async () => {
+    sandbox = createSandbox();
+    const notThere: AgentAdapter = {
+      ...codexAdapter,
+      detect: () => Promise.resolve({ detected: false }),
+    };
+    const out = capture();
+    await runCli(["agent", "install", "codex"], {
+      commands: [createAgentCommand({ adapters: [notThere], tokenOptions: FILE_ONLY })],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(out.text()).toContain("not detected (skipped)");
+    expect(out.text()).toContain("install it, then run `birdybeep agent install codex`");
+  });
+
+  it("says the machine is not paired, so wired-up hooks reach nobody", async () => {
+    sandbox = createSandbox();
+    const out = capture();
+    await runCli(["agent", "install", "all"], {
+      commands: [createAgentCommand({ adapters: adapters(), tokenOptions: FILE_ONLY })],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(out.text()).toContain("This machine is not paired");
+    expect(out.text()).toContain("Run `birdybeep setup`");
+  });
+
+  it("stays quiet about pairing once the machine is paired", async () => {
+    sandbox = createSandbox();
+    await setToken("bbm_TESTONLY_agent_install", FILE_ONLY);
+    const out = capture();
+    const code = await runCli(["agent", "install", "all", "--json"], {
+      commands: [createAgentCommand({ adapters: adapters(), tokenOptions: FILE_ONLY })],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.OK);
+    expect((JSON.parse(out.text()) as { paired: boolean }).paired).toBe(true);
+    expect(out.text()).not.toContain("not paired");
+  });
+
   it("rejects an unknown target with USAGE", async () => {
     sandbox = createSandbox();
     const out = capture();
     const code = await runCli(["agent", "install", "bogus"], {
-      commands: [createAgentCommand({ adapters: adapters() })],
+      commands: [createAgentCommand({ adapters: adapters(), tokenOptions: FILE_ONLY })],
       stdout: out.writer,
       stderr: out.writer,
       ensureConfig: false,
@@ -271,7 +322,7 @@ describe("agent uninstall", () => {
       copilotHooksPath({ home, env: {} }),
     ].map((p) => readFileSync(p, "utf8"));
 
-    const cmd = createAgentCommand({ adapters: adapters() });
+    const cmd = createAgentCommand({ adapters: adapters(), tokenOptions: FILE_ONLY });
     await runCli(["agent", "install", "all"], {
       commands: [cmd],
       stdout: capture().writer,
@@ -306,7 +357,7 @@ describe("agent uninstall", () => {
     sandbox = createSandbox();
     const out = capture();
     const code = await runCli(["agent", "uninstall", "all", "--json"], {
-      commands: [createAgentCommand({ adapters: adapters() })],
+      commands: [createAgentCommand({ adapters: adapters(), tokenOptions: FILE_ONLY })],
       stdout: out.writer,
       stderr: out.writer,
       ensureConfig: false,
@@ -320,7 +371,7 @@ describe("agent uninstall", () => {
     sandbox = createSandbox();
     const out = capture();
     const code = await runCli(["agent", "uninstall", "bogus"], {
-      commands: [createAgentCommand({ adapters: adapters() })],
+      commands: [createAgentCommand({ adapters: adapters(), tokenOptions: FILE_ONLY })],
       stdout: out.writer,
       stderr: out.writer,
       ensureConfig: false,

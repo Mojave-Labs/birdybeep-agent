@@ -113,6 +113,7 @@ describe("CLI-E2E: pair → install → hook → delivered", () => {
     const pairOk = await runCli(["pair", "--yes"], {
       commands: [
         createPairCommand({
+          setup: false,
           fetchImpl: stubPairing(),
           tokenOptions: FILE_ONLY,
           sleep: () => Promise.resolve(),
@@ -133,6 +134,7 @@ describe("CLI-E2E: pair → install → hook → delivered", () => {
             detected(codexAdapter),
             detected(opencodeAdapter),
           ],
+          tokenOptions: FILE_ONLY,
         }),
       ],
       ...quiet(),

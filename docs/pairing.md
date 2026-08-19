@@ -1,7 +1,9 @@
 # Pairing
 
 `birdybeep pair` pairs this machine with your BirdyBeep account so the agent adapters can send
-you Beeps (notifications). Pairing uses a device-authorization-style flow: the CLI shows you a QR,
+you Beeps (notifications), then wires up every coding agent it finds — `birdybeep setup` is the
+same flow under the verb most people look for. This page covers the pairing half; the harness half
+is in [Installing BirdyBeep](./install.md#2-set-it-all-up--birdybeep-setup). Pairing uses a device-authorization-style flow: the CLI shows you a QR,
 its complete link, and a display-only session code; you confirm in the BirdyBeep mobile app, and
 the CLI receives and stores a machine token locally.
 
@@ -37,16 +39,19 @@ To pair this machine, open the BirdyBeep app, tap “pair a machine”, and scan
    Session code (display only; cannot approve by itself):  WXYZ-1234
 Waiting for you to approve this machine in the app…
 Pair this machine to you@example.com? [y/N] y
-✓ Paired to you@example.com. Run `birdybeep test` to send a test Beep.
+✓ Paired to you@example.com.
 ```
+
+The run continues into the harness half — every detected coding agent is installed, a coverage
+table is printed, and a test Beep is sent. Pass `--no-install` to stop at the machine token.
 
 Answer `n` (or anything that isn't `y`/`yes`) and **no token is stored** — see
 [Confirming the approving account](#confirming-the-approving-account) below, including the
 `--yes` / `--expect-email` flags for headless machines.
 
 `birdybeep pair` derives this machine's label from your hostname/OS and sends it when it opens
-the session (editable later in the app). Once paired, run [`birdybeep test`](./install.md) to send
-a test Beep, or `birdybeep status` to check integration state.
+the session (editable later in the app). Run `birdybeep status` any time to check integration
+state.
 
 ---
 

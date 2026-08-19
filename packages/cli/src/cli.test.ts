@@ -26,6 +26,7 @@ function capture(): { writer: { write: (s: string) => void }; text: () => string
 }
 
 const ALL_COMMANDS = [
+  "setup",
   "pair",
   "logout",
   "unpair",
@@ -48,6 +49,34 @@ describe("help + version", () => {
     });
     expect(code).toBe(EXIT.OK);
     for (const name of ALL_COMMANDS) expect(out.text()).toContain(name);
+  });
+
+  // gcgp.5: the root help listed ten commands in registry order with nothing saying which one a
+  // new user runs first, so the verb that sets the product up was as discoverable as
+  // `report-status`. The framework knows no command by name — it features whatever the registry
+  // marks with `gettingStarted`.
+  it("leads --help with a getting-started block naming the one verb to run first", async () => {
+    const out = capture();
+    await runCli(["--help"], { stdout: out.writer, stderr: out.writer, ensureConfig: false });
+    const text = out.text();
+    expect(text).toContain("Getting started:");
+    expect(text).toMatch(/Getting started:\n\s+birdybeep setup\s+\S/);
+    // It has to come BEFORE the wall of commands, or it is not an answer to "where do I start?".
+    expect(text.indexOf("Getting started:")).toBeLessThan(text.indexOf("Commands:"));
+  });
+
+  it("mirrors the featured command under --help --json", async () => {
+    const out = capture();
+    await runCli(["--help", "--json"], {
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    const parsed = JSON.parse(out.text()) as {
+      commands: { name: string; gettingStarted?: string }[];
+    };
+    const featured = parsed.commands.filter((c) => c.gettingStarted !== undefined);
+    expect(featured.map((c) => c.name)).toEqual(["setup"]);
   });
 
   it("no args prints help and exits 0", async () => {
