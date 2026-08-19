@@ -129,8 +129,16 @@ describe("doctor per-surface coverage", () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
     const path = join(sandbox.home, "observed.json");
-    recordObservedBuild("claude_code", "2.1.227", { path, now: () => 1_760_000_000_000 });
-    recordObservedBuild("claude_code", "2.1.227", { path, now: () => 1_760_000_060_000 });
+    recordObservedBuild(
+      "claude_code",
+      { version: "2.1.227", surface: "terminal" },
+      { path, now: () => 1_760_000_000_000 },
+    );
+    recordObservedBuild(
+      "claude_code",
+      { version: "2.1.227", surface: "terminal" },
+      { path, now: () => 1_760_000_060_000 },
+    );
 
     const { code, json } = await runDoctor(claudeWith("installed", [TERMINAL, DESKTOP]), path);
     const rows = byName(json);
@@ -154,7 +162,11 @@ describe("doctor per-surface coverage", () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
     const path = join(sandbox.home, "observed.json");
-    recordObservedBuild("claude_code", "0.148.0-alpha.9", { path });
+    recordObservedBuild(
+      "claude_code",
+      { version: "0.148.0-alpha.9", surface: "desktop" },
+      { path },
+    );
     // The ChatGPT-bundled Codex shape: a surface the filesystem cannot version.
     const bundled = surface("desktop", "desktop", "ChatGPT desktop app");
     const { json } = await runDoctor(claudeWith("installed", [bundled]), path);
@@ -187,7 +199,7 @@ describe("doctor per-surface coverage", () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
     const path = join(sandbox.home, "observed.json");
-    recordObservedBuild("claude_code", "2.1.227", { path });
+    recordObservedBuild("claude_code", { version: "2.1.227", surface: "terminal" }, { path });
     const shadowed: HarnessSurface = {
       ...surface("terminal-2", "terminal", "terminal CLI (shadowed on PATH)", "2.1.220"),
       shadowed: true,
@@ -203,7 +215,7 @@ describe("doctor per-surface coverage", () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
     const path = join(sandbox.home, "observed.json");
-    recordObservedBuild("claude_code", "2.1.229", { path });
+    recordObservedBuild("claude_code", { version: "2.1.229", surface: "desktop" }, { path });
     const { json } = await runDoctor(claudeWith("installed", [TERMINAL, DESKTOP]), path);
     const terminal = byName(json)["Claude Code: terminal CLI 2.1.227"];
     expect(terminal?.ok).toBe(false);

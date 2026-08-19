@@ -16,7 +16,11 @@ import {
 } from "./dedup";
 import { type FilteredActivityOptions, recordFilteredEvent } from "./filtered-activity";
 import { shouldSendEventType } from "./notify-matrix";
-import { type ObservedBuildsOptions, recordObservedBuild } from "./observed-builds";
+import {
+  type ObservedBuildsOptions,
+  type ObservedSurfaceKind,
+  recordObservedBuild,
+} from "./observed-builds";
 import type { Sender, SendResult } from "./sender";
 
 export type HookOutcome =
@@ -74,7 +78,20 @@ export async function runAgentHook(
   // Counted for every mappable payload regardless of outcome — filtered, deduped, queued and
   // unpaired all prove the build ran our command, which is the question (same reasoning as the
   // Codex trust marker, birdybeep-agent-qyf).
-  recordObservedBuild(event.harness, event.harness_version, options.observedBuilds ?? {});
+  // The surface comes from the adapter rather than the event: it is local diagnostic metadata,
+  // not wire contract. Keying by version alone let one build's event mark a different build
+  // covered — the exact failure this tally exists to catch.
+  let surface: ObservedSurfaceKind | undefined;
+  try {
+    surface = adapter.observeSurface?.(rawInput);
+  } catch {
+    surface = undefined; // a probe that throws must never disturb delivery
+  }
+  recordObservedBuild(
+    event.harness,
+    { version: event.harness_version, surface },
+    options.observedBuilds ?? {},
+  );
 
   // gcgp.3 — BEFORE the ledger and the sender: a type the backend can never push and needs
   // nothing from is tallied here and goes no further. Deliberately ahead of dedup so a flood

@@ -21,6 +21,7 @@ export {
   CLAUDE_CODE_HOOK_EVENTS,
   CLAUDE_CODE_NON_HOOK_EVENTS,
   ClaudeCodeMappingError,
+  claudeCodeSurface,
   isClaudeCodeHookPayload,
   normalizeClaudeCodeEvent,
 } from "./normalize";

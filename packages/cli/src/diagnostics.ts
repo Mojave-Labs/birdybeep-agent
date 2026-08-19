@@ -210,36 +210,83 @@ const CONFIGURED_STATUSES: ReadonlySet<IntegrationStatus> = new Set<IntegrationS
 /**
  * Attribute observed builds to surfaces and grade each one.
  *
- * A surface whose version was readable off disk claims the build with that exact version. A
- * surface whose engine keeps its version to itself (the ChatGPT-bundled Codex) claims a leftover
- * build only when the attribution is unambiguous — exactly one unclaimed build and exactly one
- * such surface. Guessing would put a version on the wrong row, which is worse than an empty one.
+ * Matching is by (SURFACE KIND, VERSION), never version alone. Two release channels can ship the
+ * same version, and a version the terminal CLI has since upgraded away from is not evidence about
+ * a desktop build — keying on version alone made both of those report a build that had never run
+ * the hook as covered.
+ *
+ * Three ways a surface can be matched, in descending order of certainty:
+ *   1. exact — an observation of this surface's kind AND version;
+ *   2. sole-of-kind — a surface whose version cannot be read off disk (the ChatGPT-bundled Codex)
+ *      claims an unclaimed observation OF ITS OWN KIND, and only when that is unambiguous;
+ *   3. unattributed — an observation whose surface the harness never named (Cursor says nothing;
+ *      so does a tally written before this key existed). It counts as evidence only when exactly
+ *      one surface carries its version. When two do, it settles nothing, and it SUPPRESSES the
+ *      uncovered verdict for them rather than picking a row — under-claiming is the safe
+ *      direction, the same call the Codex trust marker makes.
  */
 function gradeSurfaces(
   surfaces: HarnessSurface[],
   status: IntegrationStatus,
   observation: HarnessObservation | undefined,
 ): SurfaceState[] {
-  const builds = observation?.builds ?? {};
-  const claimed = new Set(
-    surfaces.map((s) => s.version).filter((v): v is string => v !== undefined),
-  );
-  const unclaimed = Object.keys(builds).filter((version) => !claimed.has(version));
-  const versionless = surfaces.filter((s) => s.version === undefined);
-  const soleUnclaimed =
-    unclaimed.length === 1 && versionless.length === 1 ? unclaimed[0] : undefined;
-
+  const builds = Object.values(observation?.builds ?? {});
   const configured = CONFIGURED_STATUSES.has(status);
+
+  const claimedByKind = new Map<string, Set<string>>();
+  for (const s of surfaces) {
+    if (s.version === undefined) continue;
+    const versions = claimedByKind.get(s.kind) ?? new Set<string>();
+    versions.add(s.version);
+    claimedByKind.set(s.kind, versions);
+  }
+
   const graded = surfaces.map((surface) => {
-    const version = surface.version ?? (surface === versionless[0] ? soleUnclaimed : undefined);
-    const build = version !== undefined ? builds[version] : undefined;
+    const exact = builds.filter(
+      (b) =>
+        b.surface === surface.kind &&
+        b.version === surface.version &&
+        surface.version !== undefined,
+    );
+
+    // (2) sole-of-kind, scoped to this surface's own kind so a terminal build's retired version
+    // can never be adopted by a desktop row.
+    let soleOfKind: typeof builds = [];
+    if (surface.version === undefined) {
+      const sameKindVersionless = surfaces.filter(
+        (s) => s.version === undefined && s.kind === surface.kind,
+      );
+      const unclaimed = builds.filter(
+        (b) =>
+          b.surface === surface.kind && !(claimedByKind.get(surface.kind)?.has(b.version) ?? false),
+      );
+      if (unclaimed.length === 1 && sameKindVersionless.length === 1) soleOfKind = unclaimed;
+    }
+
+    // (3) unattributed observations that carry this surface's version.
+    const unattributed =
+      surface.version === undefined
+        ? []
+        : builds.filter((b) => b.surface === "unknown" && b.version === surface.version);
+    const sharesVersion =
+      surface.version !== undefined &&
+      surfaces.some((s) => s !== surface && s.version === surface.version);
+    const ambiguous = unattributed.length > 0 && sharesVersion;
+
+    const matched = [...exact, ...soleOfKind, ...(ambiguous ? [] : unattributed)];
+    const events = matched.reduce((total, b) => total + b.count, 0);
+    const lastAt = matched.reduce<number | undefined>(
+      (latest, b) => (latest === undefined || b.lastAt > latest ? b.lastAt : latest),
+      undefined,
+    );
+    const observedVersion = surface.version === undefined ? soleOfKind[0]?.version : undefined;
+
     return {
       surface,
-      events: build?.count ?? 0,
-      ...(build !== undefined ? { lastAt: build.lastAt } : {}),
-      ...(surface.version === undefined && version !== undefined
-        ? { observedVersion: version }
-        : {}),
+      events,
+      ambiguous,
+      ...(lastAt !== undefined ? { lastAt } : {}),
+      ...(observedVersion !== undefined ? { observedVersion } : {}),
     };
   });
 
@@ -251,13 +298,13 @@ function gradeSurfaces(
   // one on PATH, so it is expected never to fire, and calling that a fault would tell the user to
   // go fix a build they cannot even run.
   const anyActive = graded.some((g) => g.events > 0 && g.surface.shadowed !== true);
-  return graded.map((g) => ({
+  return graded.map(({ ambiguous, ...g }) => ({
     ...g,
     coverage: !configured
       ? ("uncovered" as const)
       : g.events > 0
         ? ("active" as const)
-        : anyActive && g.surface.shadowed !== true
+        : anyActive && g.surface.shadowed !== true && !ambiguous
           ? ("uncovered" as const)
           : ("wired" as const),
   }));

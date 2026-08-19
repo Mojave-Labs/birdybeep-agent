@@ -12,7 +12,7 @@ import { readFilteredActivity } from "./filtered-activity";
 import { runAgentHook } from "./hook";
 import type { AgentAdapter, BirdyBeepAgentEvent, BirdyBeepEventType } from "./index";
 import { BIRDYBEEP_EVENT_TYPES, DEFAULT_NOTIFY, LOCAL_ONLY_EVENT_TYPES } from "./index";
-import { readObservedBuilds } from "./observed-builds";
+import { observedBuildKey, readObservedBuilds } from "./observed-builds";
 import type { Sender, SendResult } from "./sender";
 
 let sandbox: Sandbox | undefined;
@@ -260,7 +260,12 @@ describe("runAgentHook records the build that fired", () => {
         observedBuilds: { path },
       },
     );
-    expect(readObservedBuilds({ path })["claude_code"]?.builds["2.1.229"]?.count).toBe(1);
+    // No `observeSurface` on this stub, so the build is recorded unattributed — which grading
+    // treats as evidence that cannot settle an ambiguity, never as evidence for a chosen row.
+    expect(
+      readObservedBuilds({ path })["claude_code"]?.builds[observedBuildKey("unknown", "2.1.229")]
+        ?.count,
+    ).toBe(1);
   });
 
   it("counts a LOCAL-ONLY event too — the build still ran our hook", async () => {
@@ -280,7 +285,55 @@ describe("runAgentHook records the build that fired", () => {
     );
     expect(result.outcome).toBe("filtered");
     expect(sender.sent).toHaveLength(0);
-    expect(readObservedBuilds({ path })["claude_code"]?.builds["0.148.0-alpha.9"]?.count).toBe(1);
+    expect(
+      readObservedBuilds({ path })["claude_code"]?.builds[
+        observedBuildKey("unknown", "0.148.0-alpha.9")
+      ]?.count,
+    ).toBe(1);
+  });
+
+  it("keys the entry by the SURFACE the adapter reports, not by version alone", async () => {
+    sandbox = createSandbox();
+    const path = sandbox.path("observed.json");
+    const desktop: AgentAdapter = {
+      ...withVersion(adapterReturning("approval_required"), "2.1.229"),
+      observeSurface: () => "desktop",
+    };
+    await runAgentHook(
+      desktop,
+      {},
+      {
+        sender: fakeSender(),
+        ledger: new RecentEventLedger({ path: sandbox.path("ledger.json") }),
+        observedBuilds: { path },
+      },
+    );
+    const builds = readObservedBuilds({ path })["claude_code"]?.builds ?? {};
+    expect(builds[observedBuildKey("desktop", "2.1.229")]?.count).toBe(1);
+    expect(builds[observedBuildKey("terminal", "2.1.229")]).toBeUndefined();
+  });
+
+  it("survives a surface probe that throws — delivery must never depend on a diagnostic", async () => {
+    sandbox = createSandbox();
+    const path = sandbox.path("observed.json");
+    const broken: AgentAdapter = {
+      ...withVersion(adapterReturning("approval_required"), "2.1.229"),
+      observeSurface: () => {
+        throw new Error("probe blew up");
+      },
+    };
+    const result = await runAgentHook(
+      broken,
+      {},
+      {
+        sender: fakeSender(),
+        ledger: new RecentEventLedger({ path: sandbox.path("ledger.json") }),
+        observedBuilds: { path },
+      },
+    );
+    expect(result.outcome).toBe("delivered");
+    const builds = readObservedBuilds({ path })["claude_code"]?.builds ?? {};
+    expect(builds[observedBuildKey("unknown", "2.1.229")]?.count).toBe(1);
   });
 
   it("records nothing for an unmappable payload — no build reached the pipeline", async () => {

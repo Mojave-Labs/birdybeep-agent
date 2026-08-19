@@ -40,6 +40,7 @@ import {
   getMachineIdentity,
   normalizeEvent,
   type NormalizeOptions,
+  type ObservedSurfaceKind,
   sanitizeHarnessVersion,
 } from "@birdybeep/agent-core";
 
@@ -123,7 +124,54 @@ const ROLLOUT_HEAD_MAX_BYTES = 256 * 1024;
  * string is read out of the record — a rollout also holds the user's prompts, which must never
  * enter an event (§15).
  */
+/**
+ * Which SURFACE fired this hook — an npm-installed `codex`, or the build bundled in ChatGPT.app
+ * (birdybeep-agent-gcgp.6). Local diagnostic metadata only: it keys the observed-builds tally and
+ * never enters the event, so it is not part of the wire contract.
+ *
+ * Codex is the harness that needs this most and gives it up least readily. The two builds share
+ * one `~/.codex/config.toml`, so nothing about the config tells them apart, and the bundled build
+ * exports no version env var at all. Two signals, cheapest first:
+ *   1. `CODEX_MANAGED_PACKAGE_ROOT` — set by the npm install, never by the bundle. Free, and it
+ *      settles the common case without touching the disk.
+ *   2. the rollout's `originator` — `codex-tui` from the CLI, `Codex Desktop` from ChatGPT.app.
+ *      Observed on both, in the same `session_meta` line the version already comes from.
+ * Anything unrecognized is `undefined`, not a guess: an unattributed observation is treated as
+ * evidence that cannot settle an ambiguity, which is the safe direction.
+ */
+export function codexSurfaceFromPayload(
+  payload: unknown,
+  env: NodeJS.ProcessEnv = process.env,
+): ObservedSurfaceKind | undefined {
+  const managedRoot = env["CODEX_MANAGED_PACKAGE_ROOT"];
+  if (typeof managedRoot === "string" && managedRoot.length > 0) return "terminal";
+  const transcriptPath = asRecord(payload)["transcript_path"];
+  if (typeof transcriptPath !== "string" || transcriptPath.length === 0) return undefined;
+  const originator = sessionMetaFromRollout(transcriptPath)?.["originator"];
+  if (typeof originator !== "string") return undefined;
+  const lower = originator.toLowerCase();
+  if (lower.includes("desktop")) return "desktop";
+  if (lower.includes("tui") || lower.includes("cli")) return "terminal";
+  return undefined;
+}
+
 export function cliVersionFromRollout(transcriptPath: string): string | undefined {
+  return sanitizeHarnessVersion(sessionMetaFromRollout(transcriptPath)?.["cli_version"]);
+}
+
+/**
+ * The `session_meta` payload that opens a Codex rollout, or undefined.
+ *
+ * Bounded and fail-soft by construction — this runs on the hook path, which must never block or
+ * slow the harness: ONE synchronous read of at most {@link ROLLOUT_HEAD_MAX_BYTES}, only the
+ * first line is parsed, and every failure (missing file, truncated line, unparseable JSON, a
+ * different record type) returns undefined instead of throwing. Only the version and the
+ * originator are ever read out of it — a rollout also holds the user's prompts, which must never
+ * enter an event (§15).
+ */
+export function sessionMetaFromRollout(
+  transcriptPath: string,
+): Record<string, unknown> | undefined {
   let fd: number | undefined;
   try {
     fd = openSync(transcriptPath, "r");
@@ -134,7 +182,7 @@ export function cliVersionFromRollout(transcriptPath: string): string | undefine
     if (newline < 0) return undefined; // first line longer than the cap → give up, never guess
     const meta = asRecord(JSON.parse(head.slice(0, newline)));
     if (meta["type"] !== "session_meta") return undefined;
-    return sanitizeHarnessVersion(asRecord(meta["payload"])["cli_version"]);
+    return asRecord(meta["payload"]);
   } catch {
     return undefined; // absent/unreadable/garbled rollout is not an error — the field is optional
   } finally {

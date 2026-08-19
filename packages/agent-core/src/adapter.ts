@@ -13,6 +13,7 @@
  *   - uninstall removes exactly the managed entries (restores the original).
  */
 import type { BirdyBeepAgentEvent } from "./event";
+import type { ObservedSurfaceKind } from "./observed-builds";
 import type { HarnessId } from "./primitives";
 import type { HarnessSurface } from "./surface";
 
@@ -113,4 +114,15 @@ export interface AgentAdapter {
   doctor(): Promise<DoctorResult>;
   /** Map a raw harness payload to a redacted, validated canonical event. */
   normalizeEvent(input: unknown): Promise<BirdyBeepAgentEvent>;
+
+  /**
+   * Which SURFACE fired this payload — the terminal CLI, or an engine a desktop app spawned
+   * (birdybeep-agent-gcgp.6). Optional: an adapter whose harness says nothing useful simply omits
+   * it and its events are recorded as `unknown`.
+   *
+   * Deliberately NOT part of the canonical event. It exists only to key the local observed-builds
+   * tally, so adding it costs no wire-schema change and no cross-repo lockstep. Must be as
+   * side-effect-free and as fail-soft as `normalizeEvent`: it runs on the hook path.
+   */
+  observeSurface?(input: unknown): ObservedSurfaceKind | undefined;
 }

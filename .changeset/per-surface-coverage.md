@@ -28,9 +28,12 @@ like one that could.
   `~/Library/Application Support/Claude/claude-code`; every `codex` on PATH and the one inside
   ChatGPT.app; `cursor-agent` and Cursor.app. Versions are read from the filesystem — no engine is
   run, because a `--version` probe answers for whichever build is first on PATH.
-- Coverage is graded on events actually observed from each build, not on config presence. A build
-  is only reported as a gap once another build of the same harness is delivering and it still is
-  not; a shadowed PATH install is never blamed for not firing.
+- Coverage is graded on events actually observed from each build, not on config presence. Those
+  observations are keyed by which SURFACE fired, not by version alone — two channels can ship the
+  same version, and a version the terminal CLI has upgraded away from is not evidence about a
+  desktop build. A build is only reported as a gap once another build of the same harness is
+  delivering and it still is not; a shadowed PATH install is never blamed for not firing, and an
+  observation whose surface the harness never named settles nothing rather than picking a row.
 - Codex, Copilot and OpenCode gained the stale-launcher check Claude Code and Cursor already had.
   OpenCode's is different in kind: it reports the launcher record its plugin spawns, since a
   missing one silently falls back to a `PATH` lookup that drops events with no error.

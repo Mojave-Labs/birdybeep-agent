@@ -217,7 +217,7 @@ describe("birdybeep status per-surface coverage", () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
     const path = sandbox.path("observed.json");
-    recordObservedBuild("claude_code", "2.1.227", { path });
+    recordObservedBuild("claude_code", { version: "2.1.227", surface: "terminal" }, { path });
 
     const adapter = {
       id: "claude_code",

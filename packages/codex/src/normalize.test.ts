@@ -15,7 +15,12 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { cliVersionFromRollout, CodexMappingError, normalizeCodexEvent } from "./normalize";
+import {
+  cliVersionFromRollout,
+  CodexMappingError,
+  codexSurfaceFromPayload,
+  normalizeCodexEvent,
+} from "./normalize";
 
 const OPTS = { now: () => "2026-06-14T00:00:00.000Z", generateId: () => "evt_test_1" } as const;
 const CWD = "/Users/alice/project";
@@ -379,5 +384,54 @@ describe("harness_version from the rollout session_meta (gcgp.7)", () => {
       readRolloutVersion: () => "1.2.3",
     });
     expect(ev.harness_version).toBe("1.2.3");
+  });
+});
+
+/**
+ * gcgp.6: which SURFACE fired. Codex needs this most and gives it up least readily — the npm CLI
+ * and the ChatGPT-bundled build share one config file, so the rollout `originator` is the only
+ * thing that tells them apart. Both values below were captured from real rollouts on the machine
+ * this landed on.
+ */
+describe("codexSurfaceFromPayload", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function rollout(name: string, meta: Record<string, unknown>): string {
+    const dir = mkdtempSync(join(tmpdir(), "bb-surface-"));
+    dirs.push(dir);
+    const path = join(dir, name);
+    writeFileSync(path, `${JSON.stringify({ type: "session_meta", payload: meta })}\n`);
+    return path;
+  }
+
+  it("reads the npm install from the root it exports, without touching the disk", () => {
+    expect(
+      codexSurfaceFromPayload({ transcript_path: "/nope" }, { CODEX_MANAGED_PACKAGE_ROOT: "/x" }),
+    ).toBe("terminal");
+  });
+
+  it("tells the ChatGPT-bundled build from the terminal CLI by the rollout originator", () => {
+    const desktop = rollout("desk.jsonl", {
+      cli_version: "0.148.0-alpha.9",
+      originator: "Codex Desktop",
+      source: "vscode",
+    });
+    const terminal = rollout("term.jsonl", {
+      cli_version: "0.135.0",
+      originator: "codex-tui",
+      source: "cli",
+    });
+    expect(codexSurfaceFromPayload({ transcript_path: desktop }, {})).toBe("desktop");
+    expect(codexSurfaceFromPayload({ transcript_path: terminal }, {})).toBe("terminal");
+  });
+
+  it("says nothing rather than guessing when the rollout is absent or unrecognized", () => {
+    expect(codexSurfaceFromPayload({}, {})).toBeUndefined();
+    expect(codexSurfaceFromPayload({ transcript_path: "/does/not/exist" }, {})).toBeUndefined();
+    const odd = rollout("odd.jsonl", { cli_version: "1.0.0", originator: "something" });
+    expect(codexSurfaceFromPayload({ transcript_path: odd }, {})).toBeUndefined();
   });
 });

@@ -43,6 +43,28 @@ describe("versionFromVersionedPath", () => {
   it("is undefined when nothing in the path is a version", () => {
     expect(versionFromVersionedPath("/usr/local/bin/claude")).toBeUndefined();
   });
+
+  /**
+   * Windows accepts BOTH separators and a path can mix them, so splitting on `path.sep` alone
+   * produced one segment there and lost every version — green on macOS and Linux, red only on
+   * the Windows leg of the matrix. POSIX is the opposite case: `\` is legal IN a filename, so
+   * splitting on it there would corrupt a real directory name. Both are asserted on every OS.
+   */
+  it("reads a Windows path with either separator, and both mixed", () => {
+    const win = "win32" as NodeJS.Platform;
+    expect(versionFromVersionedPath("C:\\Users\\d\\claude\\versions\\2.1.227", win)).toBe(
+      "2.1.227",
+    );
+    expect(versionFromVersionedPath("C:/Users/d/claude/versions/2.1.227", win)).toBe("2.1.227");
+    expect(versionFromVersionedPath("C:\\Users\\d/claude/versions/2.1.227", win)).toBe("2.1.227");
+  });
+
+  it("treats a backslash as part of the NAME on POSIX, where it legally is one", () => {
+    const posix = "linux" as NodeJS.Platform;
+    // A directory genuinely called `versions\2.1.227` is not a `versions/` layout.
+    expect(versionFromVersionedPath("/home/d/claude/versions\\2.1.227", posix)).toBeUndefined();
+    expect(versionFromVersionedPath("/home/d/claude/versions/2.1.227", posix)).toBe("2.1.227");
+  });
 });
 
 describe("versionFromNodePackage", () => {

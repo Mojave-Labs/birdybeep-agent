@@ -19,7 +19,7 @@
  * than inventing a fake one, and it keeps `version` meaning "read off this machine".
  */
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { dirname, join, sep } from "node:path";
+import { dirname, join } from "node:path";
 
 import { sanitizeHarnessVersion } from "./harness-version";
 
@@ -79,6 +79,20 @@ export function desktopSurfacesSupported(options: SurfaceProbeOptions = {}): boo
   return (options.platform ?? process.platform) === "darwin";
 }
 
+/**
+ * Split a path into segments, platform-correctly.
+ *
+ * Windows accepts BOTH `\` and `/` as separators, and a path can mix them — a `join`ed path uses
+ * backslashes while a config value or a test fixture may use forward slashes, so splitting on
+ * `path.sep` alone silently produced ONE segment and lost every version. POSIX is the opposite
+ * case: `\` is a legal character IN a filename there, so splitting on it would corrupt a real
+ * directory name. Same class as the gcgp.9 tokenizer bug — a separator assumption only one
+ * platform ever sees.
+ */
+function pathSegments(path: string, platform: NodeJS.Platform): string[] {
+  return path.split(platform === "win32" ? /[\\/]+/ : /\/+/);
+}
+
 /** Resolve symlinks, falling back to the original path (a broken link is not an error here). */
 function realOrSelf(path: string): string {
   try {
@@ -99,8 +113,11 @@ function realOrSelf(path: string): string {
  */
 const VERSIONED_SEGMENT_RE = /^\d[A-Za-z0-9.+-]*\.[A-Za-z0-9.+-]+$/;
 
-export function versionFromVersionedPath(path: string): string | undefined {
-  const parts = path.split(sep);
+export function versionFromVersionedPath(
+  path: string,
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
+  const parts = pathSegments(path, platform);
   for (let i = parts.length - 1; i > 0; i -= 1) {
     const segment = parts[i];
     if (parts[i - 1] !== "versions" || segment === undefined) continue;
@@ -117,9 +134,12 @@ export function versionFromVersionedPath(path: string): string | undefined {
  * inside a `node_modules` tree, so an unrelated `package.json` further up can never be read as a
  * harness version.
  */
-export function versionFromNodePackage(binaryPath: string): string | undefined {
+export function versionFromNodePackage(
+  binaryPath: string,
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
   const resolved = realOrSelf(binaryPath);
-  if (!resolved.split(sep).includes("node_modules")) return undefined;
+  if (!pathSegments(resolved, platform).includes("node_modules")) return undefined;
   let dir = dirname(resolved);
   for (let depth = 0; depth < 3; depth += 1) {
     const manifest = join(dir, "package.json");
@@ -162,9 +182,12 @@ export function versionFromAppBundle(appPath: string): string | undefined {
 }
 
 /** Best-effort version of an engine binary from the filesystem alone; undefined when only it knows. */
-export function engineVersionFromPath(binaryPath: string): string | undefined {
+export function engineVersionFromPath(
+  binaryPath: string,
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
   const resolved = realOrSelf(binaryPath);
-  return versionFromVersionedPath(resolved) ?? versionFromNodePackage(resolved);
+  return versionFromVersionedPath(resolved, platform) ?? versionFromNodePackage(resolved, platform);
 }
 
 /**

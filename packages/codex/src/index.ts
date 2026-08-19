@@ -26,7 +26,12 @@ export {
   resolveCodexHookCommand,
   TRUST_INSTRUCTIONS,
 } from "./install";
-export { CodexMappingError, normalizeCodexEvent } from "./normalize";
+export {
+  CodexMappingError,
+  codexSurfaceFromPayload,
+  normalizeCodexEvent,
+  sessionMetaFromRollout,
+} from "./normalize";
 export {
   chatgptDesktopCodexPath,
   codexConfigDir,

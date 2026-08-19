@@ -24,6 +24,7 @@ import {
   getMachineIdentity,
   normalizeEvent,
   type NormalizeOptions,
+  type ObservedSurfaceKind,
   type RepoContext,
   sanitizeHarnessVersion,
   SESSION_NAME_METADATA_KEY,
@@ -199,6 +200,30 @@ function claudeCodeVersion(env: NodeJS.ProcessEnv): string | undefined {
   const aiAgent = env["AI_AGENT"];
   const fromAgent = typeof aiAgent === "string" ? AI_AGENT_VERSION_RE.exec(aiAgent) : null;
   return sanitizeHarnessVersion(fromAgent?.[1]?.replace(/-/g, "."));
+}
+
+/**
+ * Which SURFACE fired this hook — the terminal CLI, or the engine the Claude desktop app manages
+ * (birdybeep-agent-gcgp.6). Local diagnostic metadata only: it keys the observed-builds tally and
+ * never enters the event, so it is not part of the wire contract.
+ *
+ * Two independent signals, both observed in a real hook child's env, and desktop is only claimed
+ * on positive evidence — an unrecognized entrypoint reads `terminal`, which is where the plain
+ * `claude` binary lives, rather than inventing a desktop surface:
+ *   1. `CLAUDE_CODE_ENTRYPOINT` — the desktop app sets `claude-desktop`; the CLI sets `cli`.
+ *   2. `CLAUDE_CODE_EXECPATH` — the desktop launcher points it at its managed engine, whose path
+ *      carries the `claude-code/<version>/` segment {@link EXECPATH_VERSION_RE} already matches.
+ */
+export function claudeCodeSurface(
+  env: NodeJS.ProcessEnv = process.env,
+): ObservedSurfaceKind | undefined {
+  const entrypoint = env["CLAUDE_CODE_ENTRYPOINT"];
+  if (typeof entrypoint === "string" && entrypoint.toLowerCase().includes("desktop")) {
+    return "desktop";
+  }
+  const execPath = env["CLAUDE_CODE_EXECPATH"];
+  if (typeof execPath === "string" && EXECPATH_VERSION_RE.test(execPath)) return "desktop";
+  return "terminal";
 }
 
 /**
