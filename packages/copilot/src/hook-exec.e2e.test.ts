@@ -27,6 +27,7 @@ import {
   powershellLauncher,
   powershellQuote,
   resolveHookLauncher,
+  resolveOnPath,
   tokenizeCommand,
 } from "@birdybeep/agent-core";
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
@@ -43,11 +44,18 @@ import { copilotHooksPath } from "./paths";
 
 const POSIX = process.platform !== "win32";
 
-/** A PowerShell we can actually run the generated command through, if this machine has one. */
+/**
+ * A PowerShell we can actually run the generated command through, if this machine has one —
+ * resolved to an ABSOLUTE path. The exec test below runs with PATH emptied (that is the whole
+ * point: the launcher must not need PATH), so spawning the shell itself by bare name would fail
+ * to launch and report `status: null` rather than testing anything.
+ */
 function findPowerShell(): string | null {
   for (const candidate of ["pwsh", "powershell"]) {
     const probe = spawnSync(candidate, ["-NoProfile", "-Command", "exit 0"], { encoding: "utf8" });
-    if (probe.status === 0) return candidate;
+    if (probe.status !== 0) continue;
+    const absolute = resolveOnPath(candidate);
+    if (absolute !== null) return absolute;
   }
   return null;
 }
