@@ -125,7 +125,12 @@ function buildRig(sb: Sandbox): Rig {
       // payload was lost.
       `const valve = setTimeout(() => { write({ ran: true, stdin, stdinTimedOut: true }); process.exit(0); }, ${STUB_STDIN_TIMEOUT_MS});`,
       "process.stdin.on('data', (c) => { stdin += c; });",
-      "process.stdin.on('end', () => { clearTimeout(valve); write({ ran: true, stdin }); });",
+      // `process.exit`, not "let the loop drain": on Windows a stdin PIPE handle can keep Node
+      // alive after `end`, and then PowerShell — which blocks inside the call operator until its
+      // child exits — never returns either, so spawnSync times out and kills a run whose work is
+      // already complete. That is exactly what windows-latest showed: a full, correct receipt
+      // alongside status=null/SIGTERM. Both exit paths are now explicit and symmetric.
+      "process.stdin.on('end', () => { clearTimeout(valve); write({ ran: true, stdin }); process.exit(0); });",
     ].join("\n"),
     { mode: 0o755 },
   );
@@ -328,9 +333,13 @@ describe("gcgp.16: the powershell command Copilot executes", () => {
       sandbox = createSandbox();
       const rig = buildRig(sandbox);
       const { powershell } = copilotHookCommands("errorOccurred", rigLauncher(rig));
+      // The command under test runs VERBATIM as the first statement; `exit $LASTEXITCODE` is
+      // appended only so the shell cannot linger after it, and propagates the CLI's own exit code
+      // so a clean exit is still a real signal. (`-NonInteractive` alone did not settle it: it is
+      // already set below, and windows-latest still had to be killed.)
       const run = spawnSync(
         POWERSHELL!,
-        ["-NoProfile", "-NonInteractive", "-Command", powershell],
+        ["-NoProfile", "-NonInteractive", "-Command", `${powershell}; exit $LASTEXITCODE`],
         {
           input: PAYLOAD,
           encoding: "utf8",
