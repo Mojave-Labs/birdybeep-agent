@@ -24,11 +24,16 @@ import { resolveApiUrl } from "../config";
 import {
   cursorBridgeOnly,
   describeFilteredActivity,
+  describeSurface,
+  describeSurfaceCoverage,
   describeUnpairedActivity,
   filteredActivity,
+  gatherSurfaces,
   isPaired,
   localQueueDepth,
   localQueueOverflowDrops,
+  type SurfaceCoverageOptions,
+  surfaceRemedy,
   unpairedActivity,
 } from "../diagnostics";
 import { type Command, EXIT } from "../framework";
@@ -70,6 +75,8 @@ export interface DoctorCommandDeps {
   probeNetwork?: (baseUrl: string) => Promise<boolean>;
   /** Cursor detection for the bridge check (tests avoid shelling out to `cursor-agent`). */
   detectCursor?: () => Promise<DetectionResult>;
+  /** Where the observed-builds tally lives (tests point it at a sandbox). */
+  surfaceOptions?: SurfaceCoverageOptions;
 }
 
 export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
@@ -151,7 +158,13 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
         });
       }
 
-      // 2. Each adapter's own diagnostics (detected? installed? needs_trust/needs_restart/error?).
+      // 2. Each adapter's own diagnostics (detected? installed? needs_trust/needs_restart/error?),
+      // then 2b: one row per installed BUILD of that harness (gcgp.6). The adapter checks above
+      // describe the shared config — one answer for the whole harness — and a machine runs a
+      // harness from more than one place: the terminal CLI and the engine a desktop app spawns
+      // are separate installs on separate update channels. Kept immediately under their own
+      // harness so nothing above is reordered and the two read as one block.
+      const surfaceGroups = await gatherSurfaces(adapters, deps.surfaceOptions ?? {});
       for (const adapter of adapters) {
         const result = await adapter.doctor();
         for (const c of result.checks) {
@@ -160,6 +173,17 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
             ok: c.ok,
             ...(c.detail !== undefined ? { detail: c.detail } : {}),
             ...(c.remedy !== undefined ? { remedy: c.remedy } : {}),
+          });
+        }
+        const group = surfaceGroups.find((g) => g.harness === adapter.id);
+        if (group === undefined) continue;
+        for (const state of group.surfaces) {
+          const remedy = surfaceRemedy(state, group);
+          checks.push({
+            name: `${adapter.displayName}: ${describeSurface(state)}`,
+            ok: state.coverage !== "uncovered",
+            detail: describeSurfaceCoverage(state, group),
+            ...(remedy !== undefined ? { remedy } : {}),
           });
         }
       }
@@ -196,6 +220,7 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
         ctx.io.result({
           ok,
           checks,
+          surfaces: surfaceGroups,
           queue: { depthBefore, delivered: drain.delivered, depthAfter, overflowDropped },
           ...(unpaired !== null ? { unpairedActivity: unpaired } : {}),
           ...(filtered !== null ? { filteredActivity: filtered } : {}),

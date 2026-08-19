@@ -19,7 +19,12 @@ import {
 } from "@birdybeep/test-harness";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { backupPathFor, installCodex } from "./install";
+import {
+  backupPathFor,
+  BIRDYBEEP_HOOK_EVENTS,
+  installCodex,
+  recordCodexMigration,
+} from "./install";
 import { codexConfigFile } from "./paths";
 import { codexDoctor, codexStatus } from "./status";
 import { recordCodexEventSeen } from "./trust";
@@ -172,5 +177,100 @@ describe("read-only invariant", () => {
     await codexDoctor({ home: sandbox.home, detect: DETECTED, tokenOptions: FILE_ONLY });
     const after = captureTree(dirname(codexConfigFile({ home: sandbox.home })));
     assertTreesEqual(before, after);
+  });
+});
+
+/**
+ * gcgp.9 parity (wired for gcgp.16): a hook command whose absolute paths have moved still reads
+ * as fully installed while Codex fails it with exit 127 — the failure with no other symptom.
+ */
+describe("codexDoctor — hook command resolves", () => {
+  /** A real install, then the launcher swapped for the one under test (what an upgrade leaves). */
+  async function seedInstalled(home: string, command: string): Promise<void> {
+    await installCodex({ home, hookCommand: command }, home);
+  }
+
+  it("passes when every path in the installed command still exists", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const node = sandbox.path("node");
+    const cli = sandbox.path("birdybeep.cjs");
+    writeFileSync(node, "");
+    writeFileSync(cli, "");
+    await seedInstalled(sandbox.home, `"${node}" "${cli}" hook codex`);
+    const r = await codexDoctor({
+      home: sandbox.home,
+      detect: DETECTED,
+      dataDir: sandbox.path("data"),
+      tokenOptions: FILE_ONLY,
+    });
+    expect(r.checks.find((c) => c.name === "Hook command resolves")?.ok).toBe(true);
+  });
+
+  it("flags a moved CLI with the reinstall remedy", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const gone = sandbox.path("moved-away", "birdybeep.cjs");
+    await seedInstalled(sandbox.home, `"${gone}" hook codex`);
+    const r = await codexDoctor({
+      home: sandbox.home,
+      detect: DETECTED,
+      dataDir: sandbox.path("data"),
+      tokenOptions: FILE_ONLY,
+    });
+    const check = r.checks.find((c) => c.name === "Hook command resolves");
+    expect(check?.ok).toBe(false);
+    expect(check?.detail).toContain(gone);
+    expect(check?.detail).toMatch(/exit 127/);
+    expect(check?.remedy).toMatch(/birdybeep agent install codex/);
+  });
+});
+
+/**
+ * gcgp.15: an upgrade that rewrote the hook entries drops Codex's content-keyed trust, so
+ * turn-complete beeps are OFF for someone whose Codex beeps worked yesterday. That must not read
+ * like a first install.
+ */
+describe("codexDoctor — trust after a migration", () => {
+  async function doctorFor(home: string, dataDir: string) {
+    await installCodex({ home, dataDir }, home);
+    return codexDoctor({ home, detect: DETECTED, dataDir, tokenOptions: FILE_ONLY });
+  }
+
+  it("reads as a first install when nothing was migrated", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const r = await doctorFor(sandbox.home, sandbox.path("data"));
+    const check = r.checks.find((c) => c.name === "Codex hooks trusted");
+    expect(check?.ok).toBe(false);
+    expect(check?.detail).toMatch(/has not fired a trusted lifecycle hook yet/);
+  });
+
+  it("says turn-complete is OFF right now when an install migrated an existing user", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const dataDir = sandbox.path("data");
+    recordCodexMigration([...BIRDYBEEP_HOOK_EVENTS], { dataDir });
+    const r = await doctorFor(sandbox.home, dataDir);
+    const check = r.checks.find((c) => c.name === "Codex hooks trusted");
+    expect(check?.ok).toBe(false);
+    expect(check?.detail).toMatch(/turn-complete beeps are OFF right now/i);
+    expect(check?.remedy).toMatch(/\/hooks/);
+  });
+
+  it("self-clears once a genuinely trusted hook fires", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const dataDir = sandbox.path("data");
+    recordCodexMigration([...BIRDYBEEP_HOOK_EVENTS], { dataDir });
+    await installCodex({ home: sandbox.home, dataDir }, sandbox.home);
+    recordCodexEventSeen({ dataDir });
+    const r = await codexDoctor({
+      home: sandbox.home,
+      detect: DETECTED,
+      dataDir,
+      tokenOptions: FILE_ONLY,
+    });
+    expect(r.checks.find((c) => c.name === "Codex hooks trusted")?.ok).toBe(true);
   });
 });

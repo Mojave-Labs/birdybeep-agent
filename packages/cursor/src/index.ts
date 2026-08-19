@@ -7,7 +7,7 @@
  */
 export { CURSOR_HARNESS_ID, cursorAdapter } from "./adapter";
 export { CURSOR_HOOK_EVENTS, isCursorHookEventName, isCursorHookPayload } from "./bridge";
-export { detectCursor, type DetectOptions } from "./detect";
+export { cursorSurfaces, detectCursor, type DetectOptions } from "./detect";
 export { runCursorHook } from "./hook";
 export {
   backupPathFor,
@@ -21,7 +21,12 @@ export {
   resolveCursorHookCommand,
 } from "./install";
 export { CursorMappingError, normalizeCursorEvent } from "./normalize";
-export { cursorConfigDir, cursorHooksPath } from "./paths";
+export {
+  cursorConfigDir,
+  cursorDesktopAppPath,
+  type CursorDesktopOptions,
+  cursorHooksPath,
+} from "./paths";
 export {
   CURSOR_ADAPTER_VERSION,
   cursorDoctor,

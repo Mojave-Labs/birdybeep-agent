@@ -4,7 +4,7 @@
  * loads plugins only at startup, so install surfaces `needs_restart` until the next launch.
  */
 export { OPENCODE_HARNESS_ID, opencodeAdapter } from "./adapter";
-export { detectOpenCode, type OpenCodeDetectOptions } from "./detect";
+export { detectOpenCode, type OpenCodeDetectOptions, opencodeSurfaces } from "./detect";
 export {
   backupPathFor,
   BIRDYBEEP_PLUGIN_REF,

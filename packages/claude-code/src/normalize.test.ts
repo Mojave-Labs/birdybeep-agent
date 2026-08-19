@@ -24,6 +24,7 @@ import {
   CLAUDE_CODE_HOOK_EVENTS,
   CLAUDE_CODE_NON_HOOK_EVENTS,
   ClaudeCodeMappingError,
+  claudeCodeSurface,
   isClaudeCodeHookPayload,
   normalizeClaudeCodeEvent,
 } from "./normalize";
@@ -843,5 +844,32 @@ describe("harness_version identifies the engine that fired the hook (gcgp.7)", (
     // No version-shaped segment in EXECPATH → falls through to AI_AGENT; the path never leaks.
     expect(ev.harness_version).toBe("2.1.227");
     expect(JSON.stringify(ev)).not.toContain("rm -rf");
+  });
+});
+
+/**
+ * gcgp.6: which SURFACE fired, for the local observed-builds tally. Never enters the event —
+ * asserted here alongside the version because both come from the same hook-child environment.
+ */
+describe("claudeCodeSurface", () => {
+  it("reads the desktop app from the entrypoint it exports", () => {
+    expect(claudeCodeSurface({ CLAUDE_CODE_ENTRYPOINT: "claude-desktop" })).toBe("desktop");
+  });
+
+  it("reads the desktop app from the managed engine path when the entrypoint is absent", () => {
+    expect(
+      claudeCodeSurface({
+        CLAUDE_CODE_EXECPATH:
+          "/Users/d/Library/Application Support/Claude/claude-code/2.1.229/claude.app/Contents/MacOS/claude",
+      }),
+    ).toBe("desktop");
+  });
+
+  it("reads the terminal CLI, and never claims desktop without positive evidence", () => {
+    expect(claudeCodeSurface({ CLAUDE_CODE_ENTRYPOINT: "cli" })).toBe("terminal");
+    expect(claudeCodeSurface({})).toBe("terminal");
+    expect(claudeCodeSurface({ CLAUDE_CODE_EXECPATH: "/Users/d/.local/bin/claude" })).toBe(
+      "terminal",
+    );
   });
 });

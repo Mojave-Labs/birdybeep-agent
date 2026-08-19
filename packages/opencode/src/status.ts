@@ -18,7 +18,14 @@ import {
 } from "@birdybeep/agent-core";
 
 import { detectOpenCode } from "./detect";
-import { backupPathFor, BIRDYBEEP_PLUGIN_REF, isBirdyBeepPluginConfigured } from "./install";
+import {
+  backupPathFor,
+  BIRDYBEEP_PLUGIN_REF,
+  isBirdyBeepPluginConfigured,
+  opencodeLauncherPath,
+  readOpenCodeLauncher,
+  staleOpenCodeLauncherPaths,
+} from "./install";
 import { opencodeConfigDir, opencodeConfigFile } from "./paths";
 import { hasOpenCodeEventBeenSeen, type OpenCodeRestartOptions } from "./restart";
 
@@ -147,6 +154,54 @@ export async function opencodeDoctor(opts: OpenCodeStatusOptions = {}): Promise<
               remedy: "Run `birdybeep agent install opencode` to add the plugin.",
             },
       );
+
+      // 3b. gcgp.9 parity, OpenCode-shaped (gcgp.16). OpenCode is the one adapter that writes NO
+      // command string into harness config: install records an absolute launcher argv in the user
+      // data dir and the plugin spawns it directly — no shell, no PATH. So the artifact to inspect
+      // is that record, not a config file, and its failures look nothing like exit 127.
+      //
+      // A STALE record is always a break — it names a CLI or Node that has moved. A MISSING one
+      // only means the plugin is back to resolving a bare `birdybeep` on PATH, and how bad that
+      // is depends on evidence we already have: if OpenCode has never sent an event, it is the
+      // prime suspect and worth a red line, because a failed PATH lookup there is silent and
+      // leaves no exit-127 trail anywhere to find. If events ARE arriving, PATH demonstrably
+      // works on this machine, and calling that "error" would be a doctor that lies.
+      if (config.configured) {
+        const launcher = readOpenCodeLauncher(opts);
+        // Read the record RAW (gcgp.16's helper), not via readOpenCodeLauncher: since that now
+        // rejects a record whose CLI entry is gone, deriving stale paths from its result would
+        // make this branch dead code and collapse "your CLI moved" into "you never installed" —
+        // losing the one detail that names the repair.
+        const stalePaths = [...new Set(staleOpenCodeLauncherPaths(opts))];
+        const delivering = hasOpenCodeEventBeenSeen(opts);
+        if (stalePaths.length > 0) {
+          checks.push({
+            name: "Plugin launcher resolves",
+            ok: false,
+            status: "error",
+            detail: `The recorded launcher points at ${stalePaths.join(", ")}, which no longer exists.`,
+            remedy:
+              "Run `birdybeep agent install opencode` to record the launcher for the current CLI.",
+          });
+        } else if (launcher !== null) {
+          checks.push({ name: "Plugin launcher resolves", ok: true });
+        } else if (delivering) {
+          checks.push({
+            name: "Plugin launcher resolves",
+            ok: true,
+            detail: `No launcher is recorded at ${opencodeLauncherPath(opts)}, so the plugin finds \`birdybeep\` on PATH — which is working here. Re-run \`birdybeep agent install opencode\` to pin it, so a launch with a stripped PATH cannot silently drop events.`,
+          });
+        } else {
+          checks.push({
+            name: "Plugin launcher resolves",
+            ok: false,
+            status: "error",
+            detail: `No launcher is recorded at ${opencodeLauncherPath(opts)}, so the plugin falls back to finding \`birdybeep\` on PATH — which OpenCode may not have, and a failed lookup there drops the event with no error anywhere.`,
+            remedy:
+              "Run `birdybeep agent install opencode` to record the launcher for the current CLI.",
+          });
+        }
+      }
 
       // 4. Plugin loaded (restart done / a real event seen)?
       if (config.configured) {

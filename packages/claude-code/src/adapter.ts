@@ -8,7 +8,7 @@ import type { AgentAdapter } from "@birdybeep/agent-core";
 
 import { detectClaudeCode } from "./detect";
 import { installClaudeCode } from "./install";
-import { normalizeClaudeCodeEvent } from "./normalize";
+import { claudeCodeSurface, normalizeClaudeCodeEvent } from "./normalize";
 import { claudeCodeDoctor, claudeCodeStatus } from "./status";
 import { uninstallClaudeCode } from "./uninstall";
 
@@ -24,4 +24,6 @@ export const claudeCodeAdapter: AgentAdapter = {
   status: () => claudeCodeStatus(),
   doctor: () => claudeCodeDoctor(),
   normalizeEvent: (input) => normalizeClaudeCodeEvent(input),
+  // gcgp.6: local-only, never on the wire — keys the observed-builds tally per surface.
+  observeSurface: () => claudeCodeSurface(),
 };

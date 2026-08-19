@@ -8,7 +8,7 @@ import type { AgentAdapter } from "@birdybeep/agent-core";
 
 import { detectCodex } from "./detect";
 import { installCodex } from "./install";
-import { normalizeCodexEvent } from "./normalize";
+import { codexSurfaceFromPayload, normalizeCodexEvent } from "./normalize";
 import { codexDoctor, codexStatus } from "./status";
 import { uninstallCodex } from "./uninstall";
 
@@ -24,4 +24,6 @@ export const codexAdapter: AgentAdapter = {
   status: () => codexStatus(),
   doctor: () => codexDoctor(),
   normalizeEvent: (input) => normalizeCodexEvent(input),
+  // gcgp.6: local-only, never on the wire — keys the observed-builds tally per surface.
+  observeSurface: (input) => codexSurfaceFromPayload(input),
 };

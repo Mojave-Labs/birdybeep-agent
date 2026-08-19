@@ -1,5 +1,5 @@
 export { COPILOT_HARNESS_ID, copilotAdapter } from "./adapter";
-export { detectCopilot, type DetectCopilotOptions } from "./detect";
+export { copilotSurfaces, detectCopilot, type DetectCopilotOptions } from "./detect";
 export { runCopilotHook } from "./hook";
 export {
   COPILOT_HOOK_EVENTS,

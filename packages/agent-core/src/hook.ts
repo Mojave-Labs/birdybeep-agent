@@ -16,6 +16,11 @@ import {
 } from "./dedup";
 import { type FilteredActivityOptions, recordFilteredEvent } from "./filtered-activity";
 import { shouldSendEventType } from "./notify-matrix";
+import {
+  type ObservedBuildsOptions,
+  type ObservedSurfaceKind,
+  recordObservedBuild,
+} from "./observed-builds";
 import type { Sender, SendResult } from "./sender";
 
 export type HookOutcome =
@@ -48,6 +53,8 @@ export interface RunHookOptions {
   ledger?: RecentEventLedger;
   /** Where the locally-filtered tally is written (tests); default `<dataDir>/filtered-events.json`. */
   filteredActivity?: FilteredActivityOptions;
+  /** Where the observed-builds tally is written (tests); default `<dataDir>/observed-builds.json`. */
+  observedBuilds?: ObservedBuildsOptions;
 }
 
 /**
@@ -64,6 +71,27 @@ export async function runAgentHook(
   } catch {
     return { outcome: "skipped" }; // unmappable/garbled hook payload → ignore, don't disturb the harness
   }
+
+  // gcgp.6 — record WHICH BUILD of the harness just reached us, before any filter can return.
+  // Every surface of a harness shares one config file, so config presence says a harness is
+  // wired but never which of its builds actually runs the hook; `harness_version` (gcgp.7) does.
+  // Counted for every mappable payload regardless of outcome — filtered, deduped, queued and
+  // unpaired all prove the build ran our command, which is the question (same reasoning as the
+  // Codex trust marker, birdybeep-agent-qyf).
+  // The surface comes from the adapter rather than the event: it is local diagnostic metadata,
+  // not wire contract. Keying by version alone let one build's event mark a different build
+  // covered — the exact failure this tally exists to catch.
+  let surface: ObservedSurfaceKind | undefined;
+  try {
+    surface = adapter.observeSurface?.(rawInput);
+  } catch {
+    surface = undefined; // a probe that throws must never disturb delivery
+  }
+  recordObservedBuild(
+    event.harness,
+    { version: event.harness_version, surface },
+    options.observedBuilds ?? {},
+  );
 
   // gcgp.3 — BEFORE the ledger and the sender: a type the backend can never push and needs
   // nothing from is tallied here and goes no further. Deliberately ahead of dedup so a flood

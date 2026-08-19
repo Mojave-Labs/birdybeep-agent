@@ -12,9 +12,13 @@ import {
   type FilteredActivity,
   getMachineIdentity,
   getToken,
+  type HarnessObservation,
+  type HarnessSurface,
   type IntegrationStatus,
   LocalEventQueue,
+  type ObservedBuildsOptions,
   readFilteredActivity,
+  readObservedBuilds,
   readUnpairedNotice,
   type TokenStoreOptions,
   type UnpairedNotice,
@@ -159,4 +163,244 @@ export function describeFilteredActivity(activity: FilteredActivity): string {
 /** Machine label + OS (the event `machine` identity). */
 export function machineIdentity(): { label: string; os: string } {
   return getMachineIdentity();
+}
+
+/**
+ * Per-SURFACE coverage (birdybeep-agent-gcgp.6).
+ *
+ *   active    — this build has fired BirdyBeep's hook.
+ *   wired     — the harness config carries our entries, but nothing has come from this build yet.
+ *   uncovered — this build cannot beep: either the harness has no BirdyBeep entries at all, or it
+ *               has them and every OTHER build of the same harness is delivering while this one
+ *               never has.
+ */
+export type SurfaceCoverage = "active" | "wired" | "uncovered";
+
+export interface SurfaceState {
+  surface: HarnessSurface;
+  coverage: SurfaceCoverage;
+  /** Events observed from this build. */
+  events: number;
+  /** Epoch ms of the most recent one. */
+  lastAt?: number;
+  /**
+   * The build this surface was seen running as, when the filesystem could not say. Set only for
+   * a surface whose `version` is unknown and which an observed build could be attributed to.
+   */
+  observedVersion?: string;
+}
+
+export interface HarnessSurfaces {
+  harness: string;
+  displayName: string;
+  /** The harness's own §8.8 status — one fact about the shared config, for every surface. */
+  status: IntegrationStatus;
+  surfaces: SurfaceState[];
+  /** Events from this harness that named no build, so they belong to no row. */
+  unversionedEvents: number;
+}
+
+/** Statuses that mean BirdyBeep's entries ARE in the harness config (trust/restart still pending). */
+const CONFIGURED_STATUSES: ReadonlySet<IntegrationStatus> = new Set<IntegrationStatus>([
+  "installed",
+  "needs_trust",
+  "needs_restart",
+]);
+
+/**
+ * Attribute observed builds to surfaces and grade each one.
+ *
+ * Matching is by (SURFACE KIND, VERSION), never version alone. Two release channels can ship the
+ * same version, and a version the terminal CLI has since upgraded away from is not evidence about
+ * a desktop build — keying on version alone made both of those report a build that had never run
+ * the hook as covered.
+ *
+ * Three ways a surface can be matched, in descending order of certainty:
+ *   1. exact — an observation of this surface's kind AND version;
+ *   2. sole-of-kind — a surface whose version cannot be read off disk (the ChatGPT-bundled Codex)
+ *      claims an unclaimed observation OF ITS OWN KIND, and only when that is unambiguous;
+ *   3. unattributed — an observation whose surface the harness never named (Cursor says nothing;
+ *      so does a tally written before this key existed). It counts as evidence only when exactly
+ *      one surface carries its version. When two do, it settles nothing, and it SUPPRESSES the
+ *      uncovered verdict for them rather than picking a row — under-claiming is the safe
+ *      direction, the same call the Codex trust marker makes.
+ */
+function gradeSurfaces(
+  surfaces: HarnessSurface[],
+  status: IntegrationStatus,
+  observation: HarnessObservation | undefined,
+): SurfaceState[] {
+  const builds = Object.values(observation?.builds ?? {});
+  const configured = CONFIGURED_STATUSES.has(status);
+
+  const claimedByKind = new Map<string, Set<string>>();
+  for (const s of surfaces) {
+    if (s.version === undefined) continue;
+    const versions = claimedByKind.get(s.kind) ?? new Set<string>();
+    versions.add(s.version);
+    claimedByKind.set(s.kind, versions);
+  }
+
+  const graded = surfaces.map((surface) => {
+    const exact = builds.filter(
+      (b) =>
+        b.surface === surface.kind &&
+        b.version === surface.version &&
+        surface.version !== undefined,
+    );
+
+    // (2) sole-of-kind, scoped to this surface's own kind so a terminal build's retired version
+    // can never be adopted by a desktop row.
+    let soleOfKind: typeof builds = [];
+    if (surface.version === undefined) {
+      const sameKindVersionless = surfaces.filter(
+        (s) => s.version === undefined && s.kind === surface.kind,
+      );
+      const unclaimed = builds.filter(
+        (b) =>
+          b.surface === surface.kind && !(claimedByKind.get(surface.kind)?.has(b.version) ?? false),
+      );
+      if (unclaimed.length === 1 && sameKindVersionless.length === 1) soleOfKind = unclaimed;
+    }
+
+    // (3) unattributed observations that carry this surface's version.
+    const unattributed =
+      surface.version === undefined
+        ? []
+        : builds.filter((b) => b.surface === "unknown" && b.version === surface.version);
+    const sharesVersion =
+      surface.version !== undefined &&
+      surfaces.some((s) => s !== surface && s.version === surface.version);
+    const ambiguous = unattributed.length > 0 && sharesVersion;
+
+    const matched = [...exact, ...soleOfKind, ...(ambiguous ? [] : unattributed)];
+    const events = matched.reduce((total, b) => total + b.count, 0);
+    const lastAt = matched.reduce<number | undefined>(
+      (latest, b) => (latest === undefined || b.lastAt > latest ? b.lastAt : latest),
+      undefined,
+    );
+    const observedVersion = surface.version === undefined ? soleOfKind[0]?.version : undefined;
+
+    return {
+      surface,
+      events,
+      ambiguous,
+      ...(lastAt !== undefined ? { lastAt } : {}),
+      ...(observedVersion !== undefined ? { observedVersion } : {}),
+    };
+  });
+
+  // "Uncovered" needs a comparison, not an absolute: on a machine where nothing has fired yet,
+  // every build is equally unproven and none of them is a fault. It becomes a real, actionable
+  // gap only once a SIBLING build of the same harness is delivering and this one still is not.
+  //
+  // A SHADOWED install is exempt from that comparison in both directions: it sits behind another
+  // one on PATH, so it is expected never to fire, and calling that a fault would tell the user to
+  // go fix a build they cannot even run.
+  const anyActive = graded.some((g) => g.events > 0 && g.surface.shadowed !== true);
+  return graded.map(({ ambiguous, ...g }) => ({
+    ...g,
+    coverage: !configured
+      ? ("uncovered" as const)
+      : g.events > 0
+        ? ("active" as const)
+        : anyActive && g.surface.shadowed !== true && !ambiguous
+          ? ("uncovered" as const)
+          : ("wired" as const),
+  }));
+}
+
+export interface SurfaceCoverageOptions {
+  /** Override the observed-builds tally path (tests). */
+  observedBuilds?: ObservedBuildsOptions;
+}
+
+/**
+ * Every harness's installed builds, graded. Runs the real `adapter.detect()` (which enumerates
+ * surfaces) and `adapter.status()`, and reads the local observed-builds tally — no network, no
+ * spawning of any engine beyond the `--version` probe detection already does.
+ */
+export async function gatherSurfaces(
+  adapters: AgentAdapter[],
+  options: SurfaceCoverageOptions = {},
+): Promise<HarnessSurfaces[]> {
+  const observed = readObservedBuilds(options.observedBuilds ?? {});
+  return Promise.all(
+    adapters.map(async (adapter) => {
+      const observation = observed[adapter.id];
+      const base = {
+        harness: adapter.id,
+        displayName: adapter.displayName,
+        unversionedEvents: observation?.unversioned ?? 0,
+      };
+      try {
+        const [detection, status] = await Promise.all([adapter.detect(), adapter.status()]);
+        return {
+          ...base,
+          status,
+          surfaces: detection.detected
+            ? gradeSurfaces(detection.surfaces ?? [], status, observation)
+            : [],
+        };
+      } catch {
+        // Coverage reporting is a diagnostic: an adapter that cannot probe itself must degrade
+        // to "no rows", never take down the `doctor` run that was supposed to explain it.
+        return { ...base, status: "unknown" as IntegrationStatus, surfaces: [] };
+      }
+    }),
+  );
+}
+
+/** How a surface row is titled in `status` / `doctor`: label plus the build it is. */
+export function describeSurface(state: SurfaceState): string {
+  const version = state.surface.version ?? state.observedVersion;
+  return version !== undefined ? `${state.surface.label} ${version}` : state.surface.label;
+}
+
+/**
+ * One line saying what is (or is not) reaching this surface, and why. The two ways a surface ends
+ * up uncovered have different answers, so they read differently: the harness has no BirdyBeep
+ * entries at all, or it has them and every sibling build is delivering while this one never has.
+ */
+export function describeSurfaceCoverage(state: SurfaceState, group: HarnessSurfaces): string {
+  if (state.coverage === "active") {
+    const last = state.lastAt !== undefined ? `, last ${new Date(state.lastAt).toISOString()}` : "";
+    return `covered — ${state.events} event(s) from this build${last}`;
+  }
+  if (state.coverage === "wired") {
+    return state.surface.shadowed === true
+      ? `${group.displayName}'s hooks are installed and this build shares them, but another install comes first on PATH — it only runs if that order changes`
+      : `${group.displayName}'s hooks are installed and this build shares them; nothing has fired from it yet`;
+  }
+  if (!CONFIGURED_STATUSES.has(group.status)) {
+    return `not covered — ${group.displayName} carries no BirdyBeep hooks, so this build cannot beep`;
+  }
+  const active = group.surfaces.filter((s) => s.coverage === "active").map(describeSurface);
+  const delivering = active.join(", ");
+  const verb = active.length === 1 ? "is" : "are";
+  return `not covered — nothing has ever fired from this build, while ${delivering} ${verb} delivering through the same config`;
+}
+
+/** CLI install target for an adapter id (the CLI says `claude`, the adapter id is `claude_code`). */
+function installTarget(harness: string): string {
+  return harness === "claude_code" ? "claude" : harness;
+}
+
+/** What to do about an uncovered surface; `undefined` when another check already owns the fix. */
+export function surfaceRemedy(state: SurfaceState, group: HarnessSurfaces): string | undefined {
+  if (state.coverage !== "uncovered") return undefined;
+  // The harness-level cause already has its own check with its own remedy — don't print it twice.
+  if (!CONFIGURED_STATUSES.has(group.status)) return undefined;
+  const install = `\`birdybeep agent install ${installTarget(group.harness)}\``;
+  // The two kinds fail for different reasons, so they get different instructions. A desktop app
+  // spawns its engine with the LOGIN shell's PATH, which is where a bare hook command goes
+  // missing — the failure this whole epic turned up.
+  return state.surface.kind === "desktop"
+    ? `Run a turn in ${state.surface.label}. If it stays uncovered, that build cannot run the hook ` +
+        `command: a desktop app spawns its engine with your LOGIN shell's PATH, not an interactive ` +
+        `shell's, so a bare command is invisible to it. Re-run ${install} from a shell where ` +
+        `\`birdybeep\` resolves — it rewrites the entry with absolute paths that need no PATH at all.`
+    : `Run a turn in ${state.surface.label}. If it stays uncovered, re-run ${install} from a shell ` +
+        `where \`birdybeep\` resolves, then check that ${state.surface.enginePath} is the build you ` +
+        `are actually running.`;
 }
