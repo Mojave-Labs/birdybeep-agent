@@ -19,7 +19,7 @@ import { readFileSync } from "node:fs";
 
 import {
   createSender,
-  type SendResult,
+  type HookOutcome,
   setToken,
   unavailableKeychainBackend,
 } from "@birdybeep/agent-core";
@@ -64,7 +64,7 @@ afterEach(async () => {
 
 async function setUp(): Promise<{
   sb: Sandbox;
-  fire: (p: unknown) => Promise<SendResult["outcome"] | "deduped" | "skipped">;
+  fire: (p: unknown) => Promise<HookOutcome>;
 }> {
   sink = await StubEventSink.start();
   sandbox = createSandbox();

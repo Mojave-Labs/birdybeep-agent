@@ -21,8 +21,8 @@ import { join } from "node:path";
 
 import {
   createSender,
+  type HookOutcome,
   runAgentHook,
-  type SendResult,
   setToken,
   unavailableKeychainBackend,
 } from "@birdybeep/agent-core";
@@ -86,7 +86,7 @@ function tmpCheckout(name: string, branch: string): string {
 
 async function setUp(): Promise<{
   sb: Sandbox;
-  fire: (p: unknown) => Promise<SendResult["outcome"] | "deduped" | "skipped">;
+  fire: (p: unknown) => Promise<HookOutcome>;
 }> {
   sink = await StubEventSink.start();
   sandbox = createSandbox();

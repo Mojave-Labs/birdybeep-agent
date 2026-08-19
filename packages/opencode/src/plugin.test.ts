@@ -94,8 +94,11 @@ describe("plugin forwards lifecycle events through the hook to the sink", () => 
     expect(types).toContain("session_started");
     expect(types).toContain("approval_required");
     expect(types).toContain("agent_idle");
-    expect(types).toContain("tool_finished");
-    expect(sink!.received()).toHaveLength(4);
+    // The `tool.execute.after` handler IS registered and DID run — normalize.test.ts pins its
+    // mapping to tool_finished — but the client-side notify-matrix filter (gcgp.3) withholds
+    // that type, so three of the four reach the sink.
+    expect(types).not.toContain("tool_finished");
+    expect(sink!.received()).toHaveLength(3);
 
     // Every delivered event carries the workspace cwd hashed (never raw).
     for (const e of sink!.received()) {

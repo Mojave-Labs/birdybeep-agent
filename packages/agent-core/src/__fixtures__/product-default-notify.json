@@ -1,0 +1,18 @@
+{
+  "session_started": false,
+  "session_resumed": false,
+  "session_active": false,
+  "needs_input": true,
+  "approval_required": true,
+  "agent_idle": true,
+  "agent_completed": true,
+  "agent_failed": true,
+  "test_failed": true,
+  "tool_started": false,
+  "tool_finished": false,
+  "subagent_started": false,
+  "subagent_completed": false,
+  "custom": false,
+  "test": true,
+  "session_ended": false
+}

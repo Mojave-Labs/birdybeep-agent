@@ -128,6 +128,52 @@ describe("birdybeep status", () => {
     expect(text).toContain("Queue:");
   });
 
+  // gcgp.3 — the filter made the loudest proof-of-life (Codex PostToolUse) invisible to the
+  // backend, so `status` has to supply it from the local tally. Driven through the REAL hook
+  // pipeline, not by writing the file directly.
+  it("reports locally-filtered activity so a working install never looks dead", async () => {
+    sink = await StubEventSink.start();
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const sinkUrl = sink.url;
+    const sender = createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY });
+    for (const tool of ["Bash", "Edit", "Read"]) {
+      const fired = await runHookCommand(
+        "codex",
+        { hook_event_name: "PostToolUse", session_id: "s", cwd: "/tmp/x", tool_name: tool },
+        sender,
+      );
+      expect(fired.outcome).toBe("filtered");
+    }
+    expect(sink.received()).toHaveLength(0); // none of them reached the backend
+
+    const cmd = createStatusCommand({
+      adapters: [],
+      createSender: () => createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY }),
+      tokenOptions: FILE_ONLY,
+    });
+    const json = capture();
+    await runCli(["status", "--json"], {
+      commands: [cmd],
+      stdout: json.writer,
+      stderr: json.writer,
+      ensureConfig: false,
+    });
+    expect(JSON.parse(json.text())).toMatchObject({
+      filteredActivity: { count: 3, byType: { tool_finished: 3 } },
+    });
+
+    const human = capture();
+    await runCli(["status"], {
+      commands: [cmd],
+      stdout: human.writer,
+      stderr: human.writer,
+      ensureConfig: false,
+    });
+    expect(human.text()).toContain("3 local-only event(s)");
+    expect(human.text()).toContain("tool_finished ×3");
+  });
+
   it("not paired → says so clearly and exits non-zero", async () => {
     sandbox = createSandbox();
     await clearToken(FILE_ONLY); // ensure no token

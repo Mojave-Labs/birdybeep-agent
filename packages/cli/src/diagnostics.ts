@@ -9,10 +9,12 @@ import { homedir } from "node:os";
 import {
   type AgentAdapter,
   type DetectionResult,
+  type FilteredActivity,
   getMachineIdentity,
   getToken,
   type IntegrationStatus,
   LocalEventQueue,
+  readFilteredActivity,
   readUnpairedNotice,
   type TokenStoreOptions,
   type UnpairedNotice,
@@ -130,6 +132,28 @@ export async function cursorBridgeOnly(opts: CursorBridgeOptions = {}): Promise<
   const claude = birdyBeepHookCount(claudeSettingsPath(home), CLAUDE_HOOK_EVENTS, isClaudeEntry);
   if (claude === null || claude === 0) return false;
   return birdyBeepHookCount(cursorHooksPath(home), CURSOR_HOOK_EVENTS, isCursorEntry) === 0;
+}
+
+/**
+ * Events the hook pipeline handled locally and never sent, because the backend can never
+ * push their type (gcgp.3). `null` when nothing has been filtered on this machine.
+ */
+export function filteredActivity(): FilteredActivity | null {
+  return readFilteredActivity();
+}
+
+/**
+ * One line describing locally-filtered activity, for `status` / `doctor`. This is the
+ * "your hooks ARE firing" evidence — after gcgp.3 the highest-volume proof of a working
+ * install (Codex `PostToolUse`) never reaches the backend, so it has to be reported here.
+ */
+export function describeFilteredActivity(activity: FilteredActivity): string {
+  const types = Object.entries(activity.byType)
+    .sort(([, a], [, b]) => b - a)
+    .map(([type, n]) => `${type} ×${n}`)
+    .join(", ");
+  const since = new Date(activity.firstAt).toISOString();
+  return `${activity.count} local-only event(s) since ${since}${types ? ` (${types})` : ""} — hooks are firing; these types never beep, so they are not sent.`;
 }
 
 /** Machine label + OS (the event `machine` identity). */

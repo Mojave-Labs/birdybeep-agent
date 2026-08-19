@@ -50,11 +50,18 @@ import { isCodexLifecycleHookPayload } from "./normalize";
  * question trust answers; that the event went nowhere for want of a token is `doctor`'s
  * business, and withholding trust would make `birdybeep pair` silently re-open the /hooks
  * prompt on a machine that had already granted it.
+ *
+ * `filtered` counts for the same reason again, and it is LOAD-BEARING (gcgp.3): PostToolUse
+ * is the highest-frequency trust-gated hook Codex fires, and its `tool_finished` is now
+ * withheld client-side. Leaving `filtered` out would make a trusted install look untrusted
+ * until some OTHER hook happened to fire — the marker asks whether Codex RAN our command,
+ * and a filtered event is proof that it did.
  */
 const TRUST_PROVING_OUTCOMES: ReadonlySet<HookOutcome> = new Set<HookOutcome>([
   "delivered",
   "queued",
   "unpaired",
+  "filtered",
 ]);
 
 export interface CodexTrustOptions {
