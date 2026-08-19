@@ -12,8 +12,11 @@ import {
   HOOK_COMMAND_ENV_VAR,
   hookCommand,
   hookCommandPaths,
+  type HookLauncher,
   isBirdyBeepCliEntry,
   isBirdyBeepHookCommand,
+  powershellLauncher,
+  powershellQuote,
   resolveHookCommand,
   resolveHookLauncher,
   shellQuote,
@@ -287,5 +290,90 @@ describe("cross-platform command shapes (run on EVERY host)", () => {
       "cursor",
     ]);
     expect(isBirdyBeepHookCommand(WIN_COMMAND, "cursor", [], "linux")).toBe(true);
+  });
+});
+
+/**
+ * gcgp.16 — the PowerShell form. Copilot's hook entry carries a SEPARATE `powershell` command,
+ * and neither the POSIX nor the cmd.exe rule fits it: a line starting with a quoted string is
+ * parsed as an EXPRESSION (it would print the path), and a double-quoted string interpolates
+ * `$…`. So it gets the call operator plus single quotes, and the tokenizer has to read those
+ * back — `install` repair, `uninstall`, and the stale-path check all depend on recognizing our
+ * own command after we wrote it.
+ */
+describe("powershell launcher (gcgp.16)", () => {
+  const RUNTIME: HookLauncher = {
+    launcher: `"${NODE}" "${BIN}"`,
+    source: "runtime",
+    argv: [NODE, BIN],
+  };
+
+  it("resolveHookLauncher exposes the unquoted argv the quoter needs", () => {
+    const launcher = resolveHookLauncher({
+      env: {},
+      execPath: NODE,
+      argv: [NODE, BIN, "agent", "install", "copilot"],
+      platform: "darwin",
+    });
+    expect(launcher.argv).toEqual([NODE, BIN]);
+    expect(BARE_HOOK_LAUNCHER.argv).toEqual(["birdybeep"]);
+    // An override is a raw shell string the user wrote — there is no argv to re-quote.
+    expect(
+      resolveHookLauncher({ env: { [HOOK_COMMAND_ENV_VAR]: "mise exec -- birdybeep" } }).argv,
+    ).toBeUndefined();
+  });
+
+  it("prefixes the call operator and single-quotes each path", () => {
+    expect(powershellLauncher(RUNTIME)).toBe(`& '${NODE}' '${BIN}'`);
+    expect(powershellLauncher(BARE_HOOK_LAUNCHER)).toBe("birdybeep"); // no `&` needed
+    expect(powershellLauncher({ launcher: "mise exec -- birdybeep", source: "override" })).toBe(
+      "mise exec -- birdybeep",
+    );
+  });
+
+  it("keeps `$` literal — the double-quoted form would have expanded it", () => {
+    // The exact hazard: PowerShell would read "$Recycle" as a (nonexistent) variable.
+    expect(powershellQuote("C:\\$Recycle.Bin\\node.exe")).toBe("'C:\\$Recycle.Bin\\node.exe'");
+    expect(powershellQuote("/home/a$b/birdybeep")).toBe("'/home/a$b/birdybeep'");
+  });
+
+  it("writes a literal quote by doubling it", () => {
+    expect(powershellQuote("/home/o'brien/node")).toBe("'/home/o''brien/node'");
+  });
+
+  it("round-trips through the tokenizer on both platforms", () => {
+    for (const platform of ["darwin", "win32"] as const) {
+      const command = `${powershellLauncher(RUNTIME)} hook copilot sessionStart`;
+      expect(tokenizeCommand(command, platform)).toEqual([
+        "&",
+        NODE,
+        BIN,
+        "hook",
+        "copilot",
+        "sessionStart",
+      ]);
+      // The leading `&` must not stop us recognizing our own command, or finding its paths.
+      expect(isBirdyBeepHookCommand(command, "copilot", ["sessionStart"], platform)).toBe(true);
+      expect(hookCommandPaths(command, platform)).toEqual([NODE, BIN]);
+      expect(staleHookCommandPaths(command, (p) => p !== BIN, platform)).toEqual([BIN]);
+    }
+  });
+
+  it("a single quote INSIDE double quotes is still an ordinary character", () => {
+    // POSIX shellQuote double-quotes, and a path may legitimately contain `'` — that must not be
+    // mistaken for the start of a literal region.
+    const odd = "/home/o'brien/birdybeep";
+    expect(tokenizeCommand(`${shellQuote(odd, "darwin")} hook copilot stop`, "darwin")).toEqual([
+      odd,
+      "hook",
+      "copilot",
+      "stop",
+    ]);
+  });
+
+  it("still refuses to claim a third party's powershell hook", () => {
+    expect(
+      isBirdyBeepHookCommand("& '/opt/other-tool' hook copilot stop", "copilot", ["stop"]),
+    ).toBe(false);
   });
 });

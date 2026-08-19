@@ -17,6 +17,14 @@
  * If BirdyBeep created the file from scratch (no backup) and nothing else remains, the file
  * is removed. Idempotent: a no-op when nothing of ours is present. The backup is consumed
  * on success.
+ *
+ * Hook removal is at the INNER-HOOK level, not the matcher entry (birdybeep-agent-gcgp.19). A
+ * Codex matcher entry is `{matcher, hooks: [{type, command}, …]}` and can hold SEVERAL commands,
+ * so dropping the whole entry because it CONTAINS ours deleted a user's own command that happened
+ * to share the matcher — silent data loss, and a violation of the uninstall contract. Instead:
+ * filter our command out of each entry, keep the entry (with its `matcher` and any unknown
+ * fields) while anything else remains, and drop it only once it holds nothing but ours — which
+ * preserves the byte-for-byte restore for the pure case.
  */
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -24,7 +32,12 @@ import { homedir } from "node:os";
 import type { UninstallOptions, UninstallResult } from "@birdybeep/agent-core";
 import { parse, stringify } from "smol-toml";
 
-import { backupPathFor, isBirdyBeepHookEntry, notifyIsLegacyBirdyBeep } from "./install";
+import {
+  backupPathFor,
+  clearCodexMigration,
+  isBirdyBeepHook,
+  notifyIsLegacyBirdyBeep,
+} from "./install";
 import { codexConfigFile, type CodexPathOptions } from "./paths";
 import { clearCodexTrust, type CodexTrustOptions } from "./trust";
 
@@ -52,6 +65,23 @@ function deepEqual(a: unknown, b: unknown): boolean {
     );
   }
   return false;
+}
+
+/**
+ * Drop our command from ONE matcher entry (birdybeep-agent-gcgp.19). A Codex matcher entry can
+ * hold several commands, so removal is at the inner-hook level: if the user put their own command
+ * in the same entry as ours, that entry survives with their hook — and its `matcher` and any
+ * unknown fields — intact. The entry is dropped only when it held nothing but ours. Returns the
+ * ORIGINAL object when we change nothing, so an untouched entry stays identical.
+ */
+function stripBirdyBeepFromEntry(entry: unknown): { entry: unknown; removed: boolean } {
+  const record = asRecord(entry);
+  const hooks = record["hooks"];
+  if (!Array.isArray(hooks)) return { entry, removed: false };
+  const kept = (hooks as unknown[]).filter((hook) => !isBirdyBeepHook(hook));
+  if (kept.length === hooks.length) return { entry, removed: false }; // nothing of ours here
+  if (kept.length === 0) return { entry: undefined, removed: true }; // purely ours → drop it
+  return { entry: { ...record, hooks: kept }, removed: true }; // keep the user's siblings
 }
 
 /**
@@ -88,8 +118,12 @@ export function removeBirdyBeepConfig(
         nextHooks[event] = entries;
         continue;
       }
-      const kept = entries.filter((e) => !isBirdyBeepHookEntry(e));
-      if (kept.length !== entries.length) removedAny = true;
+      const kept: unknown[] = [];
+      for (const entry of entries) {
+        const stripped = stripBirdyBeepFromEntry(entry);
+        if (stripped.removed) removedAny = true;
+        if (stripped.entry !== undefined) kept.push(stripped.entry);
+      }
       if (kept.length > 0) nextHooks[event] = kept; // else: prune the now-empty event
     }
     if (Object.keys(nextHooks).length > 0) cleaned["hooks"] = nextHooks;
@@ -132,6 +166,7 @@ export function uninstallCodex(
   if (Object.keys(cleaned).length === 0 && !backupExists) {
     rmSync(configPath, { force: true });
     clearCodexTrust(options);
+    clearCodexMigration(options); // gcgp.15: no install of ours remains to be re-trusted
     return Promise.resolve({ changed: true, removedFiles: [configPath], restoredFiles: [] });
   }
 
@@ -140,6 +175,7 @@ export function uninstallCodex(
     writeFileSync(configPath, backupRaw);
     rmSync(backupPath, { force: true });
     clearCodexTrust(options);
+    clearCodexMigration(options); // gcgp.15: no install of ours remains to be re-trusted
     return Promise.resolve({ changed: true, removedFiles: [], restoredFiles: [configPath] });
   }
 
@@ -148,5 +184,6 @@ export function uninstallCodex(
   writeFileSync(configPath, out.endsWith("\n") ? out : `${out}\n`);
   if (backupExists) rmSync(backupPath, { force: true }); // backup consumed
   clearCodexTrust(options);
+  clearCodexMigration(options); // gcgp.15: no install of ours remains to be re-trusted
   return Promise.resolve({ changed: true, removedFiles: [], restoredFiles: [configPath] });
 }
