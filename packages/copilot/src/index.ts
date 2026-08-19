@@ -7,13 +7,17 @@ export {
   COPILOT_HOOKS_VERSION,
   copilotBackupPath,
   copilotHookCommand,
+  type CopilotHookCommands,
+  copilotHookCommands,
   type CopilotHookEventName,
   type CopilotInstallOptions,
   generatedCopilotHooks,
   generatedCopilotHooksText,
   installCopilot,
+  installedBirdyBeepCommands,
   isCopilotHookEventName,
   isCurrentCopilotHooks,
+  resolveCopilotLauncher,
 } from "./install";
 export { CopilotMappingError, normalizeCopilotEvent } from "./normalize";
 export {

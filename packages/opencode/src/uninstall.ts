@@ -10,13 +10,21 @@
  * our entry from the CURRENT config and re-serialize, preserving user edits. If BirdyBeep
  * created the file from scratch (no backup) and nothing else remains, the file is removed.
  * Idempotent; the backup is consumed on success.
+ *
+ * The launcher record install writes for the plugin (gcgp.16) is ours as well, so it is cleared
+ * alongside the restart marker on every successful uninstall.
  */
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 
 import type { UninstallOptions, UninstallResult } from "@birdybeep/agent-core";
 
-import { backupPathFor, BIRDYBEEP_PLUGIN_REF } from "./install";
+import {
+  backupPathFor,
+  BIRDYBEEP_PLUGIN_REF,
+  clearOpenCodeLauncher,
+  type OpenCodeLauncherOptions,
+} from "./install";
 import { opencodeConfigFile, type OpenCodePathOptions } from "./paths";
 import { clearOpenCodeRestart, type OpenCodeRestartOptions } from "./restart";
 
@@ -64,7 +72,10 @@ export function removeBirdyBeepPlugin(config: Record<string, unknown>): {
 
 /** Reverse {@link installOpenCode}. */
 export function uninstallOpenCode(
-  options: UninstallOptions & OpenCodePathOptions & OpenCodeRestartOptions = {},
+  options: UninstallOptions &
+    OpenCodePathOptions &
+    OpenCodeRestartOptions &
+    OpenCodeLauncherOptions = {},
   home: string = homedir(),
 ): Promise<UninstallResult> {
   const configPath = opencodeConfigFile({ ...options, home: options.home ?? home });
@@ -97,6 +108,7 @@ export function uninstallOpenCode(
   if (Object.keys(cleaned).length === 0 && !backupExists) {
     rmSync(configPath, { force: true });
     clearOpenCodeRestart(options);
+    clearOpenCodeLauncher(options); // gcgp.16: the recorded absolute launcher is ours too
     return Promise.resolve({ changed: true, removedFiles: [configPath], restoredFiles: [] });
   }
 
@@ -105,6 +117,7 @@ export function uninstallOpenCode(
     writeFileSync(configPath, backupRaw);
     rmSync(backupPath, { force: true });
     clearOpenCodeRestart(options);
+    clearOpenCodeLauncher(options); // gcgp.16: the recorded absolute launcher is ours too
     return Promise.resolve({ changed: true, removedFiles: [], restoredFiles: [configPath] });
   }
 
@@ -112,5 +125,6 @@ export function uninstallOpenCode(
   writeFileSync(configPath, `${JSON.stringify(cleaned, null, 2)}\n`);
   if (backupExists) rmSync(backupPath, { force: true }); // backup consumed
   clearOpenCodeRestart(options);
+  clearOpenCodeLauncher(options); // gcgp.16: the recorded absolute launcher is ours too
   return Promise.resolve({ changed: true, removedFiles: [], restoredFiles: [configPath] });
 }

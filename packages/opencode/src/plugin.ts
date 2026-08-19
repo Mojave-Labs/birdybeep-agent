@@ -14,8 +14,19 @@
  * `invokeHook` is injectable so tests (and OC-E2E) route through the in-process hook
  * runner + a stub sink; the default spawns the `birdybeep hook opencode` CLI command
  * (built in the a-cli epic) fire-and-forget.
+ *
+ * PATH (birdybeep-agent-gcgp.16): resolving `birdybeep` on PATH is the LAST resort, not the first.
+ * Unlike every other adapter, this one writes no command string into a harness config — the spawn
+ * happens here, at runtime, so a stripped PATH produced no exit-127 line in a hook log, just a
+ * silent drop of every event with a single stderr breadcrumb nobody sees. Install records the
+ * absolute launcher (Node + CLI entry) it resolved, and {@link defaultInvokeHook} prefers it.
  */
+import { spawn } from "node:child_process";
+import { dirname } from "node:path";
+
 import { safeSpawn } from "@birdybeep/agent-core";
+
+import { readOpenCodeLauncher } from "./install";
 
 /** The envelope forwarded to the BirdyBeep hook path; `normalizeOpenCodeEvent` consumes it. */
 export interface OpenCodeEventEnvelope {
@@ -81,13 +92,52 @@ function logSpawnFailureOnce(reason: string): void {
 
   console.error(
     `birdybeep: could not spawn the CLI to deliver an event (${reason}). ` +
-      `Events from this OpenCode session are being dropped — check that \`birdybeep\` is on PATH and run \`birdybeep doctor\`.`,
+      `Events from this OpenCode session are being dropped — re-run \`birdybeep agent install opencode\` ` +
+      `(it records the CLI's absolute path, so OpenCode no longer has to find it on PATH), then \`birdybeep doctor\`.`,
   );
+}
+
+/**
+ * Spawn the launcher install recorded — absolute Node running the absolute CLI entry (gcgp.16).
+ * Returns false when there is no usable record, so the caller falls back to the PATH lookup.
+ *
+ * No shell and no PATH is consulted, which makes this strictly SAFER than the fallback as well as
+ * more reliable: argv[0] is validated absolute + existing by `readOpenCodeLauncher`, so the
+ * cwd-binary-planting hijack `safeSpawn` defends against (this plugin's cwd is the repo the
+ * developer just opened) has nothing to resolve. cwd is forced to the Node binary's own directory
+ * for the same reason — never the inherited, attacker-controlled one. And because argv[0] is a
+ * real executable rather than a `.cmd` shim, stdin is a plain pipe on every platform: the Windows
+ * batch-shim hand-off that forced safeSpawn's temp-file redirect cannot arise here.
+ */
+function spawnRecordedLauncher(payload: string): boolean {
+  const argv = readOpenCodeLauncher();
+  if (argv === null) return false;
+  const [program, ...prefix] = argv as [string, ...string[]];
+  const child = spawn(program, [...prefix, "hook", "opencode"], {
+    cwd: dirname(program),
+    windowsHide: true,
+    stdio: ["pipe", "ignore", "ignore"],
+    detached: true,
+  });
+  child.on("error", (err) => logSpawnFailureOnce(err.message)); // best-effort, never block
+  child.stdin?.on("error", () => {
+    /* child exited before we finished writing — best-effort, never throw */
+  });
+  try {
+    child.stdin?.end(payload);
+  } catch {
+    /* stdin already torn down; the event is simply dropped */
+  }
+  child.unref(); // fire-and-forget: the hook outlives this OpenCode event
+  return true;
 }
 
 /** Default delivery: hand the envelope to `birdybeep hook opencode` and return immediately. */
 function defaultInvokeHook(envelope: OpenCodeEventEnvelope): void {
   try {
+    // Prefer the absolute launcher install resolved: OpenCode may well have been started without
+    // the user's shell PATH, and then the fallback below finds nothing at all.
+    if (spawnRecordedLauncher(JSON.stringify(envelope))) return;
     // SECURITY (sec-review-2026-07 H1): we MUST NOT spawn the bare name `birdybeep`. This
     // plugin's cwd is the repo the developer just opened, and on Windows the OS resolver
     // (cmd.exe under `shell: true`, and libuv for a bare name) searches the CURRENT WORKING
@@ -109,9 +159,10 @@ function defaultInvokeHook(envelope: OpenCodeEventEnvelope): void {
       detached: true,
     });
     if (child === null) {
-      // `birdybeep` is not on PATH — drop the event (never a bare-name fallback). One
-      // breadcrumb per process so this doesn't silently vanish (the old failure mode, erm).
-      logSpawnFailureOnce("`birdybeep` was not found on PATH");
+      // No recorded launcher AND `birdybeep` is not on PATH — drop the event (never a bare-name
+      // fallback). One breadcrumb per process so this doesn't silently vanish (the old failure
+      // mode, erm); after gcgp.16 it also means install has not run since the CLI last moved.
+      logSpawnFailureOnce("no recorded launcher and `birdybeep` was not found on PATH");
       return;
     }
     child.on("error", (err) => logSpawnFailureOnce(err.message)); // best-effort, never block

@@ -42,6 +42,18 @@
  * The POSIX branch is additionally chosen so a Windows-shaped path survives it unharmed
  * (`\h`, `\U`, `\n` … are not POSIX escapes). That is defence in depth only — the `platform`
  * argument is what makes UNC paths (`\\server\share`) and `C:\$Recycle.Bin` correct.
+ *
+ * POWERSHELL (birdybeep-agent-gcgp.16) — Copilot's hook schema carries a SEPARATE `powershell`
+ * form, and neither of the rules above fits it, so it has its own quoter:
+ *
+ *   - A PowerShell command line that STARTS with a quoted string is parsed in expression mode:
+ *     `"C:\node.exe" hook copilot …` prints the path instead of running it. The call operator
+ *     `&` is required, hence {@link powershellLauncher}.
+ *   - PowerShell interpolates `$…` and honors a backtick escape inside DOUBLE quotes, so
+ *     double-quoting a real path is unsafe — `"C:\$Recycle.Bin\node.exe"` expands `$Recycle`
+ *     to nothing. Single quotes are fully literal there (a literal `'` is written `''`), so
+ *     {@link powershellQuote} single-quotes and {@link tokenizeCommand} understands single-
+ *     quoted regions on every platform (POSIX `sh` reads them the same way).
  */
 import { basename, isAbsolute } from "node:path";
 
@@ -61,6 +73,15 @@ export interface HookLauncher {
   /** Shell-ready prefix, e.g. `"/abs/node" "/abs/birdybeep"` or `birdybeep`. */
   readonly launcher: string;
   readonly source: HookLauncherSource;
+  /**
+   * The launcher's UNQUOTED argv, when we built it ourselves (`runtime` → `[node, cliEntry]`,
+   * `bare` → `["birdybeep"]`). Absent for an `override`, whose value is a raw shell string we
+   * pass through verbatim and must never re-quote or re-interpret.
+   *
+   * Consumers that cannot use a shell string need this: the PowerShell quoter re-quotes the
+   * parts (gcgp.16), and the OpenCode plugin spawns them directly with no shell at all.
+   */
+  readonly argv?: readonly string[];
 }
 
 export interface ResolveHookLauncherOptions {
@@ -76,6 +97,7 @@ export interface ResolveHookLauncherOptions {
 export const BARE_HOOK_LAUNCHER: HookLauncher = {
   launcher: BIRDYBEEP_COMMAND_NAME,
   source: "bare",
+  argv: [BIRDYBEEP_COMMAND_NAME],
 };
 
 const SCRIPT_EXTENSIONS = [".js", ".mjs", ".cjs", ".ts", ".cmd", ".exe", ".bat", ".ps1"];
@@ -114,6 +136,31 @@ export function shellQuote(value: string, platform: NodeJS.Platform = process.pl
   return `"${value.replace(/[\\"$`]/g, (c) => `\\${c}`)}"`;
 }
 
+/**
+ * Quote one argument for PowerShell (gcgp.16). Single quotes, because a PowerShell
+ * double-quoted string interpolates `$…` and honors a backtick escape — a real path like
+ * `C:\$Recycle.Bin\node.exe` would silently lose `$Recycle`. Inside single quotes nothing is
+ * special and a literal `'` is written by doubling it.
+ */
+export function powershellQuote(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * The PowerShell form of a resolved launcher (gcgp.16), for a harness whose hook schema carries
+ * a separate `powershell` command — GitHub Copilot CLI's does.
+ *
+ * A quoted path must be invoked with the call operator `&`: PowerShell parses a line that begins
+ * with a quoted string in EXPRESSION mode and would just echo the path instead of running it. A
+ * bare command name needs no `&` (and reads better without one), and an `override` is a raw shell
+ * string the user wrote — passed through untouched, exactly as the POSIX form does.
+ */
+export function powershellLauncher(launcher: HookLauncher): string {
+  if (launcher.argv === undefined) return launcher.launcher; // override: verbatim, never re-quoted
+  if (launcher.source === "bare") return launcher.launcher;
+  return `& ${launcher.argv.map(powershellQuote).join(" ")}`;
+}
+
 /** Resolve the launcher to write into a harness config. Never throws. */
 export function resolveHookLauncher(options: ResolveHookLauncherOptions = {}): HookLauncher {
   const env = options.env ?? process.env;
@@ -132,6 +179,7 @@ export function resolveHookLauncher(options: ResolveHookLauncherOptions = {}): H
     return {
       launcher: `${shellQuote(execPath, platform)} ${shellQuote(entry, platform)}`,
       source: "runtime",
+      argv: [execPath, entry],
     };
   }
 
@@ -172,15 +220,39 @@ export function tokenizeCommand(
   const tokens: string[] = [];
   let current = "";
   let quoted = false;
+  /** Inside a SINGLE-quoted region: fully literal, `''` is one `'` (PowerShell and POSIX sh). */
+  let singleQuoted = false;
   let started = false;
   for (let i = 0; i < command.length; i += 1) {
     const char = command[i]!;
     const next = command[i + 1];
+    // Single quotes suppress every other rule, so handle the region first (gcgp.16). Nothing
+    // inside is escaped or interpolated — that is exactly why powershellQuote uses them.
+    if (singleQuoted) {
+      if (char === "'") {
+        if (next === "'") {
+          current += "'"; // a literal quote is written by doubling it
+          i += 1;
+          continue;
+        }
+        singleQuoted = false;
+        continue;
+      }
+      current += char;
+      continue;
+    }
     // POSIX only, and only for the four characters a shell actually un-escapes: everywhere else
     // `\` is a literal character (crucially, a Windows path separator).
     if (!windows && char === "\\" && quoted && next !== undefined && POSIX_ESCAPABLE.has(next)) {
       current += next;
       i += 1;
+      continue;
+    }
+    // A `'` inside DOUBLE quotes is an ordinary character (a path may legitimately contain one),
+    // so only an unquoted `'` opens a literal region.
+    if (char === "'" && !quoted) {
+      singleQuoted = true;
+      started = true;
       continue;
     }
     if (char === '"') {

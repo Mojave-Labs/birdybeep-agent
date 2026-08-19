@@ -8,10 +8,15 @@ export { detectOpenCode, type OpenCodeDetectOptions } from "./detect";
 export {
   backupPathFor,
   BIRDYBEEP_PLUGIN_REF,
+  clearOpenCodeLauncher,
   installOpenCode,
   isBirdyBeepPluginConfigured,
   mergeOpenCodeConfig,
+  type OpenCodeLauncherOptions,
+  opencodeLauncherPath,
+  readOpenCodeLauncher,
   RESTART_INSTRUCTIONS,
+  writeOpenCodeLauncher,
 } from "./install";
 export { normalizeOpenCodeEvent, OpenCodeMappingError } from "./normalize";
 export {
