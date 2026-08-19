@@ -46,6 +46,20 @@ import { copilotHooksPath } from "./paths";
 const POSIX = process.platform !== "win32";
 
 /**
+ * Bounds, all well inside the vitest timeout the exec case declares explicitly below.
+ *
+ * The stub's own valve is the load-bearing one. If the payload never reaches the child, the child
+ * blocks on stdin forever, the interpreter waits for ITS child, and `spawnSync` therefore never
+ * returns — so the run dies before reaching a single assertion and every diagnostic is lost. That
+ * is exactly how the third Windows attempt failed. Bounding the receipt poll alone cannot fix it,
+ * because the poll is never reached: the CHILD has to give up on its own.
+ */
+const STUB_STDIN_TIMEOUT_MS = 1_500;
+const SHELL_TIMEOUT_MS = 8_000; // belt-and-braces: the interpreter itself never wedges the run
+const RECEIPT_WAIT_MS = 2_500;
+const EXEC_CASE_TIMEOUT_MS = 30_000; // generous ON PURPOSE — diagnostics must always get to print
+
+/**
  * A PowerShell we can actually run the generated command through, if this machine has one —
  * resolved to an ABSOLUTE path. The exec test below runs with PATH emptied (that is the whole
  * point: the launcher must not need PATH), so spawning the shell itself by bare name would fail
@@ -99,14 +113,19 @@ function buildRig(sb: Sandbox): Rig {
       // Record that we RAN, with our argv, before waiting on anything. Separating "the launcher
       // invoked us correctly" from "the payload arrived" is what makes a failure diagnosable:
       // otherwise a stdin problem and a launcher problem are the same missing file.
-      `  const receipt = ${JSON.stringify(receipt)};`,
+      `const receipt = ${JSON.stringify(receipt)};`,
+      "let stdin = '';",
       "const write = (extra) => fs.writeFileSync(receipt, JSON.stringify({",
       "  args: process.argv.slice(2), ...extra,",
       "}));",
       "write({ ran: true });",
-      "let stdin = '';",
+      // Safety valve: if the payload never arrives, record THAT and exit rather than blocking
+      // forever — a wedged child wedges the interpreter, which wedges spawnSync, which loses
+      // every diagnostic. `stdinTimedOut` is the signal that the launcher worked and only the
+      // payload was lost.
+      `const valve = setTimeout(() => { write({ ran: true, stdin, stdinTimedOut: true }); process.exit(0); }, ${STUB_STDIN_TIMEOUT_MS});`,
       "process.stdin.on('data', (c) => { stdin += c; });",
-      "process.stdin.on('end', () => write({ ran: true, stdin }));",
+      "process.stdin.on('end', () => { clearTimeout(valve); write({ ran: true, stdin }); });",
     ].join("\n"),
     { mode: 0o755 },
   );
@@ -316,23 +335,47 @@ describe("gcgp.16: the powershell command Copilot executes", () => {
           input: PAYLOAD,
           encoding: "utf8",
           env: envWithEmptyPath(rig.emptyPath),
+          timeout: SHELL_TIMEOUT_MS,
         },
       );
-      // Everything PowerShell told us, carried into every failure message below — without it a
-      // broken link here is an unexplained missing file on a platform we cannot run locally.
-      const shell = `pwsh=${POWERSHELL} status=${run.status} stderr=${JSON.stringify(
-        run.stderr,
-      )} stdout=${JSON.stringify(run.stdout)} command=${JSON.stringify(powershell)}`;
-      expect(run.stderr ?? "", shell).toBe("");
-      expect(run.status, shell).toBe(0);
+      const receipt = asRecord(waitForReceipt(rig.receipt, RECEIPT_WAIT_MS));
+      // Everything both sides told us, carried into every failure message — a broken link here is
+      // otherwise an unexplained missing file on a platform none of us can run locally.
+      const diag = [
+        `pwsh=${POWERSHELL}`,
+        `status=${run.status}`,
+        `signal=${run.signal}`,
+        `error=${run.error?.message ?? "none"}`,
+        `stderr=${JSON.stringify(run.stderr)}`,
+        `stdout=${JSON.stringify(run.stdout)}`,
+        `command=${JSON.stringify(powershell)}`,
+        `receipt=${JSON.stringify(receipt)}`,
+      ].join(" ");
 
-      const receipt = asRecord(waitForReceipt(rig.receipt));
-      // (a) did the launcher actually INVOKE the CLI, with the right argv? — the gcgp.16 claim.
-      expect(receipt["ran"], `stub never ran — ${shell}`).toBe(true);
-      expect(receipt["args"], shell).toEqual(["hook", "copilot", "errorOccurred"]);
-      // (b) did the payload survive the interpreter? — separate link, separate assertion.
-      expect(receipt["stdin"], `stub ran but got no payload on stdin — ${shell}`).toBe(PAYLOAD);
+      // THE BIT WE ARE MISSING, asserted FIRST because it is what decides the ticket: did the
+      // generated command actually INVOKE the CLI, with the right argv? That is the whole gcgp.16
+      // claim, and it does not depend on stdin.
+      expect(receipt["ran"], `LAUNCHER BROKEN — the CLI was never invoked. ${diag}`).toBe(true);
+      expect(receipt["args"], `launcher invoked the CLI with the wrong argv. ${diag}`).toEqual([
+        "hook",
+        "copilot",
+        "errorOccurred",
+      ]);
+
+      // A SEPARATE link: did the payload survive the interpreter? If THIS fails while `ran` is
+      // true, the launcher is correct and the finding is about the interpreter's stdin
+      // forwarding — which is identical for the bare command that shipped before this change, so
+      // it is a pre-existing condition rather than a regression. See gcgp.16 notes.
+      expect(
+        receipt["stdinTimedOut"],
+        `LAUNCHER OK, PAYLOAD LOST — the CLI ran but no stdin ever arrived. ${diag}`,
+      ).toBeUndefined();
+      expect(receipt["stdin"], `payload arrived but did not match. ${diag}`).toBe(PAYLOAD);
+
+      expect(run.stderr ?? "", diag).toBe("");
+      expect(run.status, diag).toBe(0);
     },
+    EXEC_CASE_TIMEOUT_MS,
   );
 });
 
