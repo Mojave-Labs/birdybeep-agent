@@ -4,7 +4,8 @@
  * `sessionEnd.json` — redacted real `cursor-agent 2026.07.09` output) through the
  * `birdybeep hook cursor` pipeline (runCursorHook = runAgentHook: normalizeEvent → dedup →
  * sender.send) and asserts, at the stub sink:
- *   - correct §10.1 mapping: sessionStart → session_started, sessionEnd{completed} → agent_completed;
+ *   - correct §10.1 mapping: sessionStart → session_started, sessionEnd{completed} → agent_completed,
+ *     postToolUseFailure → agent_failed (gcgp.17);
  *   - the token resolves from the strict-perm FILE fallback (no keychain), rides as a Bearer, and
  *     never appears in the installed config or the event body;
  *   - absolute paths are hashed and nothing exceeds the cap;
@@ -38,6 +39,8 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 
 import beforeMCPExecutionFixture from "./__fixtures__/beforeMCPExecution.json";
+import postToolUseFailureFixture from "./__fixtures__/postToolUseFailure.json";
+import postToolUseFailureInterruptFixture from "./__fixtures__/postToolUseFailure-interrupt.json";
 import sessionEndFixture from "./__fixtures__/sessionEnd.json";
 import sessionStartFixture from "./__fixtures__/sessionStart.json";
 import { cursorAdapter } from "./adapter";
@@ -186,6 +189,50 @@ describe("CUR-E2E: install → fire the REAL captured fixtures → assert delive
       workspace_roots: [FIXTURE_CWD],
     });
     expect(outcome).toBe("skipped");
+    expect(sink!.received()).toHaveLength(0);
+  });
+
+  // gcgp.17 — postToolUseFailure was REGISTERED and mapped to nothing: every tool failure
+  // spawned a hook process, normalized to `skipped`, and the user got no Beep for the one
+  // notification category ("failed") they most want one for.
+  it("delivers an agent_failed Beep for a tool failure", async () => {
+    const { sb, fire } = await setUp();
+    const outcome = await fire(postToolUseFailureFixture);
+    expect(outcome).toBe("delivered"); // the regression: this used to be "skipped"
+
+    const delivered = findByType(sink!.received(), "agent_failed");
+    expect(delivered).toBeDefined();
+    const body = delivered!.body as Record<string, unknown>;
+    expect(body["harness"]).toBe("cursor");
+    expect(body["status"]).toBe("running"); // one failed tool ≠ a failed session
+    expect(body["body"]).toBe("Bash failed");
+    const metadata = body["metadata"] as Record<string, unknown>;
+    expect(metadata["tool"]).toBe("Bash");
+    expect(metadata["failure_type"]).toBe("tool_error");
+    assertPathsHashed(delivered!, [FIXTURE_CWD, sb.home, sb.realHome]);
+    assertNoAbsolutePaths(delivered!);
+    assertWithinSizeCap(delivered!);
+    expect(deliveredBearerToken(delivered!)).toBe(TOKEN);
+  });
+
+  it("the failure Beep leaks NEITHER the tool's error text NOR its arguments", async () => {
+    const { fire } = await setUp();
+    await fire(postToolUseFailureFixture);
+    const failure = postToolUseFailureFixture as { error_message: string; tool_input: string };
+    assertNoRawValues(sink!.received()[0]!, [
+      failure.error_message,
+      failure.tool_input,
+      FIXTURE_EMAIL,
+    ]);
+    const all = JSON.stringify(sink!.received());
+    expect(all).not.toContain("sbp_TESTONLY_secret"); // a credential in the failing command
+    expect(all).not.toContain("password authentication failed");
+    expect(all).not.toContain(".env");
+  });
+
+  it("a user interrupt is skipped — cancelling your own tool must not beep you", async () => {
+    const { fire } = await setUp();
+    expect(await fire(postToolUseFailureInterruptFixture)).toBe("skipped");
     expect(sink!.received()).toHaveLength(0);
   });
 });

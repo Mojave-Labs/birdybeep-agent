@@ -267,24 +267,31 @@ configs written by an older BirdyBeep carry one, and a third-party `notify` prog
 Cursor ([`normalize.ts`](../packages/cursor/src/normalize.ts)) is the newest adapter and shows the
 same shape for a stdin-JSON harness keyed by `hook_event_name`:
 
-| Cursor hook event                                                | `event_type`                                                 | `status`               |
-| ---------------------------------------------------------------- | ------------------------------------------------------------ | ---------------------- |
-| `sessionStart`                                                   | `session_started`                                            | `starting`             |
-| `sessionEnd` `{final_status:"completed"}`                        | `agent_completed`                                            | `completed`            |
-| `sessionEnd` (any other final status)                            | `session_ended`                                              | `completed` (terminal) |
-| `stop`                                                           | `agent_completed`                                            | `completed`            |
-| `beforeShellExecution`                                           | `approval_required`                                          | `waiting_for_approval` |
-| `preToolUse` / `postToolUse`                                     | `tool_started` / `tool_finished`                             | `running`              |
-| `subagentStart` / `subagentStop`                                 | `subagent_started` / `subagent_completed`                    | `running`              |
-| `beforeSubmitPrompt`, `postToolUseFailure`, `afterAgentResponse` | _(throws `CursorMappingError` → the hook returns `skipped`)_ | —                      |
+| Cursor hook event                            | `event_type`                                                 | `status`               |
+| -------------------------------------------- | ------------------------------------------------------------ | ---------------------- |
+| `sessionStart`                               | `session_started`                                            | `starting`             |
+| `sessionEnd` `{final_status:"completed"}`    | `agent_completed`                                            | `completed`            |
+| `sessionEnd` (any other final status)        | `session_ended`                                              | `completed` (terminal) |
+| `stop`                                       | `agent_completed`                                            | `completed`            |
+| `beforeShellExecution`                       | `approval_required`                                          | `waiting_for_approval` |
+| `preToolUse` / `postToolUse`                 | `tool_started` / `tool_finished`                             | `running`              |
+| `postToolUseFailure` (`is_interrupt: false`) | `agent_failed`                                               | `running`              |
+| `postToolUseFailure` (`is_interrupt: true`)  | _(throws `CursorMappingError` → the hook returns `skipped`)_ | —                      |
+| `subagentStart` / `subagentStop`             | `subagent_started` / `subagent_completed`                    | `running`              |
+| `beforeSubmitPrompt`, `afterAgentResponse`   | _(throws `CursorMappingError` → the hook returns `skipped`)_ | —                      |
 
 Two Cursor-specific lessons worth copying:
 
 - **A harness may fire only a SUBSET of its documented events.** Headless `cursor-agent -p`
   (verified `2026.07.09`) fires only `sessionStart` + `sessionEnd`; the IDE fires the rest. That is
   why a _completed_ `sessionEnd` maps to `agent_completed` — for CLI users it is the only completion
-  signal that exists. Register the full documented set anyway so a later harness build needs no
-  re-install.
+  signal that exists.
+- **Register only what you map.** A registered event with no mapping spends a hook process per fire
+  to produce `skipped`. Cursor's `beforeSubmitPrompt` and `afterAgentResponse` shipped that way and
+  were de-registered; install now removes them from configs an earlier release patched.
+- **A failure signal is worth mapping; a cancellation is not.** `postToolUseFailure` carries
+  `is_interrupt`, which is true when the user pressed stop — the person who would receive the Beep
+  is the person who just cancelled the tool, so that shape is skipped.
 - **Payloads carry PII you must drop.** Cursor sends `user_email` and `transcript_path`. Neither is
   copied anywhere into the event; only `workspace_roots[0]` is passed as `cwd` so the shared
   normalizer hashes it. Enumerate a new harness's payload fields and decide, field by field, what

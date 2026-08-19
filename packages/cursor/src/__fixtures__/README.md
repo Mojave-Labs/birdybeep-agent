@@ -25,3 +25,19 @@ off Cursor 3.15.6's own source instead: the base payload from a captured session
 `extensions/cursor-agent-exec/dist/main.js` assembles them before
 `executeHookForStep(beforeMCPExecution, …)`. `tool_input` and `command` are the reason the
 mapper reads neither: the launch line routinely carries an API token.
+
+`beforeSubmitPrompt.json` and `afterAgentResponse.json` were captured from **Cursor desktop
+3.14.27**'s own hook log on 2026-08-07 (same log and same redaction as `bridge-claude-*.json`);
+`prompt` and `text` — the raw user prompt and the raw assistant response — are replaced with
+marker strings. They are the evidence for gcgp.17's de-registration of both steps: the payloads
+are entirely content plus a token count, with nothing a §10.1 event could carry.
+
+`postToolUseFailure*.json` are the second pair that are not captures. No `postToolUseFailure`
+fire exists in the local Cursor log corpus (0 across 12 sessions of `cursor.hooks.*.log`,
+2026-06-11 → 2026-08-18), so the field set is read off Cursor's own shipped schema instead: the
+`agent.v1.PostToolUseFailureRequestQuery` protobuf message in `workbench.desktop.main.js`
+(`tool_name`, `tool_input`, `error_message`, `failure_type`, `duration_ms`, `tool_use_id`,
+`is_interrupt`, plus the conversation/model fields), wrapped in the envelope every captured
+3.14.27 payload carries. `error_message` and `tool_input` are why the mapper reads neither — a
+tool's raw error routinely holds paths, command output and credentials. The `-interrupt` variant
+is the `is_interrupt: true` shape Cursor sends when the user cancels a running tool.

@@ -285,6 +285,55 @@ function mapCodexPayload(payload: Record<string, unknown>): MappedEvent {
 }
 
 /**
+ * Every hook event name Codex itself fires, and the only `notify` type it emits — the pair
+ * that answers "did this payload come from Codex at all?" (birdybeep-agent-gcgp.14).
+ *
+ * Deliberately a SUPERSET of the six events the installer registers, for the same reason
+ * `CLAUDE_CODE_HOOK_EVENTS` is: being *unmapped* is not the same as being *foreign*. A real
+ * Codex event we don't map is a quiet skip; a payload from another tool is a misconfiguration
+ * worth reporting. Dropping a name from this list turns a legitimate fire into an error on
+ * EVERY fire, so keep it in sync with docs/SPEC.md §6.
+ *
+ * Provenance: read out of the `HookEventNameWire` enum embedded in the shipped Codex binary
+ * (ChatGPT.app 0.148.x, 2026-08-19) — `PreToolUse PermissionRequest PostToolUse PreCompact
+ * PostCompact SessionStart SessionEnd UserPromptSubmit SubagentStart SubagentStop Stop`.
+ */
+export const CODEX_HOOK_EVENTS: readonly string[] = [
+  "PermissionRequest",
+  "PostCompact",
+  "PostToolUse",
+  "PreCompact",
+  "PreToolUse",
+  "SessionEnd",
+  "SessionStart",
+  "Stop",
+  "SubagentStart",
+  "SubagentStop",
+  "UserPromptSubmit",
+];
+
+/**
+ * The `notify` program's payload types. Codex emits exactly one (`agent-turn-complete`,
+ * verified in the same binary alongside its `thread-id`/`turn-id`/`cwd`/`client` fields).
+ *
+ * This surface matters more than the hook one: the `notify` slot is a single-valued scalar
+ * that third-party tools also claim, and chains that forward to `birdybeep hook codex` can
+ * hand us a shape Codex never emits. That used to be a silent exit 0.
+ */
+export const CODEX_NOTIFY_TYPES: readonly string[] = ["agent-turn-complete"];
+
+/** Does this payload come from Codex — either lifecycle surface or the notify program? */
+export function isCodexHookPayload(input: unknown): boolean {
+  const payload = asRecord(input);
+  const hookName = payload["hook_event_name"];
+  // Mirrors mapCodexPayload's dispatch precedence: hook_event_name wins over type, so the
+  // recognizer and the mapper can never disagree about which surface a payload is on.
+  if (typeof hookName === "string") return CODEX_HOOK_EVENTS.includes(hookName);
+  const notifyType = payload["type"];
+  return typeof notifyType === "string" && CODEX_NOTIFY_TYPES.includes(notifyType);
+}
+
+/**
  * Is this payload a TRUST-GATED lifecycle hook (vs. the notify program)?
  *
  * This is the trust signal (birdybeep-agent-qyf). Codex refuses to run a `[[hooks.X]]`

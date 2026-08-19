@@ -19,6 +19,7 @@ export {
   isBirdyBeepEntry,
   mergeBirdyBeepHooks,
   resolveCursorHookCommand,
+  RETIRED_HOOK_EVENTS,
 } from "./install";
 export { CursorMappingError, normalizeCursorEvent } from "./normalize";
 export {

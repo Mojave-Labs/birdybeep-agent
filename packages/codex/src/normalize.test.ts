@@ -15,10 +15,14 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { BIRDYBEEP_HOOK_EVENTS } from "./install";
 import {
   cliVersionFromRollout,
+  CODEX_HOOK_EVENTS,
+  CODEX_NOTIFY_TYPES,
   CodexMappingError,
   codexSurfaceFromPayload,
+  isCodexHookPayload,
   normalizeCodexEvent,
 } from "./normalize";
 
@@ -433,5 +437,81 @@ describe("codexSurfaceFromPayload", () => {
     expect(codexSurfaceFromPayload({ transcript_path: "/does/not/exist" }, {})).toBeUndefined();
     const odd = rollout("odd.jsonl", { cli_version: "1.0.0", originator: "something" });
     expect(codexSurfaceFromPayload({ transcript_path: odd }, {})).toBeUndefined();
+  });
+});
+
+/**
+ * birdybeep-agent-gcgp.14 — `birdybeep hook codex` used to accept ANY payload: an unmappable
+ * one returned `skipped` at exit 0 with no output, so a foreign fire vanished. That matters
+ * most here, because Codex's `notify` slot is a single-valued scalar third-party tools also
+ * claim, and a chain that forwards to `birdybeep hook codex` can hand us any shape at all.
+ *
+ * Payloads below are the real shapes each harness sends — the same ones the mapping table
+ * above and the sibling adapters' fixtures use.
+ */
+describe("isCodexHookPayload — foreign payloads are recognized as foreign (gcgp.14)", () => {
+  it("accepts every real Codex payload this adapter maps", () => {
+    for (const { name, payload } of CASES) {
+      expect(isCodexHookPayload(payload), name).toBe(true);
+    }
+  });
+
+  it("accepts every hook event Codex fires, mapped or not", () => {
+    // A REAL event we don't map is a quiet skip, never a per-fire error (the gcgp.12 lesson).
+    for (const name of CODEX_HOOK_EVENTS) {
+      expect(isCodexHookPayload({ hook_event_name: name, session_id: "s", cwd: CWD }), name).toBe(
+        true,
+      );
+    }
+    expect(CODEX_HOOK_EVENTS).toEqual([...CODEX_HOOK_EVENTS].sort()); // kept sorted, so drift is visible
+  });
+
+  it("covers every event the installer registers — installing an unrecognized one would error per fire", () => {
+    for (const event of BIRDYBEEP_HOOK_EVENTS) expect(CODEX_HOOK_EVENTS).toContain(event);
+  });
+
+  it("accepts the notify surface, and only the type Codex actually emits", () => {
+    expect(CODEX_NOTIFY_TYPES).toEqual(["agent-turn-complete"]);
+    expect(isCodexHookPayload({ type: "agent-turn-complete", "thread-id": "t" })).toBe(true);
+    // A third-party tool chained into the notify slot, sending its own shape.
+    expect(isCodexHookPayload({ type: "task.finished", payload: { ok: true } })).toBe(false);
+  });
+
+  it("rejects the real payloads of every OTHER harness", () => {
+    // Cursor (its Claude bridge already proved these travel to the wrong hook command).
+    expect(
+      isCodexHookPayload({
+        hook_event_name: "sessionStart",
+        cursor_version: "3.14.27",
+        workspace_roots: [CWD],
+        session_id: "s",
+      }),
+    ).toBe(false);
+    // Claude Code — a real event of its own that Codex does not have.
+    expect(isCodexHookPayload({ hook_event_name: "Notification", session_id: "s", cwd: CWD })).toBe(
+      false,
+    );
+    // OpenCode's plugin envelope.
+    expect(isCodexHookPayload({ type: "session.idle", properties: { sessionID: "s" } })).toBe(
+      false,
+    );
+    // Copilot — camelCase, no discriminator at all.
+    expect(isCodexHookPayload({ sessionId: "s", timestamp: 1, cwd: CWD, toolName: "bash" })).toBe(
+      false,
+    );
+  });
+
+  it("rejects a payload that is not an object, or carries no discriminator", () => {
+    for (const value of [null, undefined, 42, "SessionStart", [], {}, { cwd: CWD }]) {
+      expect(isCodexHookPayload(value)).toBe(false);
+    }
+  });
+
+  it("mirrors the mapper's dispatch precedence: hook_event_name wins over type", () => {
+    // The mapper reads hook_event_name first, so the recognizer must too — otherwise a payload
+    // could be "recognized" on one surface and mapped on the other.
+    expect(isCodexHookPayload({ hook_event_name: "Bogus", type: "agent-turn-complete" })).toBe(
+      false,
+    );
   });
 });

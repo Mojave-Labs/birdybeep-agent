@@ -18,20 +18,28 @@
  */
 
 /**
- * Cursor hook step names we know of: the steps Cursor loads hooks for (observed in its hook
- * service log) plus the two extra steps its Claude bridge targets (`preCompact`, `subagentStop`).
- * Used to tell a Cursor payload we deliberately don't map (a quiet skip) from one we don't
- * recognize at all (a loud failure) — never for routing, so a step Cursor adds later still
- * reaches the Cursor adapter.
+ * Every Cursor hook step name. Used to tell a Cursor payload we deliberately don't map (a
+ * quiet skip) from one we don't recognize at all (a loud failure) — never for routing, so a
+ * step Cursor adds later still reaches the Cursor adapter.
+ *
+ * All 21 members of Cursor's own `HookStep` enum, read out of the shipped
+ * `packages/hooks/src/hook-step.ts` in `workbench.desktop.main.js` (Cursor 3.x, re-read
+ * 2026-08-19 for birdybeep-agent-gcgp.14). Previously this list was the subset observed in
+ * the hook-service log, which omitted five real steps — including `beforeMCPExecution`, which
+ * BirdyBeep itself registers.
  */
 export const CURSOR_HOOK_EVENTS: readonly string[] = [
   "afterAgentResponse",
   "afterAgentThought",
   "afterFileEdit",
+  "afterMCPExecution",
   "afterShellExecution",
+  "afterTabFileEdit",
+  "beforeMCPExecution",
   "beforeReadFile",
   "beforeShellExecution",
   "beforeSubmitPrompt",
+  "beforeTabFileRead",
   "postToolUse",
   "postToolUseFailure",
   "preCompact",
@@ -41,6 +49,7 @@ export const CURSOR_HOOK_EVENTS: readonly string[] = [
   "stop",
   "subagentStart",
   "subagentStop",
+  "workspaceOpen",
 ];
 
 function asRecord(value: unknown): Record<string, unknown> {

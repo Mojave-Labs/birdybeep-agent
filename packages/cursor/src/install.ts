@@ -54,12 +54,27 @@ export const CURSOR_HOOKS_VERSION = 1;
  * The Cursor hook events BirdyBeep registers. Headless `cursor-agent -p` fires only
  * `sessionStart`/`sessionEnd` today; the IDE fires the rest.
  *
- * NOT the full set. Cursor 3.15.6 defines 21 steps (verified against the shipped
- * `packages/hooks/src/hook-step.ts` enum in `workbench.desktop.main.js`); the nine we leave
- * out — `afterShellExecution`, `afterMCPExecution`, `beforeReadFile`, `afterFileEdit`,
- * `beforeTabFileRead`, `afterTabFileEdit`, `afterAgentThought`, `preCompact`, `workspaceOpen` —
- * have no §10.1 target, so registering them would spend a hook execution per keystroke-scale
- * event to produce nothing (the `tool_finished` lesson: 88.5% of client traffic, zero pushes).
+ * Every event here has a §10.1 mapping in `normalize.ts`. That is the rule: registering a
+ * step with no mapping spends a hook execution per fire to produce a `skipped` (the
+ * `tool_finished` lesson — 88.5% of client traffic, zero pushes).
+ *
+ * NOT the full set. Cursor 3.x defines 21 steps (verified against the shipped
+ * `packages/hooks/src/hook-step.ts` enum in `workbench.desktop.main.js`); the eleven left out
+ * have no §10.1 target. `afterShellExecution` / `afterMCPExecution` are completion echoes of
+ * gates already carried; `beforeReadFile` / `afterFileEdit` / `beforeTabFileRead` /
+ * `afterTabFileEdit` / `afterAgentThought` are keystroke-scale; `preCompact` and
+ * `workspaceOpen` map to nothing (and `workspaceOpen` has no session context).
+ *
+ * DE-REGISTERED in birdybeep-agent-gcgp.17, having shipped registered-but-unmapped:
+ *   - `beforeSubmitPrompt` — the user typing is not an agent-attention moment, and the payload
+ *     is `prompt` + `attachments`, i.e. the raw prompt. `sessionStart` already opens the
+ *     session and `stop` already closes the turn.
+ *   - `afterAgentResponse` — fires per assistant response with the response `text`; `stop`
+ *     already carries turn-complete, at turn granularity rather than per response.
+ * {@link mergeBirdyBeepHooks} removes managed entries for both from configs that already have
+ * them, so an existing install stops paying for them on the next `agent install cursor`.
+ *
+ * `postToolUseFailure` was in the same state and is now MAPPED (gcgp.17) → `agent_failed`.
  *
  * `beforeMCPExecution` IS registered (gcgp.9): it is the direct sibling of
  * `beforeShellExecution` — same blocking permission gate, same `beforeCommandExecutionHookResponse`
@@ -70,17 +85,23 @@ export const CURSOR_HOOKS_VERSION = 1;
 export const BIRDYBEEP_HOOK_EVENTS = [
   "sessionStart",
   "sessionEnd",
-  "beforeSubmitPrompt",
   "preToolUse",
   "postToolUse",
   "postToolUseFailure",
   "beforeShellExecution",
   "beforeMCPExecution",
   "stop",
-  "afterAgentResponse",
   "subagentStart",
   "subagentStop",
 ] as const;
+
+/**
+ * Events a PREVIOUS BirdyBeep release registered and this one does not (gcgp.17). Install
+ * removes our managed entry from each — see {@link mergeBirdyBeepHooks}. Kept as an explicit
+ * list rather than "any event not in BIRDYBEEP_HOOK_EVENTS" so the pruning stays bounded to
+ * entries we know we wrote.
+ */
+export const RETIRED_HOOK_EVENTS = ["beforeSubmitPrompt", "afterAgentResponse"] as const;
 
 /** Suffix for the one-time backup of the user's original hooks file. */
 export const BACKUP_SUFFIX = ".birdybeep-backup";
@@ -136,6 +157,12 @@ export function installedBirdyBeepCommands(config: Record<string, unknown>): str
  * whose command has drifted (an older bare install, or an absolute path from a CLI that has
  * since moved) is REWRITTEN IN PLACE — never duplicated — so re-running install repairs it.
  * Returns the merged object and whether anything changed (idempotency signal).
+ *
+ * Install also RETIRES: a managed entry on a {@link RETIRED_HOOK_EVENTS} step is removed, so a
+ * user who installed an earlier release stops spawning a hook process for an event that can
+ * only ever be `skipped` (gcgp.17). Removal is the same surgery as uninstall — only entries
+ * `isBirdyBeepEntry` claims are dropped, a step left empty is pruned, and a user's own hook on
+ * that step is untouched.
  */
 export function mergeBirdyBeepHooks(
   config: Record<string, unknown>,
@@ -169,6 +196,15 @@ export function mergeBirdyBeepHooks(
       changed = true;
     }
     nextHooks[event] = current;
+  }
+  for (const event of RETIRED_HOOK_EVENTS) {
+    const current = nextHooks[event];
+    if (!Array.isArray(current)) continue;
+    const kept = current.filter((entry) => !isBirdyBeepEntry(entry));
+    if (kept.length === current.length) continue; // nothing of ours on this step
+    changed = true;
+    if (kept.length > 0) nextHooks[event] = kept;
+    else delete nextHooks[event]; // the step existed only for us → prune it, as uninstall does
   }
   merged["hooks"] = nextHooks;
   return { merged, changed };

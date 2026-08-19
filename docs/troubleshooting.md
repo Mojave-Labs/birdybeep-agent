@@ -440,11 +440,21 @@ once `~/.cursor/hooks.json` carries the BirdyBeep entries.
 
 ---
 
-### A hook fire exits non-zero with "not a … hook event"
+### A hook fire exits non-zero
 
-The payload piped into `birdybeep hook <harness>` carried a `hook_event_name` that harness never fires,
-so nothing was sent. Check which tool is invoking the hook — usually a hook command copied into another
-harness's config file. Every other outcome, including a deliberately unmapped event, exits 0.
+`birdybeep hook <harness>` exits non-zero only when the fire sent nothing AND that is worth telling
+you about. The stderr line says which case it was; your harness's hook log shows it.
+
+| stderr line                                               | What happened                                                                                                                                     |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `… is not a <harness> hook event`                         | The payload came from a different tool — usually a hook command copied into another harness's config file. Check which tool is invoking the hook. |
+| `the payload was empty`                                   | The harness ran the hook without writing a payload to stdin.                                                                                      |
+| `the N-byte payload is not valid JSON`                    | Something wrote non-JSON to stdin. The payload itself is never echoed.                                                                            |
+| `timed out after 3000ms waiting for the payload on stdin` | The payload never arrived within the read cap. Usually a very loaded machine; re-run and check `birdybeep doctor`.                                |
+| `second argument must be a Copilot hook event name`       | A `birdybeep hook copilot` entry was hand-edited. Re-run `birdybeep agent install copilot`.                                                       |
+
+Every other outcome exits 0 — including a real harness event BirdyBeep deliberately does not map,
+which is silent by design.
 
 ---
 

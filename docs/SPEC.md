@@ -232,15 +232,26 @@ no restart: Cursor reads the file live, so install reports `installed` immediate
 | `postToolUse` | `tool_finished` | activity update | No |
 | `subagentStart` | `subagent_started` | activity update | No |
 | `subagentStop` | `subagent_completed` | activity update | No |
-| `beforeSubmitPrompt` / `postToolUseFailure` / `afterAgentResponse` | _(no §10.1 target — skipped)_ | — | — |
+| `postToolUseFailure` `{is_interrupt:false}` | `agent_failed` | activity update (status stays `running`) | Yes |
+| `postToolUseFailure` `{is_interrupt:true}` | _(user cancelled — skipped)_ | — | — |
+| `beforeSubmitPrompt` / `afterAgentResponse` | _(no §10.1 target — NOT registered)_ | — | — |
 
 > **Verified against `cursor-agent 2026.07.09`** (headless `-p`, captured 2026-07-15 — see
 > `packages/cursor/src/__fixtures__/README.md`; §21.1 harness drift applies):
 > - **Headless `cursor-agent -p` fires ONLY `sessionStart` + `sessionEnd`** — no `stop`, no tool
 >   hooks (a version-dependent subset; the IDE fires the full set). That is why a *completed*
 >   `sessionEnd` maps to `agent_completed` rather than `session_ended`: for CLI users it is the
->   only completion signal there is. The full documented event set is registered anyway, so a
->   later Cursor build needs no re-install.
+>   only completion signal there is.
+> - **Registered events must be mapped** (birdybeep-agent-gcgp.17). `beforeSubmitPrompt` and
+>   `afterAgentResponse` shipped registered with no §10.1 target, so every fire spent a hook
+>   process to produce `skipped`. Both are de-registered, and install removes them from a config
+>   an earlier release patched. `postToolUseFailure` was in the same state and is now mapped —
+>   `failed` is one of the six notification categories, and it is the only failure signal Cursor
+>   gives a hook. Its `error_message` and `tool_input` are content and are never read.
+> - **Nine further steps stay unregistered.** `afterShellExecution` / `afterMCPExecution` are
+>   completion echoes of gates already carried; `beforeReadFile` / `afterFileEdit` /
+>   `beforeTabFileRead` / `afterTabFileEdit` / `afterAgentThought` are keystroke-scale; `preCompact`
+>   and `workspaceOpen` map to nothing (and `workspaceOpen` has no session context).
 > - **PRIVACY:** Cursor payloads carry `user_email` (PII) and `transcript_path` (a local path).
 >   Neither is EVER copied into the normalized event — not title, body, metadata, session id, or
 >   workspace. The only path touched is `workspace_roots[0]`, handed to the normalizer as `cwd` so
