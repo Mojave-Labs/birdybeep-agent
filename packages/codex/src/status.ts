@@ -16,6 +16,7 @@ import {
   type DoctorResult,
   getToken,
   type IntegrationStatus,
+  staleHookCommandPaths,
   type TokenStoreOptions,
 } from "@birdybeep/agent-core";
 import { parse } from "smol-toml";
@@ -25,7 +26,10 @@ import {
   backupPathFor,
   BIRDYBEEP_HOOK_COMMAND,
   BIRDYBEEP_HOOK_EVENTS,
+  codexTurnCompleteIsDark,
+  installedBirdyBeepCommands,
   isBirdyBeepHookEntry,
+  MIGRATION_WARNING,
   notifyIsLegacyBirdyBeep,
 } from "./install";
 import { codexConfigDir, codexConfigFile } from "./paths";
@@ -56,19 +60,24 @@ interface ConfigState {
   /** Count of BIRDYBEEP_HOOK_EVENTS carrying a well-formed BirdyBeep entry. */
   present: number;
   total: number;
+  /**
+   * Absolute paths referenced by the installed BirdyBeep commands that no longer exist — the CLI
+   * moved, or the Node it was installed under is gone (gcgp.9). Codex fails these hooks with
+   * exit 127 and nothing else looks wrong.
+   */
+  stalePaths: string[];
 }
 
 function inspectConfig(home: string): ConfigState {
   const path = codexConfigFile({ home });
   const total = BIRDYBEEP_HOOK_EVENTS.length;
-  if (!existsSync(path)) {
-    return { exists: false, parseable: true, legacyNotify: false, present: 0, total };
-  }
+  const empty = { legacyNotify: false, present: 0, total, stalePaths: [] };
+  if (!existsSync(path)) return { exists: false, parseable: true, ...empty };
   let parsed: Record<string, unknown>;
   try {
     parsed = asRecord(parse(readFileSync(path, "utf8")));
   } catch {
-    return { exists: true, parseable: false, legacyNotify: false, present: 0, total };
+    return { exists: true, parseable: false, ...empty };
   }
   const hooks = asRecord(parsed["hooks"]);
   let present = 0;
@@ -76,12 +85,20 @@ function inspectConfig(home: string): ConfigState {
     const entries = hooks[event];
     if (Array.isArray(entries) && entries.some(isBirdyBeepHookEntry)) present += 1;
   }
+  const stalePaths = [
+    ...new Set(
+      installedBirdyBeepCommands(parsed).flatMap((command) =>
+        staleHookCommandPaths(command, existsSync),
+      ),
+    ),
+  ];
   return {
     exists: true,
     parseable: true,
     legacyNotify: notifyIsLegacyBirdyBeep(parsed["notify"]),
     present,
     total,
+    stalePaths,
   };
 }
 
@@ -187,6 +204,23 @@ export async function codexDoctor(opts: CodexStatusOptions = {}): Promise<Doctor
             },
       );
 
+      // 3b. gcgp.9 parity: a stale absolute path is the failure that produces exit 127 with NO
+      // other symptom — the hooks still read as fully installed and silently deliver nothing.
+      if (config.present > 0) {
+        checks.push(
+          config.stalePaths.length === 0
+            ? { name: "Hook command resolves", ok: true }
+            : {
+                name: "Hook command resolves",
+                ok: false,
+                status: "error",
+                detail: `The installed hook command points at ${config.stalePaths.join(", ")}, which no longer exists — Codex fails these hooks with exit 127.`,
+                remedy:
+                  "Run `birdybeep agent install codex` to rewrite the hook command for the current CLI.",
+              },
+        );
+      }
+
       // 4. Leftover BirdyBeep `notify` from an older version squatting the single slot.
       if (config.legacyNotify) {
         checks.push({
@@ -202,6 +236,13 @@ export async function codexDoctor(opts: CodexStatusOptions = {}): Promise<Doctor
 
       // 5. Trust granted (a trust-gated lifecycle hook has actually fired)?
       if (configured) {
+        // gcgp.15: an UPGRADE that rewrote the hook entries is not the same situation as a first
+        // install, and saying "has not fired a trusted hook yet" to someone whose Codex beeps
+        // worked yesterday reads as a fresh setup rather than a regression. Codex trusts hooks by
+        // CONTENT, so rewritten entries go untrusted and are skipped in silence. The predicate is
+        // derived (migration recorded, trust marker gone) and self-clears the moment a genuinely
+        // trusted hook fires — no bookkeeping here.
+        const dark = codexTurnCompleteIsDark(opts);
         checks.push(
           hasCodexEventBeenSeen(opts)
             ? { name: "Codex hooks trusted", ok: true, status: "installed" }
@@ -209,9 +250,10 @@ export async function codexDoctor(opts: CodexStatusOptions = {}): Promise<Doctor
                 name: "Codex hooks trusted",
                 ok: false,
                 status: "needs_trust",
-                detail:
-                  "BirdyBeep hooks are installed but Codex has not fired a trusted lifecycle hook yet. " +
-                  "Until they are trusted, Codex silently skips them, so no beeps will arrive.",
+                detail: dark
+                  ? MIGRATION_WARNING.join(" ")
+                  : "BirdyBeep hooks are installed but Codex has not fired a trusted lifecycle hook yet. " +
+                    "Until they are trusted, Codex silently skips them, so no beeps will arrive.",
                 remedy: "Open Codex and run /hooks to trust the BirdyBeep hooks.",
               },
         );

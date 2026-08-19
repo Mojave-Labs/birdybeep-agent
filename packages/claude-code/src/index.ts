@@ -4,7 +4,7 @@
  * status/doctor/normalizeEvent) for Claude Code's user-level hook config (§9.5).
  */
 export { CLAUDE_CODE_HARNESS_ID, claudeCodeAdapter } from "./adapter";
-export { detectClaudeCode, type DetectOptions } from "./detect";
+export { claudeCodeSurfaces, detectClaudeCode, type DetectOptions } from "./detect";
 export { runClaudeHook } from "./hook";
 export {
   backupPathFor,
@@ -24,7 +24,13 @@ export {
   isClaudeCodeHookPayload,
   normalizeClaudeCodeEvent,
 } from "./normalize";
-export { claudeConfigDir, claudeSettingsPath } from "./paths";
+export {
+  claudeConfigDir,
+  claudeDesktopEngineBinary,
+  claudeDesktopEngineRoot,
+  type ClaudeDesktopOptions,
+  claudeSettingsPath,
+} from "./paths";
 export {
   CLAUDE_CODE_ADAPTER_VERSION,
   claudeCodeDoctor,

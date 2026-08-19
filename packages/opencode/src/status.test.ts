@@ -18,7 +18,7 @@ import {
 } from "@birdybeep/test-harness";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { backupPathFor, installOpenCode } from "./install";
+import { backupPathFor, installOpenCode, opencodeLauncherPath } from "./install";
 import { opencodeConfigFile } from "./paths";
 import { recordOpenCodeEventSeen } from "./restart";
 import { opencodeDoctor, opencodeStatus } from "./status";
@@ -184,5 +184,93 @@ describe("read-only invariant", () => {
     await opencodeDoctor({ home: sandbox.home, detect: DETECTED, tokenOptions: FILE_ONLY });
     const after = captureTree(dirname(opencodeConfigFile({ home: sandbox.home })));
     assertTreesEqual(before, after);
+  });
+});
+
+/**
+ * gcgp.16: OpenCode alone writes no command into harness config — install records an absolute
+ * launcher argv the plugin spawns directly. That record is the artifact `doctor` must inspect,
+ * and its failure modes are unlike exit 127: a missing record silently falls back to a PATH
+ * lookup, a stale one names a CLI that has moved.
+ */
+describe("opencodeDoctor — plugin launcher", () => {
+  const LAUNCHER = "Plugin launcher resolves";
+
+  function launcherRecord(dataDir: string, argv: string[]): void {
+    const path = opencodeLauncherPath({ dataDir });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({ argv }));
+  }
+
+  async function doctorWith(home: string, dataDir: string) {
+    await installOpenCode({ home, dataDir });
+    return opencodeDoctor({ home, detect: DETECTED, dataDir, tokenOptions: FILE_ONLY });
+  }
+
+  it("passes when the recorded launcher still exists", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const dataDir = sandbox.path("data");
+    const node = sandbox.path("node");
+    const cli = sandbox.path("birdybeep.cjs");
+    writeFileSync(node, "");
+    writeFileSync(cli, "");
+    await installOpenCode({ home: sandbox.home, dataDir });
+    launcherRecord(dataDir, [node, cli]);
+    const r = await opencodeDoctor({
+      home: sandbox.home,
+      detect: DETECTED,
+      dataDir,
+      tokenOptions: FILE_ONLY,
+    });
+    expect(r.checks.find((c) => c.name === LAUNCHER)?.ok).toBe(true);
+  });
+
+  it("flags a stale launcher naming the path that moved", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const dataDir = sandbox.path("data");
+    const node = sandbox.path("node");
+    writeFileSync(node, "");
+    const gone = sandbox.path("moved-away", "birdybeep.cjs");
+    await installOpenCode({ home: sandbox.home, dataDir });
+    launcherRecord(dataDir, [node, gone]);
+    const r = await opencodeDoctor({
+      home: sandbox.home,
+      detect: DETECTED,
+      dataDir,
+      tokenOptions: FILE_ONLY,
+    });
+    const check = r.checks.find((c) => c.name === LAUNCHER);
+    expect(check?.ok).toBe(false);
+    expect(check?.detail).toContain(gone);
+    expect(check?.remedy).toMatch(/birdybeep agent install opencode/);
+  });
+
+  it("flags a missing launcher on a machine that has never delivered — the silent-drop suspect", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const dataDir = sandbox.path("data");
+    const r = await doctorWith(sandbox.home, dataDir);
+    const check = r.checks.find((c) => c.name === LAUNCHER);
+    expect(check?.ok).toBe(false);
+    expect(check?.detail).toMatch(/no error anywhere/);
+  });
+
+  it("does not call a missing launcher an error while events are arriving", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const dataDir = sandbox.path("data");
+    await installOpenCode({ home: sandbox.home, dataDir });
+    recordOpenCodeEventSeen({ dataDir });
+    const r = await opencodeDoctor({
+      home: sandbox.home,
+      detect: DETECTED,
+      dataDir,
+      tokenOptions: FILE_ONLY,
+    });
+    const check = r.checks.find((c) => c.name === LAUNCHER);
+    expect(check?.ok).toBe(true);
+    expect(check?.detail).toMatch(/which is working here/);
   });
 });

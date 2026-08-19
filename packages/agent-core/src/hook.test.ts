@@ -12,6 +12,7 @@ import { readFilteredActivity } from "./filtered-activity";
 import { runAgentHook } from "./hook";
 import type { AgentAdapter, BirdyBeepAgentEvent, BirdyBeepEventType } from "./index";
 import { BIRDYBEEP_EVENT_TYPES, DEFAULT_NOTIFY, LOCAL_ONLY_EVENT_TYPES } from "./index";
+import { readObservedBuilds } from "./observed-builds";
 import type { Sender, SendResult } from "./sender";
 
 let sandbox: Sandbox | undefined;
@@ -227,5 +228,89 @@ describe("runAgentHook", () => {
     expect(first.outcome).toBe("delivered");
     expect(second.outcome).toBe("delivered");
     expect(sender.sent).toHaveLength(2);
+  });
+});
+
+/**
+ * gcgp.6: every mappable payload records WHICH BUILD of the harness reached us, before any
+ * filter can return. Config presence is one fact about a whole harness — all of its builds share
+ * one config file — so this tally is the only thing that can tell a delivering build from one
+ * that has never fired.
+ */
+describe("runAgentHook records the build that fired", () => {
+  function withVersion(adapter: AgentAdapter, version?: string): AgentAdapter {
+    return {
+      ...adapter,
+      normalizeEvent: async () => {
+        const event = await adapter.normalizeEvent({});
+        return version === undefined ? event : { ...event, harness_version: version };
+      },
+    };
+  }
+
+  it("counts a delivered event under the build that produced it", async () => {
+    sandbox = createSandbox();
+    const path = sandbox.path("observed.json");
+    await runAgentHook(
+      withVersion(adapterReturning("approval_required"), "2.1.229"),
+      {},
+      {
+        sender: fakeSender(),
+        ledger: new RecentEventLedger({ path: sandbox.path("ledger.json") }),
+        observedBuilds: { path },
+      },
+    );
+    expect(readObservedBuilds({ path })["claude_code"]?.builds["2.1.229"]?.count).toBe(1);
+  });
+
+  it("counts a LOCAL-ONLY event too — the build still ran our hook", async () => {
+    sandbox = createSandbox();
+    const path = sandbox.path("observed.json");
+    const localOnly = LOCAL_ONLY_EVENT_TYPES[0];
+    expect(localOnly).toBeDefined();
+    const sender = fakeSender();
+    const result = await runAgentHook(
+      withVersion(adapterReturning(localOnly!), "0.148.0-alpha.9"),
+      {},
+      {
+        sender,
+        ledger: new RecentEventLedger({ path: sandbox.path("ledger.json") }),
+        observedBuilds: { path },
+      },
+    );
+    expect(result.outcome).toBe("filtered");
+    expect(sender.sent).toHaveLength(0);
+    expect(readObservedBuilds({ path })["claude_code"]?.builds["0.148.0-alpha.9"]?.count).toBe(1);
+  });
+
+  it("records nothing for an unmappable payload — no build reached the pipeline", async () => {
+    sandbox = createSandbox();
+    const path = sandbox.path("observed.json");
+    const result = await runAgentHook(
+      unmappableAdapter,
+      {},
+      {
+        sender: fakeSender(),
+        ledger: new RecentEventLedger({ path: sandbox.path("ledger.json") }),
+        observedBuilds: { path },
+      },
+    );
+    expect(result.outcome).toBe("skipped");
+    expect(readObservedBuilds({ path })).toEqual({});
+  });
+
+  it("counts an event whose harness named no build as unversioned", async () => {
+    sandbox = createSandbox();
+    const path = sandbox.path("observed.json");
+    await runAgentHook(
+      adapterReturning("approval_required"),
+      {},
+      {
+        sender: fakeSender(),
+        ledger: new RecentEventLedger({ path: sandbox.path("ledger.json") }),
+        observedBuilds: { path },
+      },
+    );
+    expect(readObservedBuilds({ path })["claude_code"]).toEqual({ builds: {}, unversioned: 1 });
   });
 });

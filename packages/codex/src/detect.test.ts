@@ -4,6 +4,7 @@
  * config-home override honored, and read-only (config dir unchanged).
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 
 import {
   assertTreesEqual,
@@ -13,7 +14,7 @@ import {
 } from "@birdybeep/test-harness";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { detectCodex } from "./detect";
+import { codexSurfaces, detectCodex } from "./detect";
 import { codexConfigDir, codexConfigFile } from "./paths";
 
 let sandbox: Sandbox | undefined;
@@ -79,5 +80,86 @@ describe("detect()", () => {
     const before = captureTree(dir);
     await detectCodex({ home: sandbox.home, probeVersion: () => Promise.resolve("0.5.0") });
     assertTreesEqual(before, captureTree(dir), "detect() must not mutate Codex config");
+  });
+});
+
+/**
+ * Surfaces (birdybeep-agent-gcgp.6): a machine can carry several Codex builds at once — one npm
+ * install per Node, plus the one bundled inside ChatGPT.app — and ALL of them read the same
+ * `~/.codex/config.toml`. Filesystem-only: an npm build's version comes from its package.json,
+ * and the bundled build's row carries no version because only the binary knows it.
+ */
+describe("codexSurfaces", () => {
+  /**
+   * An npm-installed Codex. A real install puts a symlink on PATH pointing INTO the package;
+   * the fixture puts the entry at the symlink's target instead, which exercises the same
+   * package.json walk without needing the Windows symlink privilege.
+   */
+  function npmCodex(box: Sandbox, prefix: string, version: string): string {
+    const pkg = join(box.home, prefix, "lib", "node_modules", "@openai", "codex");
+    const bin = join(pkg, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "@openai/codex", version }));
+    writeFileSync(join(bin, "codex"), "", { mode: 0o755 });
+    return bin;
+  }
+
+  function chatgptApp(box: Sandbox): string {
+    const apps = join(box.home, "Applications");
+    mkdirSync(join(apps, "ChatGPT.app", "Contents", "Resources"), { recursive: true });
+    writeFileSync(join(apps, "ChatGPT.app", "Contents", "Resources", "codex"), "", { mode: 0o755 });
+    return apps;
+  }
+
+  it("lists the ChatGPT-bundled build beside the CLI, all on one config file", () => {
+    sandbox = createSandbox();
+    const bin = npmCodex(sandbox, "nvm", "0.135.0");
+    const apps = chatgptApp(sandbox);
+
+    const surfaces = codexSurfaces({
+      home: sandbox.home,
+      platform: "darwin",
+      applicationsDir: apps,
+      env: { PATH: bin },
+    });
+
+    expect(surfaces.map((s) => [s.id, s.kind, s.label, s.version])).toEqual([
+      ["terminal", "terminal", "terminal CLI", "0.135.0"],
+      ["desktop", "desktop", "ChatGPT desktop app", undefined],
+    ]);
+    // Only the binary knows the bundled build's version — the row stays honest about that.
+    expect(surfaces[1]?.version).toBeUndefined();
+    expect(new Set(surfaces.map((s) => s.configPath))).toEqual(
+      new Set([codexConfigFile({ home: sandbox.home })]),
+    );
+  });
+
+  it("reports a second, shadowed CLI install rather than hiding it", () => {
+    sandbox = createSandbox();
+    const first = npmCodex(sandbox, "nvm", "0.135.0");
+    const second = npmCodex(sandbox, "brew", "0.147.0");
+    const surfaces = codexSurfaces({
+      home: sandbox.home,
+      platform: "linux",
+      env: { PATH: [first, second].join(delimiter) },
+    });
+    expect(surfaces.map((s) => [s.id, s.version])).toEqual([
+      ["terminal", "0.135.0"],
+      ["terminal-2", "0.147.0"],
+    ]);
+    expect(surfaces[1]?.label).toContain("shadowed");
+  });
+
+  it("reports no ChatGPT surface off macOS rather than guessing a path", () => {
+    sandbox = createSandbox();
+    const apps = chatgptApp(sandbox);
+    expect(
+      codexSurfaces({
+        home: sandbox.home,
+        platform: "linux",
+        applicationsDir: apps,
+        env: { PATH: "" },
+      }),
+    ).toEqual([]);
   });
 });

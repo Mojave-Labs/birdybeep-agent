@@ -2,9 +2,10 @@
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 
 import type { DetectionResult, DoctorResult, IntegrationStatus } from "@birdybeep/agent-core";
+import { staleHookCommandPaths } from "@birdybeep/agent-core";
 
 import { detectCopilot } from "./detect";
-import { isCurrentCopilotHooks } from "./install";
+import { installedBirdyBeepCommands, isCurrentCopilotHooks } from "./install";
 import { copilotHooksDir, copilotHooksPath, type CopilotPathOptions } from "./paths";
 
 export const COPILOT_ADAPTER_VERSION = "0.0.0";
@@ -17,19 +18,36 @@ interface HookState {
   exists: boolean;
   parseable: boolean;
   current: boolean;
+  /**
+   * Absolute paths in the managed commands that no longer exist — the CLI moved, or the Node it
+   * was installed under is gone (gcgp.9). Copilot fails these hooks with exit 127 and nothing
+   * else looks wrong. The file carries a bash AND a powershell form of the same launcher, so the
+   * paths are de-duplicated before they are reported.
+   */
+  stalePaths: string[];
 }
 
 function inspectHooks(options: CopilotPathOptions): HookState {
   const path = copilotHooksPath(options);
-  if (!existsSync(path)) return { exists: false, parseable: true, current: false };
+  if (!existsSync(path)) {
+    return { exists: false, parseable: true, current: false, stalePaths: [] };
+  }
   try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
     return {
       exists: true,
       parseable: true,
-      current: isCurrentCopilotHooks(JSON.parse(readFileSync(path, "utf8"))),
+      current: isCurrentCopilotHooks(parsed),
+      stalePaths: [
+        ...new Set(
+          installedBirdyBeepCommands(parsed).flatMap((command) =>
+            staleHookCommandPaths(command, existsSync),
+          ),
+        ),
+      ],
     };
   } catch {
-    return { exists: true, parseable: false, current: false };
+    return { exists: true, parseable: false, current: false, stalePaths: [] };
   }
 }
 
@@ -104,6 +122,23 @@ export async function copilotDoctor(options: CopilotStatusOptions = {}): Promise
               remedy: "Run `birdybeep agent install copilot` to install the current hooks.",
             },
     );
+
+    // gcgp.9 parity: a stale absolute path fails the hook with exit 127 and no other symptom —
+    // the file still reads as correctly installed while it delivers nothing.
+    if (state.exists && state.parseable) {
+      checks.push(
+        state.stalePaths.length === 0
+          ? { name: "Hook command resolves", ok: true }
+          : {
+              name: "Hook command resolves",
+              ok: false,
+              status: "error",
+              detail: `The installed hook command points at ${state.stalePaths.join(", ")}, which no longer exists — Copilot fails these hooks with exit 127.`,
+              remedy:
+                "Run `birdybeep agent install copilot` to rewrite the hook command for the current CLI.",
+            },
+      );
+    }
 
     const writableTarget = existsSync(path) ? path : copilotHooksDir(options);
     let writable = true;

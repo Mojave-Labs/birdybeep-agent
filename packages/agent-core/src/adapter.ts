@@ -14,6 +14,7 @@
  */
 import type { BirdyBeepAgentEvent } from "./event";
 import type { HarnessId } from "./primitives";
+import type { HarnessSurface } from "./surface";
 
 /** Integration status values (§8.8). */
 export const INTEGRATION_STATUSES = [
@@ -34,6 +35,13 @@ export interface DetectionResult {
   /** Path to the harness config the adapter would manage, if found. */
   configPath?: string;
   detail?: string;
+  /**
+   * Every installed BUILD of this harness (birdybeep-agent-gcgp.6). The terminal CLI and the
+   * engine a desktop app spawns are separate installs on separate update channels, and
+   * `detected`/`version` can describe only one of them. Empty when the harness is absent;
+   * absent entirely when an adapter does not enumerate surfaces.
+   */
+  surfaces?: HarnessSurface[];
 }
 
 export interface InstallOptions {

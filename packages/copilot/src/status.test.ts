@@ -58,3 +58,34 @@ describe("Copilot status + doctor", () => {
     expect(await copilotStatus({ ...options(sandbox), detect: present() })).toBe("error");
   });
 });
+
+/**
+ * gcgp.9 parity (wired for gcgp.16): a launcher whose absolute paths have moved leaves the hook
+ * file looking correctly installed while Copilot fails every hook with exit 127. The file carries
+ * a bash AND a powershell form of the same launcher, so a shared path must be reported once.
+ */
+describe("Copilot doctor — hook command resolves", () => {
+  const CHECK = "Hook command resolves";
+
+  it("passes when the installed launcher's paths still exist", async () => {
+    sandbox = createSandbox();
+    const node = sandbox.path("node");
+    const cli = sandbox.path("birdybeep.cjs");
+    writeFileSync(node, "");
+    writeFileSync(cli, "");
+    await installCopilot({ ...options(sandbox), hookCommand: `"${node}" "${cli}"` });
+    const r = await copilotDoctor({ ...options(sandbox), detect: present() });
+    expect(r.checks.find((c) => c.name === CHECK)?.ok).toBe(true);
+  });
+
+  it("flags a moved CLI once, not once per shell form", async () => {
+    sandbox = createSandbox();
+    const gone = sandbox.path("moved-away", "birdybeep.cjs");
+    await installCopilot({ ...options(sandbox), hookCommand: `"${gone}"` });
+    const r = await copilotDoctor({ ...options(sandbox), detect: present() });
+    const check = r.checks.find((c) => c.name === CHECK);
+    expect(check?.ok).toBe(false);
+    expect((check?.detail ?? "").split(gone).length - 1).toBe(1);
+    expect(check?.remedy).toMatch(/birdybeep agent install copilot/);
+  });
+});

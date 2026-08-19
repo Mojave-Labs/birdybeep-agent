@@ -11,7 +11,9 @@ import {
   type AgentAdapter,
   clearToken,
   createSender,
+  type HarnessSurface,
   type IntegrationStatus,
+  recordObservedBuild,
   setToken,
   unavailableKeychainBackend,
 } from "@birdybeep/agent-core";
@@ -191,5 +193,63 @@ describe("birdybeep status", () => {
     });
     expect(code).toBe(EXIT.ERROR);
     expect(out.text()).toContain("Paired:  no");
+  });
+});
+
+/**
+ * gcgp.6: `status` lists each harness's installed BUILDS under it, marked by coverage, so the
+ * one-line answer to "is BirdyBeep wired up?" stops hiding a desktop app that never beeps.
+ */
+describe("birdybeep status per-surface coverage", () => {
+  const CONFIG = "/home/dev/.claude/settings.json";
+  function build(id: string, label: string, version: string): HarnessSurface {
+    return {
+      id,
+      kind: id === "desktop" ? "desktop" : "terminal",
+      label,
+      version,
+      enginePath: `/e/${id}`,
+      configPath: CONFIG,
+    };
+  }
+
+  it("marks the delivering build and the one that has never fired", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const path = sandbox.path("observed.json");
+    recordObservedBuild("claude_code", "2.1.227", { path });
+
+    const adapter = {
+      id: "claude_code",
+      displayName: "Claude Code",
+      detect: () =>
+        Promise.resolve({
+          detected: true,
+          configPath: CONFIG,
+          surfaces: [
+            build("terminal", "terminal CLI", "2.1.227"),
+            build("desktop", "Claude desktop app", "2.1.229"),
+          ],
+        }),
+      status: () => Promise.resolve("installed" as IntegrationStatus),
+    } as AgentAdapter;
+
+    const cmd = createStatusCommand({
+      adapters: [adapter],
+      createSender: () => createSender({ baseUrl: "http://127.0.0.1:1", tokenOptions: FILE_ONLY }),
+      tokenOptions: FILE_ONLY,
+      surfaceOptions: { observedBuilds: { path } },
+    });
+    const out = capture();
+    const code = await runCli(["status"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+
+    expect(code).toBe(EXIT.OK);
+    expect(out.text()).toContain("✓ terminal CLI 2.1.227 — active");
+    expect(out.text()).toContain("✗ Claude desktop app 2.1.229 — uncovered");
   });
 });

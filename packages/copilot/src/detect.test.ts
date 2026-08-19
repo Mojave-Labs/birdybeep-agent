@@ -26,6 +26,8 @@ describe("detectCopilot", () => {
       detected: true,
       version: "1.0.70",
       configPath: copilotHooksPath({ home: sandbox.home, env: {} }),
+      // gcgp.6: surfaces come off PATH, and this call injects an empty env — no PATH, no rows.
+      surfaces: [],
     });
   });
 

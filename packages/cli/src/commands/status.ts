@@ -20,13 +20,16 @@ import { opencodeAdapter } from "@birdybeep/opencode";
 import { resolveApiUrl } from "../config";
 import {
   describeFilteredActivity,
+  describeSurface,
   describeUnpairedActivity,
   filteredActivity,
   gatherIntegrations,
+  gatherSurfaces,
   isPaired,
   localQueueDepth,
   localQueueOverflowDrops,
   machineIdentity,
+  type SurfaceCoverageOptions,
   unpairedActivity,
 } from "../diagnostics";
 import { type Command, EXIT } from "../framework";
@@ -45,6 +48,8 @@ export interface StatusCommandDeps {
   createSender?: (baseUrl: string) => Sender;
   /** Token-store options (tests inject the file fallback). */
   tokenOptions?: TokenStoreOptions;
+  /** Where the observed-builds tally lives (tests point it at a sandbox). */
+  surfaceOptions?: SurfaceCoverageOptions;
 }
 
 export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
@@ -64,6 +69,10 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
       const machine = machineIdentity();
       const paired = await isPaired(deps.tokenOptions ?? {});
       const integrations = await gatherIntegrations(adapters);
+      // gcgp.6: which BUILD of each harness is actually delivering. `integrations` above answers
+      // for the shared config; a machine runs a harness from a terminal CLI and from a desktop
+      // app's own engine, and only one of them may ever reach the hook.
+      const surfaces = await gatherSurfaces(adapters, deps.surfaceOptions ?? {});
       const depthBefore = localQueueDepth();
       const unpaired = unpairedActivity(); // gcgp.4: events that fired with no token to send them
       const filtered = filteredActivity(); // gcgp.3: events handled locally, never sent
@@ -75,6 +84,7 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
         machine,
         paired,
         integrations,
+        surfaces,
         queue: { depthBefore, delivered: drain.delivered, depthAfter, overflowDropped },
         ...(unpaired !== null ? { unpairedActivity: unpaired } : {}),
         ...(filtered !== null ? { filteredActivity: filtered } : {}),
@@ -86,7 +96,14 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
         ctx.io.line(`Machine: ${machine.label} (${machine.os})`);
         ctx.io.line(paired ? "Paired:  yes" : "Paired:  no — run `birdybeep pair`");
         ctx.io.line("Integrations:");
-        for (const i of integrations) ctx.io.line(`  ${i.displayName}: ${i.status}`);
+        for (const i of integrations) {
+          ctx.io.line(`  ${i.displayName}: ${i.status}`);
+          const group = surfaces.find((g) => g.harness === i.harness);
+          for (const state of group?.surfaces ?? []) {
+            const mark = state.coverage === "active" ? "✓" : state.coverage === "wired" ? "·" : "✗";
+            ctx.io.line(`    ${mark} ${describeSurface(state)} — ${state.coverage}`);
+          }
+        }
         ctx.io.line(
           `Queue:   ${depthBefore} queued → ${drain.delivered} delivered, ${depthAfter} remaining` +
             (overflowDropped > 0 ? `, ${overflowDropped} dropped by the queue cap` : ""),

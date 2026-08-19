@@ -126,10 +126,25 @@ function quoteForShell(token: string): string {
  * bare-name spawn).
  */
 export function resolveOnPath(command: string, options: ResolveOptions = {}): string | null {
+  return resolveAllOnPath(command, options)[0] ?? null;
+}
+
+/**
+ * Every launchable `command` on PATH, in PATH order — same trust rules as {@link resolveOnPath}
+ * (absolute PATH directories only, PATHEXT on Windows, `execvp`-style executable check on POSIX).
+ *
+ * `resolveOnPath` answers "what runs when the user types this", which is the first hit and all a
+ * spawn needs. The rest still matter for REPORTING (birdybeep-agent-gcgp.6): a machine can carry
+ * several independent installs of one harness on separate update channels — two `codex` shims
+ * from different Node installs was the observed case — and a coverage report that lists only the
+ * first hides the others. Never used to decide what to launch.
+ */
+export function resolveAllOnPath(command: string, options: ResolveOptions = {}): string[] {
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
   const isWindows = platform === "win32";
   const extensions = isWindows ? windowsExtensions(env) : [""];
+  const found: string[] = [];
 
   for (const dir of pathDirectories(env)) {
     // A relative PATH entry (e.g. ".", "bin", "..\\x") resolves against the inherited cwd —
@@ -137,10 +152,13 @@ export function resolveOnPath(command: string, options: ResolveOptions = {}): st
     if (!isAbsolute(dir)) continue;
     for (const ext of extensions) {
       const candidate = join(dir, command + ext);
-      if (isLaunchableFile(candidate, isWindows)) return candidate;
+      if (isLaunchableFile(candidate, isWindows)) {
+        if (!found.includes(candidate)) found.push(candidate);
+        break; // one hit per PATH directory, matching how the OS resolves PATHEXT
+      }
     }
   }
-  return null;
+  return found;
 }
 
 /** Options for {@link safeSpawn}. */
