@@ -18,7 +18,8 @@
  * structural assertions (shape + tokenizer round-trip) on a machine without one.
  */
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   hookCommandPaths,
@@ -85,19 +86,27 @@ function buildRig(sb: Sandbox): Rig {
   const emptyPath = sb.path("empty-path");
   for (const dir of [binDir, emptyPath]) mkdirSync(dir, { recursive: true });
   const receipt = sb.path("receipt.json");
-  const bin = `${binDir}/birdybeep`;
+  // `join`, not string concatenation: a hand-built `${dir}/birdybeep` yields mixed separators on
+  // Windows. The `.js` extension keeps Node unambiguous about how to load an explicitly-named
+  // entry, and `isBirdyBeepCliEntry` still recognizes it — it strips known script extensions, so
+  // the launcher resolves exactly as it does for the published bin.
+  const bin = join(binDir, "birdybeep.js");
   writeFileSync(
     bin,
     [
-      "#!/usr/bin/env node", // byte-identical to the published @birdybeep/cli bin
+      "#!/usr/bin/env node", // same shebang as the published @birdybeep/cli bin
       "const fs = require('node:fs');",
+      // Record that we RAN, with our argv, before waiting on anything. Separating "the launcher
+      // invoked us correctly" from "the payload arrived" is what makes a failure diagnosable:
+      // otherwise a stdin problem and a launcher problem are the same missing file.
+      `  const receipt = ${JSON.stringify(receipt)};`,
+      "const write = (extra) => fs.writeFileSync(receipt, JSON.stringify({",
+      "  args: process.argv.slice(2), ...extra,",
+      "}));",
+      "write({ ran: true });",
       "let stdin = '';",
       "process.stdin.on('data', (c) => { stdin += c; });",
-      "process.stdin.on('end', () => {",
-      `  fs.writeFileSync(${JSON.stringify(receipt)}, JSON.stringify({`,
-      "    args: process.argv.slice(2), stdin,",
-      "  }));",
-      "});",
+      "process.stdin.on('end', () => write({ ran: true, stdin }));",
     ].join("\n"),
     { mode: 0o755 },
   );
@@ -114,11 +123,51 @@ function rigLauncher(rig: Rig): HookLauncher {
   });
 }
 
+/**
+ * The environment an interpreter is run in: everything the OS gives us, with ONLY `PATH` emptied.
+ *
+ * Emptying PATH is the point of these tests — the launcher must not need it. Replacing the WHOLE
+ * environment is not: on Windows, PowerShell is a .NET application that needs `SystemRoot` (and
+ * friends) merely to start, and `PATHEXT` to resolve anything at all, so a bare `{ PATH }` is a
+ * Windows-only hazard that the POSIX runs never feel.
+ *
+ * PATH is case-insensitive on Windows and Node surfaces it as `Path` there, so every case variant
+ * is removed before the single emptied one is set — otherwise a surviving `Path` would quietly
+ * hand back the real PATH and the test would prove nothing.
+ */
+function envWithEmptyPath(emptyPath: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === "PATH") delete env[key];
+  }
+  env["PATH"] = emptyPath;
+  return env;
+}
+
+/**
+ * Wait briefly for the stub to write its receipt. The interpreter exiting does not guarantee its
+ * child has been reaped and its writes flushed on every platform, and a bounded poll costs nothing
+ * on the common path — while a bare read turns any such difference into an opaque ENOENT.
+ */
+function waitForReceipt(path: string, timeoutMs = 5000): unknown {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (existsSync(path)) {
+      try {
+        return JSON.parse(readFileSync(path, "utf8"));
+      } catch {
+        /* mid-write — retry */
+      }
+    }
+  } while (Date.now() < deadline);
+  return undefined;
+}
+
 function runBashWithoutPath(command: string, rig: Rig): { status: number | null; stderr: string } {
   const result = spawnSync("/bin/sh", ["-c", command], {
     input: PAYLOAD,
     encoding: "utf8",
-    env: { PATH: rig.emptyPath },
+    env: envWithEmptyPath(rig.emptyPath),
   });
   return { status: result.status, stderr: result.stderr ?? "" };
 }
@@ -260,16 +309,29 @@ describe("gcgp.16: the powershell command Copilot executes", () => {
       sandbox = createSandbox();
       const rig = buildRig(sandbox);
       const { powershell } = copilotHookCommands("errorOccurred", rigLauncher(rig));
-      const run = spawnSync(POWERSHELL!, ["-NoProfile", "-Command", powershell], {
-        input: PAYLOAD,
-        encoding: "utf8",
-        env: { PATH: rig.emptyPath },
-      });
-      expect(run.stderr ?? "").toBe("");
-      expect(run.status).toBe(0);
-      const receipt = asRecord(JSON.parse(readFileSync(rig.receipt, "utf8")));
-      expect(receipt["args"]).toEqual(["hook", "copilot", "errorOccurred"]);
-      expect(receipt["stdin"]).toBe(PAYLOAD);
+      const run = spawnSync(
+        POWERSHELL!,
+        ["-NoProfile", "-NonInteractive", "-Command", powershell],
+        {
+          input: PAYLOAD,
+          encoding: "utf8",
+          env: envWithEmptyPath(rig.emptyPath),
+        },
+      );
+      // Everything PowerShell told us, carried into every failure message below — without it a
+      // broken link here is an unexplained missing file on a platform we cannot run locally.
+      const shell = `pwsh=${POWERSHELL} status=${run.status} stderr=${JSON.stringify(
+        run.stderr,
+      )} stdout=${JSON.stringify(run.stdout)} command=${JSON.stringify(powershell)}`;
+      expect(run.stderr ?? "", shell).toBe("");
+      expect(run.status, shell).toBe(0);
+
+      const receipt = asRecord(waitForReceipt(rig.receipt));
+      // (a) did the launcher actually INVOKE the CLI, with the right argv? — the gcgp.16 claim.
+      expect(receipt["ran"], `stub never ran — ${shell}`).toBe(true);
+      expect(receipt["args"], shell).toEqual(["hook", "copilot", "errorOccurred"]);
+      // (b) did the payload survive the interpreter? — separate link, separate assertion.
+      expect(receipt["stdin"], `stub ran but got no payload on stdin — ${shell}`).toBe(PAYLOAD);
     },
   );
 });

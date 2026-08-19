@@ -16,6 +16,7 @@ export {
   opencodeLauncherPath,
   readOpenCodeLauncher,
   RESTART_INSTRUCTIONS,
+  staleOpenCodeLauncherPaths,
   writeOpenCodeLauncher,
 } from "./install";
 export { normalizeOpenCodeEvent, OpenCodeMappingError } from "./normalize";

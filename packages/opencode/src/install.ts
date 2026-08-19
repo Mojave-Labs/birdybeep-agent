@@ -68,30 +68,60 @@ export function opencodeLauncherPath(opts: OpenCodeLauncherOptions = {}): string
   return join(opts.dataDir ?? birdyBeepDataDir(), "integrations", "opencode-launcher.json");
 }
 
+/** The recorded argv exactly as written, with NO existence checks. For `doctor` and reuse below. */
+function rawRecordedArgv(opts: OpenCodeLauncherOptions = {}): string[] | null {
+  try {
+    const argv = asRecord(JSON.parse(readFileSync(opencodeLauncherPath(opts), "utf8")))["argv"];
+    if (!Array.isArray(argv) || argv.length === 0) return null;
+    return argv.every((part): part is string => typeof part === "string" && part.length > 0)
+      ? argv
+      : null;
+  } catch {
+    return null; // absent/unreadable/garbled
+  }
+}
+
 /**
  * The recorded launcher argv, or `null` when there is none we can trust.
  *
- * Validation is the security boundary, because this argv is spawned directly: every element must
- * be a string, and argv[0] must be an ABSOLUTE path to a file that exists. Absolute is what makes
- * the spawn immune to the cwd-binary-planting hijack `safeSpawn` exists to prevent (the plugin's
- * cwd is the repo the developer just opened), and the existence check is what makes a stale
- * record — a moved Node, an uninstalled CLI — fall back to the PATH lookup instead of failing.
- * Contains no token: the CLI reads that from the secure store at send time.
+ * Validation is the security boundary, because this argv is spawned directly: EVERY element must
+ * be an ABSOLUTE path to a file that EXISTS. Absolute is what makes the spawn immune to the
+ * cwd-binary-planting hijack `safeSpawn` exists to prevent (the plugin's cwd is the repo the
+ * developer just opened). No token is involved: the CLI reads that from its secure store at send
+ * time.
+ *
+ * EVERY element, not just argv[0] — the whole record is usable or none of it is. Checking only the
+ * Node binary reintroduced THIS TICKET'S OWN BUG with a different trigger: after an npm reinstall
+ * under a different prefix, an nvm switch, or an uninstall, Node still exists while the CLI entry
+ * does not, so the record looked valid, the plugin spawned Node against a script that was gone,
+ * and `spawnRecordedLauncher` reported success — suppressing the PATH fallback that would have
+ * worked. Nothing surfaces it: the spawn itself SUCCEEDS, so no `error` event fires, and Node's
+ * complaint goes to the ignored stdio. Every OpenCode event vanished, silently.
+ *
+ * A stale record is deliberately NOT deleted here. This runs inside OpenCode on every event, where
+ * a side-effecting delete would be both surprising and racy across concurrent sessions — and it
+ * would destroy the evidence `doctor` needs to explain WHY delivery quietly changed (see
+ * {@link staleOpenCodeLauncherPaths}). Falling back to PATH keeps events flowing; `doctor` names
+ * the repair.
  */
 export function readOpenCodeLauncher(opts: OpenCodeLauncherOptions = {}): string[] | null {
-  try {
-    const raw = readFileSync(opencodeLauncherPath(opts), "utf8");
-    const argv = asRecord(JSON.parse(raw))["argv"];
-    if (!Array.isArray(argv) || argv.length === 0) return null;
-    if (!argv.every((part): part is string => typeof part === "string" && part.length > 0)) {
-      return null;
-    }
-    const [program] = argv;
-    if (!isAbsolute(program!) || !existsSync(program!)) return null;
-    return argv;
-  } catch {
-    return null; // absent/unreadable/garbled → the plugin falls back to resolving on PATH
-  }
+  const argv = rawRecordedArgv(opts);
+  if (argv === null) return null;
+  if (!argv.every((part) => isAbsolute(part) && existsSync(part))) return null;
+  return argv;
+}
+
+/**
+ * Which of the recorded launcher's paths no longer exist — i.e. why the plugin has silently fallen
+ * back to resolving `birdybeep` on PATH (gcgp.16). Empty when the record is healthy or absent.
+ * The remedy is always `birdybeep agent install opencode`, which rewrites the record.
+ *
+ * Mirrors agent-core's `staleHookCommandPaths` for the config-writing adapters, whose stale
+ * launcher is visible in the harness config; OpenCode's lives only here, so without this a stale
+ * record is invisible to `doctor`.
+ */
+export function staleOpenCodeLauncherPaths(opts: OpenCodeLauncherOptions = {}): string[] {
+  return (rawRecordedArgv(opts) ?? []).filter((part) => !isAbsolute(part) || !existsSync(part));
 }
 
 /**

@@ -14,7 +14,7 @@
  * PATH lookup. Evidence here is a receipt written BY THE SPAWNED PROCESS — not a mocked spawn.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { delimiter, dirname } from "node:path";
 
 import { resolveHookLauncher } from "@birdybeep/agent-core";
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
@@ -24,6 +24,7 @@ import {
   installOpenCode,
   opencodeLauncherPath,
   readOpenCodeLauncher,
+  staleOpenCodeLauncherPaths,
   writeOpenCodeLauncher,
 } from "./install";
 import { BirdyBeepPlugin } from "./plugin";
@@ -153,6 +154,42 @@ describe.skipIf(!POSIX)("gcgp.16: the OpenCode plugin's spawn", () => {
     expect(envelope["cwd"]).toBe(RAW_CWD); // the plugin injects the workspace dir
   });
 
+  /**
+   * The stale-CLI-entry case. Validating only argv[0] reintroduced this ticket's own bug with a
+   * different trigger: after an npm reinstall under a different prefix, Node still exists while
+   * the recorded CLI entry does not — so the record looked valid, the plugin spawned Node against
+   * a missing script and reported SUCCESS, suppressing the PATH fallback that would have worked.
+   * The spawn succeeds, so no `error` event fires and Node's complaint goes to ignored stdio:
+   * every event vanishes silently.
+   *
+   * The assertion that matters is not "the record is rejected" — it is that the event STILL
+   * ARRIVES.
+   */
+  it("REPRO+FIXED — a record whose CLI entry is gone falls back to PATH and still DELIVERS", async () => {
+    sandbox = createSandbox();
+    const sb = sandbox;
+    const rig = buildRig(sb);
+    await installOpenCode({}, sb.home);
+    // Node is real and present; only the CLI entry has moved away (npm reinstall / uninstall).
+    seedLauncherFile(JSON.stringify({ argv: [process.execPath, sb.path("gone", "birdybeep")] }));
+    // …and `birdybeep` IS resolvable on PATH, so the fallback can and must succeed. Node has to
+    // be findable too: the stub carries the published bin's `#!/usr/bin/env node` shebang, so a
+    // PATH holding `birdybeep` but no `node` fails with exit 127 — this ticket's own lesson, and
+    // never the shape of a real machine where the CLI is installed.
+    vi.stubEnv("PATH", [dirname(rig.bin), dirname(process.execPath)].join(delimiter));
+
+    const hooks = await BirdyBeepPlugin({ directory: RAW_CWD });
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } });
+
+    const receipt = asRecord(await waitForReceipt(rig.receipt));
+    expect(receipt["args"], "the event was silently dropped instead of falling back").toEqual([
+      "hook",
+      "opencode",
+    ]);
+    const envelope = asRecord(JSON.parse(String(receipt["stdin"])));
+    expect(envelope["type"]).toBe("session.idle");
+  });
+
   it("delivers the tool hooks through the same path", async () => {
     sandbox = createSandbox();
     const sb = sandbox;
@@ -241,6 +278,40 @@ describe("gcgp.16: the launcher record itself", () => {
     expect(second.changed).toBe(false); // config untouched (idempotent)
     // The stale record was replaced by whatever THIS run resolves (bare under vitest → cleared).
     expect(readOpenCodeLauncher()).toBeNull();
+  });
+
+  it("rejects a record whose CLI ENTRY is gone, not just its Node (gcgp.16 P1)", () => {
+    sandbox = createSandbox();
+    const sb = sandbox;
+    buildRig(sb);
+    // argv[0] (Node) exists; argv[1] does not. The whole record must be refused.
+    seedLauncherFile(JSON.stringify({ argv: [process.execPath, sb.path("gone", "birdybeep")] }));
+    expect(readOpenCodeLauncher()).toBeNull();
+  });
+
+  it("reports exactly which recorded paths went stale, for doctor", () => {
+    sandbox = createSandbox();
+    const sb = sandbox;
+    const rig = buildRig(sb);
+    const gone = sb.path("gone", "birdybeep");
+
+    expect(staleOpenCodeLauncherPaths()).toEqual([]); // no record at all
+    writeOpenCodeLauncher(rigLauncher(rig));
+    expect(staleOpenCodeLauncherPaths()).toEqual([]); // healthy
+
+    seedLauncherFile(JSON.stringify({ argv: [process.execPath, gone] }));
+    expect(staleOpenCodeLauncherPaths()).toEqual([gone]); // names the CLI entry, not Node
+  });
+
+  it("a stale record is left on disk for doctor to explain, never deleted on the event path", () => {
+    sandbox = createSandbox();
+    const sb = sandbox;
+    buildRig(sb);
+    seedLauncherFile(JSON.stringify({ argv: [process.execPath, sb.path("gone", "birdybeep")] }));
+
+    expect(readOpenCodeLauncher()).toBeNull();
+    // Reading must not mutate: the plugin runs this on EVERY event, in OpenCode's process.
+    expect(existsSync(opencodeLauncherPath())).toBe(true);
   });
 
   it("uninstall clears it (it is a BirdyBeep-managed file)", async () => {
