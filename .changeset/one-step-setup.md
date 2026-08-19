@@ -37,3 +37,7 @@ Not installed: OpenCode. Install any of them, then run `birdybeep setup` again t
   and an undetected harness names the command that wires it up later.
 - `--no-install` stops after the machine token; `--no-test` skips the closing Beep;
   `birdybeep agent install <harness>` still does one harness at a time.
+- Scriptable: the exit code is non-zero whenever a harness could not be set up, and `--json`
+  carries the same verdict — `setup.ok`, per-harness rows, and `setup.error` if the run could not
+  finish at all. A pairing that succeeded is always reported as `paired: true`, whatever the
+  harness half did.

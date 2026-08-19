@@ -102,8 +102,34 @@ export interface SetupReport {
   counts: { installed: number; needsYou: number; notInstalled: number; failed: number };
   /** The `birdybeep test` result, when the chain sent one. */
   beep?: unknown;
-  /** False when a harness install failed or the test Beep was rejected. */
+  /**
+   * The chain itself could not complete — nothing here was graded, so `harnesses` is empty.
+   *
+   * DISTINCT from a harness whose adapter threw: that is one `failed` ROW inside `harnesses`
+   * carrying its own `error`, and the rest of the run still finished. Attributing an adapter's
+   * fault to the chain (or the reverse) sends the reader to the wrong place, so the two never
+   * share a field.
+   */
+  error?: string;
+  /** False when a harness install failed, the test Beep was rejected, or the chain itself failed. */
   ok: boolean;
+}
+
+/**
+ * The report for a chain that failed outright (birdybeep-agent-gcgp.5, Codex review of #66).
+ *
+ * There must ALWAYS be a report. Returning nothing read as "no setup was attempted": the caller
+ * exited 0 and dropped `setup` from the `--json` object, so a human saw the failure on screen
+ * while CI and every script were told the machine was wired up. A failure that only reaches a
+ * human is the silent drop this epic exists to remove, pointed the other way.
+ */
+export function failedSetupReport(error: string): SetupReport {
+  return {
+    harnesses: [],
+    counts: { installed: 0, needsYou: 0, notInstalled: 0, failed: 0 },
+    error,
+    ok: false,
+  };
 }
 
 export interface SetupDeps {

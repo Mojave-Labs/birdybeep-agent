@@ -39,7 +39,7 @@ import { cliConfigPath, readCliConfig, resolveApiUrl, writeCliConfig } from "../
 import { type Command, type CommandContext, EXIT } from "../framework";
 import { pairStart, pairTokenPoll, type PairTokenResult } from "../pairing";
 import { CLI_VERSION } from "../version";
-import { runHarnessSetup, type SetupDeps, type SetupReport } from "./setup";
+import { failedSetupReport, runHarnessSetup, type SetupDeps, type SetupReport } from "./setup";
 
 /** Default delay between `/pair/token` polls (the start response has no interval). */
 export const DEFAULT_POLL_INTERVAL_MS = 2000;
@@ -420,24 +420,36 @@ export interface PairCommandDeps {
 }
 
 /**
- * Run the post-pairing chain without ever letting it undo a successful pairing. The token is
- * already stored by the time this runs, so a thrown adapter (a harness the installed CLI is too
- * old to understand — this ships on npm and users upgrade when they feel like it) has to degrade
- * into a message plus the granular escape hatch, not a crash on top of a machine that IS paired.
+ * Run the post-pairing chain. ALWAYS returns a report — a failed one when the chain could not
+ * complete — because the caller reads it for both the exit code and the `--json` object.
+ *
+ * Two things this must keep apart, because they have different causes and different fixes:
+ *
+ *   - A HARNESS's adapter throwing is handled inside the chain, per adapter (a CLI that ships on
+ *     npm meets harnesses newer than itself, since users upgrade when they feel like it). It
+ *     becomes one `failed` ROW, the other harnesses are still wired up, and the run completes.
+ *     Never a crash on top of a machine that IS paired.
+ *   - THE CHAIN failing outright is what this catch is for, and it is NOT the same thing. It used
+ *     to return nothing, which the caller read as "no setup ran": exit 0, `setup` dropped from the
+ *     report. The human saw the failure and every machine consumer was told it succeeded.
+ *
+ * Pairing itself is untouched either way. The token is already stored by the time this runs, and
+ * a genuine pairing must never be reported as a failure.
  */
 async function runSetupChain(
   ctx: CommandContext,
   deps: SetupDeps,
   flags: PairFlags,
-): Promise<SetupReport | undefined> {
+): Promise<SetupReport> {
   try {
     return await runHarnessSetup(ctx, { sendTest: !flags.noTest }, deps);
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     ctx.io.errline(
-      `This machine is paired, but wiring up your coding agents failed: ${err instanceof Error ? err.message : String(err)}. ` +
+      `This machine is paired, but wiring up your coding agents failed: ${message}. ` +
         "Run `birdybeep agent install all` to do it on its own, then `birdybeep doctor`.",
     );
-    return undefined;
+    return failedSetupReport(message);
   }
 }
 
@@ -522,6 +534,8 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
             ? "✓ Already paired — checking which coding agents are wired up."
             : "✓ Already paired. Nothing else to do with --no-install.",
         );
+        // `undefined` here means the chain was never RUN (--no-install) — the only remaining
+        // reason `setup` is absent from the report. A chain that ran and failed reports itself.
         const report =
           chain !== undefined ? await runSetupChain(ctx, setupDeps, pairFlags) : undefined;
         ctx.io.result({
@@ -529,7 +543,7 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
           alreadyPaired: true,
           ...(report !== undefined ? { setup: report } : {}),
         });
-        return report?.ok === false ? EXIT.ERROR : EXIT.OK;
+        return report !== undefined && !report.ok ? EXIT.ERROR : EXIT.OK;
       }
 
       const apiUrl = resolveApiUrl();
@@ -704,6 +718,8 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
       const report =
         chain !== undefined ? await runSetupChain(ctx, setupDeps, pairFlags) : undefined;
 
+      // The pairing is reported as the success it was; the chain reports itself separately, so a
+      // failed chain can never ride out on pairing's exit code.
       ctx.io.result({
         paired: true,
         machineId: paired.machineId,
@@ -711,7 +727,7 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
         ...(approvedBy !== undefined ? { approvedByEmail: approvedBy } : {}),
         ...(report !== undefined ? { setup: report } : {}),
       });
-      return report?.ok === false ? EXIT.ERROR : EXIT.OK;
+      return report !== undefined && !report.ok ? EXIT.ERROR : EXIT.OK;
     },
   };
 }

@@ -49,6 +49,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { runCli } from "./cli";
 import { createPairCommand, createSetupCommand, type PairCommandDeps } from "./commands/pair";
+import { type SetupDeps } from "./commands/setup";
 import { EXIT } from "./framework";
 
 const MACHINE_TOKEN = `bbm_TESTONLY_${randomUUID()}`;
@@ -196,12 +197,30 @@ interface RunOptions {
   adapters: AgentAdapter[];
   /** Extra pair deps (a rejecting fetch, a thrown install, …). */
   deps?: PairCommandDeps;
+  /** Extra chain deps merged over the defaults (a sender that cannot be built, …). */
+  setupDeps?: SetupDeps;
   /** Build the `setup` verb instead of `pair`. */
   verb?: "setup" | "pair";
 }
 
-/** Start a live sink, point the CLI at it, and drive one real run. Returns everything captured. */
-async function run(options: RunOptions): Promise<{ code: number; text: string }> {
+interface RunResult {
+  code: number;
+  /** stdout alone — under `--json` this is the NDJSON stream and nothing else. */
+  stdout: string;
+  /** stderr alone — warnings and failures print here in BOTH modes. */
+  stderr: string;
+  /** Both streams, for human-mode assertions that don't care which one a line landed on. */
+  text: string;
+}
+
+/**
+ * Start a live sink, point the CLI at it, and drive one real run.
+ *
+ * stdout and stderr are captured SEPARATELY on purpose: `--json` puts an NDJSON stream on stdout
+ * while `io.errline` still writes prose to stderr, so a combined buffer is unparseable exactly
+ * when a run has failed — which is the case that matters most.
+ */
+async function run(options: RunOptions): Promise<RunResult> {
   const started = await StubEventSink.start();
   sink = started;
   process.env["BIRDYBEEP_API_URL"] = started.url;
@@ -218,17 +237,27 @@ async function run(options: RunOptions): Promise<{ code: number; text: string }>
       adapters: options.adapters,
       tokenOptions: FILE_ONLY,
       surfaceOptions: { observedBuilds: { path: join(home, "observed.json") } },
+      ...options.setupDeps,
     },
     ...options.deps,
   });
   const out = capture();
+  const err = capture();
   const code = await runCli(options.argv, {
     commands: [cmd],
     stdout: out.writer,
-    stderr: out.writer,
+    stderr: err.writer,
     ensureConfig: false,
   });
-  return { code, text: out.text() };
+  return { code, stdout: out.text(), stderr: err.text(), text: out.text() + err.text() };
+}
+
+/** Parse an NDJSON stdout stream into its objects. */
+function ndjson(stdout: string): Record<string, unknown>[] {
+  return stdout
+    .split("\n")
+    .filter((l) => l.trim().length > 0)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
 }
 
 describe("one command sets the whole machine up", () => {
@@ -379,12 +408,12 @@ describe("one command sets the whole machine up", () => {
 
   it("mirrors the whole run in one --json object", async () => {
     sandbox = createSandbox();
-    const { code, text } = await run({ argv: ["setup", "--json"], adapters: acceptanceAdapters() });
+    const { code, stdout, text } = await run({
+      argv: ["setup", "--json"],
+      adapters: acceptanceAdapters(),
+    });
     expect(code).toBe(EXIT.OK);
-    const lines = text
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    const lines = ndjson(stdout);
     expect(lines[0]).toMatchObject({ status: "pairing_started" });
 
     const final = lines[lines.length - 1] as {
@@ -408,5 +437,92 @@ describe("one command sets the whole machine up", () => {
     const codex = final.setup.harnesses.find((h) => h.harness === "codex");
     expect(codex?.rows.map((r) => r.state)).toEqual(["needs you", "needs you"]);
     expect(text).not.toContain(MACHINE_TOKEN);
+  });
+});
+
+/**
+ * REGRESSION (Codex review of PR #66) — the epic's own recurring bug, inverted.
+ *
+ * When the chain threw outright, the catch printed "wiring up your coding agents failed" and then
+ * returned `undefined`. Both callers read that as "no setup ran", exited 0, and OMITTED `setup`
+ * from the `--json` report: a human saw the failure, and every machine consumer — CI, a script,
+ * anything piping `--json` — was told the machine was set up. A silent success on the one command
+ * whose whole job is telling you whether your machine is wired up.
+ *
+ * These two cases also pin the distinction the design draws, which the fix must not collapse:
+ *   - ONE ADAPTER throwing is a `failed` ROW. The rest of the run completes (a CLI on npm meets
+ *     harnesses newer than itself), so it never sets the chain-level `error`.
+ *   - THE CHAIN ITSELF failing is a `error` on the report. Nothing was graded, so there are no
+ *     rows to speak of — and it must never read as success.
+ */
+describe("a setup that failed never reports success", () => {
+  it("exits non-zero AND names the failure in --json, not only on screen", async () => {
+    sandbox = createSandbox();
+    const { code, stdout, stderr } = await run({
+      argv: ["setup", "--json"],
+      adapters: acceptanceAdapters(),
+      // The reviewer's own example: the closing test cannot build its sender because the token
+      // store is unreadable. Thrown from inside the chain, after the harness half has run.
+      setupDeps: {
+        createSender: () => {
+          throw new Error("token store is unreadable");
+        },
+      },
+    });
+
+    transcript("birdybeep setup --json — the chain itself fails", `${stdout}${stderr}`);
+
+    // 1. The exit code — the only thing a shell script sees.
+    expect(code).toBe(EXIT.ERROR);
+
+    const final = ndjson(stdout).at(-1) as {
+      paired: boolean;
+      setup?: { ok: boolean; error?: string };
+    };
+    // 2. Pairing genuinely happened and must NOT be reported as a failure.
+    expect(final.paired).toBe(true);
+    expect(await getToken(FILE_ONLY)).toBe(MACHINE_TOKEN);
+    // 3. …but the report has to carry the failure rather than omit the whole `setup` key.
+    expect(final.setup).toBeDefined();
+    expect(final.setup?.ok).toBe(false);
+    expect(final.setup?.error).toContain("token store is unreadable");
+    // 4. The human sentence still prints — it was never the problem, it was the ONLY signal.
+    expect(stderr).toContain("wiring up your coding agents failed");
+    expect(stderr).toContain("birdybeep agent install all");
+  });
+
+  it("keeps a thrown adapter a row, not a chain failure", async () => {
+    sandbox = createSandbox();
+    const broken: AgentAdapter = {
+      ...claudeCodeAdapter,
+      detect: () => Promise.resolve({ detected: true, surfaces: [] }),
+      install: () => Promise.reject(new Error("settings.json is read-only")),
+    };
+    const { code, stdout } = await run({
+      argv: ["setup", "--json"],
+      adapters: [
+        broken,
+        present(cursorAdapter, [surface("terminal", "terminal", "cursor-agent CLI", "2026.07.09")]),
+      ],
+    });
+
+    const final = ndjson(stdout).at(-1) as {
+      setup: {
+        ok: boolean;
+        error?: string;
+        counts: { failed: number; installed: number };
+        harnesses: { harness: string; error?: string; rows: { state: string }[] }[];
+      };
+    };
+    expect(code).toBe(EXIT.ERROR); // still not a clean setup — one harness cannot beep
+    expect(final.setup.ok).toBe(false);
+    // The chain RAN. Attributing this to the chain would send the user looking in the wrong place.
+    expect(final.setup.error).toBeUndefined();
+    expect(final.setup.counts.failed).toBe(1);
+    const claude = final.setup.harnesses.find((h) => h.harness === "claude_code");
+    expect(claude?.error).toContain("settings.json is read-only");
+    expect(claude?.rows.map((r) => r.state)).toEqual(["failed"]);
+    // …and the other harness was still wired up.
+    expect(final.setup.counts.installed).toBe(1);
   });
 });
