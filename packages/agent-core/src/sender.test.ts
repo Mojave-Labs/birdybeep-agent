@@ -317,3 +317,94 @@ describe("never logs the token or request body", () => {
     expect(sink.join("\n")).not.toContain(TOKEN);
   });
 });
+
+/**
+ * birdybeep-agent-gcgp.23. `getToken` returned `null` for a store that ERRORED as well as for one
+ * that was empty, so gcgp.4's deliberate drop fired on a machine that is very likely paired —
+ * a locked macOS keychain (screen lock, or a login before the first unlock) silently cost the
+ * user events and told them they were not paired. A failed read is TRANSIENT: queue it.
+ */
+describe("token store unavailable (gcgp.23)", () => {
+  /** Present and usable, but refusing to answer right now — a locked keychain. */
+  function lockedBackend(message = "User interaction is not allowed."): KeychainBackend {
+    return {
+      available: true,
+      get: () => Promise.reject(new Error(message)),
+      set: () => Promise.reject(new Error(message)),
+      delete: () => Promise.resolve(),
+    };
+  }
+
+  function lockedSetup(fetchImpl: typeof fetch) {
+    sandbox = createSandbox();
+    const queue = new LocalEventQueue({ dir: sandbox.path("data", "q") });
+    const noticePath = sandbox.path("data", "unpaired.json");
+    const sender = createSender({
+      baseUrl: "http://api.test",
+      timeoutMs: 50,
+      queue,
+      fetchImpl,
+      tokenOptions: { backend: lockedBackend(), filePath: sandbox.path("data", "token") },
+      noticePath,
+    });
+    return { sender, queue, noticePath };
+  }
+
+  it("QUEUES the event instead of dropping it, and says why", async () => {
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response("{}", { status: 202 })));
+    const { sender, queue } = lockedSetup(fetchSpy);
+    const r = await sender.send(event());
+    expect(r.outcome).toBe("queued"); // NOT "unpaired" — nothing said this machine is unpaired
+    expect(r.tokenStoreUnavailable?.reason).toContain("User interaction is not allowed");
+    expect(queue.size()).toBe(1); // the event is parked, not lost
+    expect(fetchSpy).not.toHaveBeenCalled(); // no token to send with
+  });
+
+  it("does NOT touch the unpaired notice — nothing here was lost while unpaired", async () => {
+    const { sender, noticePath } = lockedSetup(() =>
+      Promise.resolve(new Response("{}", { status: 202 })),
+    );
+    const r = await sender.send(event());
+    expect(r.unpairedNotice).toBeUndefined();
+    expect(readUnpairedNotice({ path: noticePath })).toBeNull();
+    expect(readUnpairedNotice()).toBeNull(); // nor the default path under the sandbox HOME
+  });
+
+  it("delivers the parked event once the store answers again", async () => {
+    sandbox = createSandbox();
+    const queue = new LocalEventQueue({ dir: sandbox.path("data", "q") });
+    let locked = true;
+    const unlockable: KeychainBackend = {
+      available: true,
+      get: () => (locked ? Promise.reject(new Error("locked")) : Promise.resolve(TOKEN)),
+      set: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+    };
+    const posted: string[] = [];
+    const sender = createSender({
+      baseUrl: "http://api.test",
+      queue,
+      fetchImpl: ((_url: string, init: RequestInit) => {
+        posted.push(typeof init.body === "string" ? init.body : "");
+        return Promise.resolve(new Response("{}", { status: 202 }));
+      }) as unknown as typeof fetch,
+      tokenOptions: { backend: unlockable, filePath: sandbox.path("data", "token") },
+    });
+
+    expect((await sender.send(event(1))).outcome).toBe("queued");
+    expect(posted).toHaveLength(0);
+
+    locked = false; // the user unlocked their screen
+    expect(await sender.drainNow()).toMatchObject({ delivered: 1, kept: 0 });
+    expect(posted).toHaveLength(1);
+    expect(queue.size()).toBe(0);
+  });
+
+  it("drainNow() only prunes while the store is unreadable — the backlog is kept, not dropped", async () => {
+    const { sender, queue } = lockedSetup(() => Promise.reject(new Error("no network expected")));
+    queue.enqueue(event(1));
+    queue.enqueue(event(2));
+    expect(await sender.drainNow()).toEqual({ delivered: 0, dropped: 0, kept: 2, pruned: 0 });
+    expect(queue.size()).toBe(2); // still there for when the keychain unlocks
+  });
+});

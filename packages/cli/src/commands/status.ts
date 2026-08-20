@@ -21,14 +21,15 @@ import { resolveApiUrl } from "../config";
 import {
   describeFilteredActivity,
   describeSurface,
+  describeTokenStoreUnavailable,
   describeUnpairedActivity,
   filteredActivity,
   gatherIntegrations,
   gatherSurfaces,
-  isPaired,
   localQueueDepth,
   localQueueOverflowDrops,
   machineIdentity,
+  pairingReport,
   type SurfaceCoverageOptions,
   unpairedActivity,
 } from "../diagnostics";
@@ -67,7 +68,11 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
     usage: "birdybeep status [--json]",
     run: async (ctx) => {
       const machine = machineIdentity();
-      const paired = await isPaired(deps.tokenOptions ?? {});
+      // gcgp.23: three answers. A token store that would not answer is reported as unknown —
+      // "no" would be a wrong diagnosis for the common case (a locked keychain on a machine
+      // that IS paired), and the events it affects are queued rather than lost.
+      const pairing = await pairingReport(deps.tokenOptions ?? {});
+      const paired = pairing.state === "paired";
       const integrations = await gatherIntegrations(adapters);
       // gcgp.6: which BUILD of each harness is actually delivering. `integrations` above answers
       // for the shared config; a machine runs a harness from a terminal CLI and from a desktop
@@ -83,6 +88,7 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
       const report = {
         machine,
         paired,
+        pairing, // gcgp.23: paired | unpaired | unknown — `paired: false` cannot say which
         integrations,
         surfaces,
         queue: { depthBefore, delivered: drain.delivered, depthAfter, overflowDropped },
@@ -94,7 +100,13 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
         ctx.io.result(report);
       } else {
         ctx.io.line(`Machine: ${machine.label} (${machine.os})`);
-        ctx.io.line(paired ? "Paired:  yes" : "Paired:  no — run `birdybeep pair`");
+        ctx.io.line(
+          pairing.state === "paired"
+            ? "Paired:  yes"
+            : pairing.state === "unpaired"
+              ? "Paired:  no — run `birdybeep pair`"
+              : `Paired:  unknown — ${describeTokenStoreUnavailable(pairing)}`,
+        );
         ctx.io.line("Integrations:");
         for (const i of integrations) {
           ctx.io.line(`  ${i.displayName}: ${i.status}`);
@@ -114,7 +126,9 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
         // gcgp.3: the counterpart signal — hooks that fired and were deliberately not sent.
         if (filtered !== null) ctx.io.line(`Local:   ${describeFilteredActivity(filtered)}`);
       }
-      return paired ? EXIT.OK : EXIT.ERROR; // not-paired → defined non-zero
+      // not-paired → defined non-zero; so is an unreadable store, which is equally "not
+      // confirmed working" for a script that branches on it (gcgp.23).
+      return paired ? EXIT.OK : EXIT.ERROR;
     },
   };
 }

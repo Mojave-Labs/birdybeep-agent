@@ -3,7 +3,8 @@
  * path (normalize/redact/truncate → send w/ short timeout → queue-on-fail → opportunistic
  * drain) so a developer can confirm end-to-end delivery (and trigger a test Beep) right
  * after pairing. Not a mock — it exercises the production code path. Reports delivered vs
- * NOT PAIRED vs queued (offline) vs rejected; --json mirrors the outcome.
+ * NOT PAIRED vs queued (offline) vs queued (the token store would not answer) vs rejected;
+ * --json mirrors the outcome.
  *
  * Sends event_type "test" (9fh): the backend notifies it by default and exempts it from
  * the beep quota. (The old "custom" type is unconditionally suppressed by the §10.5
@@ -73,6 +74,9 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
           outcome: result.outcome,
           ...(result.status ? { status: result.status } : {}),
           ...(result.decision ? { decision: result.decision } : {}),
+          ...(result.tokenStoreUnavailable !== undefined
+            ? { tokenStore: "unavailable", tokenStoreReason: result.tokenStoreUnavailable.reason }
+            : {}),
         });
       } else if (result.outcome === "delivered") {
         // The 202 body says what the backend DECIDED — "delivered" alone only means
@@ -103,13 +107,22 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
           "✗ NOT PAIRED — this machine has no BirdyBeep machine token, so nothing was sent " +
             "(and nothing was queued). Run `birdybeep pair`.",
         );
+      } else if (result.tokenStoreUnavailable !== undefined) {
+        // gcgp.23: the machine is online and may well be paired — the token store just would
+        // not answer, so neither "Offline" nor "NOT PAIRED" names the real cause.
+        ctx.io.line(
+          `• Could not read the machine token (${result.tokenStoreUnavailable.reason}) — the ` +
+            "test event was queued and delivers once the token store is readable. If your " +
+            "keychain is locked, unlock it and run `birdybeep test` again.",
+        );
       } else if (result.outcome === "queued") {
         ctx.io.line("• Offline — test event queued; it will deliver when you reconnect.");
       } else {
         ctx.io.line("✗ Test event was rejected by the backend. Run `birdybeep doctor`.");
       }
 
-      // delivered + queued are non-failure (offline is by design). A hard reject is an error —
+      // delivered + queued are non-failure (offline is by design, and so is a store that is
+      // momentarily unreadable — the event is parked, not lost). A hard reject is an error —
       // and so is being unpaired, which sent nothing at all (`status` already exits non-zero
       // for it, so a script can branch on either command).
       return result.outcome === "dropped" || result.outcome === "unpaired" ? EXIT.ERROR : EXIT.OK;

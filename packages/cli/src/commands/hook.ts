@@ -458,6 +458,7 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
         eventType: result.eventType,
         ...(result.send?.decision ? { decision: result.send.decision } : {}),
         ...(result.send?.status !== undefined ? { status: result.send.status } : {}),
+        ...(result.send?.tokenStoreUnavailable !== undefined ? { tokenStore: "unavailable" } : {}),
       });
       // birdybeep-agent-gcgp.4: an unpaired machine sent NOTHING and said NOTHING — the defect
       // that let 1138 events vanish over 18 hours. Say it on stderr (Cursor's hook log has a
@@ -469,6 +470,18 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
         ctx.io.errline(
           "birdybeep: this machine is not paired — the event was not sent and was not queued. " +
             "Run `birdybeep pair` (or `birdybeep doctor` to see how many events this has cost).",
+        );
+      }
+      // birdybeep-agent-gcgp.23: the same line for a store that would not ANSWER would be a
+      // wrong diagnosis — this machine may well be paired. Say what actually happened: the
+      // event is queued and will go when the store is readable, so there is nothing to fix in
+      // BirdyBeep and nothing lost. Exit stays 0 for the same reason as above.
+      const unavailable = result.send?.tokenStoreUnavailable;
+      if (unavailable !== undefined) {
+        ctx.io.errline(
+          `birdybeep: could not read the machine token (${unavailable.reason}) — the event was ` +
+            "QUEUED, not sent. It will deliver once the token store is readable (unlock your " +
+            "keychain); `birdybeep doctor` drains the queue.",
         );
       }
       // A recognized event we deliberately don't map stays quiet at exit 0, so normal

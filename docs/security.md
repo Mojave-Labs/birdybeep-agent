@@ -206,6 +206,10 @@ first/last timestamp, and the harness ids are recorded in `unpaired-events.json`
 directory. `birdybeep status` and `birdybeep doctor` read it back; `birdybeep pair` deletes it and
 discards anything already queued from before pairing, so a first pairing never replays old events.
 
+If the token store itself cannot be read (a locked OS keychain, an unreadable fallback file), the
+event **is** queued and `unpaired-events.json` is not touched — the store said nothing about whether
+this machine is paired. `status` and `doctor` report it as `Paired:  unknown`.
+
 ## How the hook path runs
 
 The local pattern is: harness hook → `birdybeep hook <harness>` → read token → normalize → redact /

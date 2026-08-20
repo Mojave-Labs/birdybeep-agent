@@ -341,6 +341,43 @@ token; the machine stays paired on your account until you unpair it here or revo
 
 ---
 
+### Token store unreadable (`Paired:  unknown`)
+
+**Symptom** — `doctor` prints:
+
+```
+✗  Machine token — Could not read the token store (OS keychain: User interaction is not allowed.), so whether this machine is paired is unknown. Events fired now are QUEUED, not lost, and send once it is readable.
+     → Unlock your login keychain (log in to the desktop session, or unlock the screen), then run `birdybeep doctor` again to drain the queue. If it stays unreadable, run `birdybeep pair`.
+```
+
+And `status` shows:
+
+```
+Paired:  unknown — Could not read the token store (OS keychain: User interaction is not allowed.), so whether this machine is paired is unknown. Events fired now are QUEUED, not lost, and send once it is readable.
+```
+
+This is a different state from `Paired:  no`. Nothing said this machine is unpaired — the store that
+holds the token would not answer. Common on macOS when the login keychain is locked (a locked screen,
+or a session that has not been unlocked since boot), and over SSH into a Mac whose keychain is locked.
+
+Events fired while the store is unreadable are **queued**, not discarded, and the hook prints:
+
+```text
+birdybeep: could not read the machine token (OS keychain: User interaction is not allowed.) — the
+event was QUEUED, not sent. It will deliver once the token store is readable (unlock your keychain);
+`birdybeep doctor` drains the queue.
+```
+
+**Fix** — unlock the keychain (log in at the desktop, or unlock the screen), then:
+
+```bash
+birdybeep doctor   # drains what queued while it was locked
+```
+
+If it stays unreadable, re-store the token with `birdybeep pair`.
+
+---
+
 ### Backend unreachable
 
 **Symptom** — `doctor` prints:

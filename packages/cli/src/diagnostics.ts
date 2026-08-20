@@ -19,6 +19,7 @@ import {
   type ObservedBuildsOptions,
   readFilteredActivity,
   readObservedBuilds,
+  readToken,
   readUnpairedNotice,
   type TokenStoreOptions,
   type UnpairedNotice,
@@ -56,6 +57,45 @@ export async function gatherIntegrations(adapters: AgentAdapter[]): Promise<Inte
 export async function isPaired(tokenOptions: TokenStoreOptions = {}): Promise<boolean> {
   return (await getToken(tokenOptions)) !== null;
 }
+
+/**
+ * The three answers `status` and `doctor` can give about pairing (birdybeep-agent-gcgp.23).
+ * `unknown` is not a shade of `unpaired`: the store failed, so this machine may well BE paired,
+ * and telling that user "not paired" is a wrong diagnosis rather than a vague one.
+ */
+export type PairingState = "paired" | "unpaired" | "unknown";
+
+export interface PairingReport {
+  state: PairingState;
+  /** Why the store could not answer. Set only when `state` is `unknown`; never token material. */
+  reason?: string;
+}
+
+/** Read the pairing state, distinguishing "no token" from "the token store would not answer". */
+export async function pairingReport(tokenOptions: TokenStoreOptions = {}): Promise<PairingReport> {
+  const lookup = await readToken(tokenOptions);
+  if (lookup.state === "present") return { state: "paired" };
+  if (lookup.state === "absent") return { state: "unpaired" };
+  return { state: "unknown", reason: lookup.reason };
+}
+
+/**
+ * One line for a token store that will not answer. It carries the three facts the "not paired"
+ * line cannot: this says nothing about whether you are paired, events are being QUEUED rather
+ * than lost, and it resolves as soon as the store is readable.
+ */
+export function describeTokenStoreUnavailable(report: PairingReport): string {
+  return (
+    `Could not read the token store (${report.reason ?? "unknown error"}), so whether this ` +
+    "machine is paired is unknown. Events fired now are QUEUED, not lost, and send once it " +
+    "is readable."
+  );
+}
+
+/** What to do about a token store that will not answer. */
+export const TOKEN_STORE_REMEDY =
+  "Unlock your login keychain (log in to the desktop session, or unlock the screen), then run " +
+  "`birdybeep doctor` again to drain the queue. If it stays unreadable, run `birdybeep pair`.";
 
 /** Current local event-queue depth (fresh, non-expired entries). */
 export function localQueueDepth(): number {
