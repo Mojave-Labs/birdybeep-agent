@@ -1,5 +1,12 @@
 # @birdybeep/copilot
 
+## 0.6.1
+
+### Patch Changes
+
+- Updated dependencies [5202de0]
+  - @birdybeep/agent-core@0.6.1
+
 ## 0.6.0
 
 ### Patch Changes
