@@ -5,7 +5,8 @@
  * and — the headline invariant — the token NEVER lands in a repo-local file.
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   assertNoTokenInRepo,
@@ -21,8 +22,12 @@ import {
   FileTokenStore,
   getToken,
   type KeychainBackend,
+  KeychainTokenStore,
   macosKeychainBackend,
+  readToken,
   resolveTokenStore,
+  SECURITY_ITEM_NOT_FOUND,
+  SecurityCommandError,
   type SecurityRunner,
   setToken,
   unavailableKeychainBackend,
@@ -156,7 +161,17 @@ function recordingSecurity(): {
     }
     if (cmd === "find-generic-password") {
       const v = store.get(key(args));
-      if (v === undefined) return Promise.reject(new Error("item not found")); // absent → nonzero
+      // Absent → the real binary's exit 44 + message, so the ABSENT-vs-UNREADABLE split this
+      // fake feeds (gcgp.23) is the one the real `security` produces.
+      if (v === undefined) {
+        return Promise.reject(
+          new SecurityCommandError(
+            cmd,
+            SECURITY_ITEM_NOT_FOUND,
+            "security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.",
+          ),
+        );
+      }
       return Promise.resolve(`${v}\n`); // present (even if empty) → value + trailing newline
     }
     if (cmd === "delete-generic-password") {
@@ -240,5 +255,193 @@ describe("no-leak: the token never lands in a repo-local file", () => {
     expect(filePath).not.toContain("birdybeep-agent/packages");
     // …and is in NO repo-local file.
     assertNoTokenInRepo(findRepoRoot(process.cwd()), TOKEN);
+  });
+});
+
+/**
+ * birdybeep-agent-gcgp.23 regression. `getToken` answered `null` for BOTH "this machine has no
+ * token" and "the store would not answer", and after gcgp.4 those have opposite consequences:
+ * absence DROPS the event on purpose, a failure must QUEUE it. macOS keychains lock all the
+ * time (screen lock; a login before the first unlock), so the conflation turned an everyday,
+ * self-healing condition into lost events plus a "not paired" message to a paired user.
+ */
+describe("gcgp.23: a store that FAILED is not a store that is EMPTY", () => {
+  /** A keychain that is present and usable but currently refuses to answer (locked). */
+  function lockedKeychain(message = "User interaction is not allowed."): KeychainBackend {
+    return {
+      available: true,
+      get: () => Promise.reject(new Error(message)),
+      set: () => Promise.reject(new Error(message)),
+      delete: () => Promise.resolve(),
+    };
+  }
+
+  it("reports `unavailable` (not `absent`) when the keychain rejects", async () => {
+    sandbox = createSandbox();
+    const lookup = await readToken({
+      backend: lockedKeychain(),
+      filePath: sandbox.path("data", "token"), // no file fallback on this machine either
+    });
+    expect(lookup.state).toBe("unavailable");
+    if (lookup.state !== "unavailable") throw new Error("unreachable");
+    expect(lookup.reason).toContain("User interaction is not allowed");
+  });
+
+  it("still finds a token in the file fallback when the keychain is locked", async () => {
+    sandbox = createSandbox();
+    const filePath = sandbox.path("data", "token");
+    await new FileTokenStore({ path: filePath }).set(TOKEN);
+    // A real token beats a broken store: an unreadable keychain must not mask one we DO have.
+    expect(await readToken({ backend: lockedKeychain(), filePath })).toEqual({
+      state: "present",
+      token: TOKEN,
+    });
+  });
+
+  it("keeps `getToken` null for both, so callers that cannot act on the difference are unchanged", async () => {
+    sandbox = createSandbox();
+    const filePath = sandbox.path("data", "token");
+    expect(await getToken({ backend: lockedKeychain(), filePath })).toBeNull();
+    expect(await getToken({ backend: unavailableKeychainBackend, filePath })).toBeNull();
+  });
+
+  it("reports a token file that exists but will not read as `unavailable`, and never throws", async () => {
+    sandbox = createSandbox();
+    // A path that exists and fails to read — the file-fallback machines' (Linux/Windows/headless)
+    // version of a locked keychain. Before gcgp.23 this threw out of the sender into the harness.
+    const filePath = sandbox.path("data", "token");
+    mkdirSync(filePath, { recursive: true });
+    const lookup = await new FileTokenStore({ path: filePath }).read();
+    expect(lookup.state).toBe("unavailable");
+    expect(await readToken({ backend: unavailableKeychainBackend, filePath })).toMatchObject({
+      state: "unavailable",
+    });
+  });
+
+  it("keeps reporting `absent` when the stores are genuinely empty (gcgp.4's drop path)", async () => {
+    sandbox = createSandbox();
+    expect(await readToken({ backend: unavailableKeychainBackend })).toEqual({ state: "absent" });
+    const empty: KeychainBackend = {
+      available: true,
+      get: () => Promise.resolve(null),
+      set: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+    };
+    expect(await readToken({ backend: empty, filePath: sandbox.path("data", "token") })).toEqual({
+      state: "absent",
+    });
+  });
+
+  it("never puts token material in the failure reason", async () => {
+    sandbox = createSandbox();
+    // A backend that leaks the secret into its own error message is the worst case; the reason
+    // is a user-facing diagnostic, so pin the length cap that keeps any such spill bounded.
+    const lookup = await readToken({
+      backend: lockedKeychain(`denied while reading ${"x".repeat(400)}`),
+      filePath: sandbox.path("data", "token"),
+    });
+    if (lookup.state !== "unavailable") throw new Error("expected unavailable");
+    expect(lookup.reason.length).toBeLessThanOrEqual(200);
+    expect(lookup.reason).toContain("…");
+  });
+});
+
+/**
+ * The macOS split, at the `security` boundary: exit 44 is the ONE status that means "no such
+ * item". Everything else is a keychain that would not answer, and inferring absence from it is
+ * what gcgp.23 fixes. Driven through the injected runner — the real OS keychain is never touched.
+ */
+describe("gcgp.23: classifying a `security` failure", () => {
+  const rejectWith =
+    (error: Error): SecurityRunner =>
+    () =>
+      Promise.reject(error);
+
+  it("treats exit 44 (item not found) as ABSENT", async () => {
+    const backend = macosKeychainBackend({
+      run: rejectWith(
+        new SecurityCommandError(
+          "find-generic-password",
+          SECURITY_ITEM_NOT_FOUND,
+          "security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.",
+        ),
+      ),
+    });
+    expect(await backend.get("birdybeep", "machine-token")).toBeNull();
+    expect(await new KeychainTokenStore(backend).read()).toEqual({ state: "absent" });
+  });
+
+  it("treats a LOCKED keychain (exit 51) as unavailable, not as an empty one", async () => {
+    const backend = macosKeychainBackend({
+      run: rejectWith(
+        new SecurityCommandError(
+          "find-generic-password",
+          51,
+          "security: User interaction is not allowed.",
+        ),
+      ),
+    });
+    await expect(backend.get("birdybeep", "machine-token")).rejects.toThrow(/interaction/i);
+    expect(await new KeychainTokenStore(backend).read()).toMatchObject({ state: "unavailable" });
+  });
+
+  it("treats an UNRECOGNIZABLE failure as unavailable — the direction that costs a queued event, not a lost one", async () => {
+    const backend = macosKeychainBackend({ run: rejectWith(new Error("keychain went sideways")) });
+    expect(await new KeychainTokenStore(backend).read()).toMatchObject({ state: "unavailable" });
+  });
+
+  /**
+   * A `security` binary that cannot be LAUNCHED is not a locked keychain — it is a machine with
+   * no keychain service, which is permanent. Queueing forever against a condition that never
+   * clears is the gcgp.4 pathology, so this falls through to the file store and reads as absent.
+   * (`birdybeep doctor` in a clean environment with no `security` on PATH must still say "no
+   * machine token" — the smoke test pins it end-to-end.)
+   */
+  it.each(["ENOENT", "EACCES"])(
+    "treats a spawn %s as ABSENT, not as a locked keychain",
+    async (code) => {
+      const spawnFailure = Object.assign(new Error(`spawn security ${code}`), { code });
+      const backend = macosKeychainBackend({ run: rejectWith(spawnFailure) });
+      expect(await backend.get("birdybeep", "machine-token")).toBeNull();
+      expect(await new KeychainTokenStore(backend).read()).toEqual({ state: "absent" });
+    },
+  );
+});
+
+/**
+ * The file store's own absence test must be the READ, not `existsSync`. `existsSync` answers
+ * `false` for every error — including EACCES on a parent directory with no search permission —
+ * so a token that is present but unreachable read as "absent", and gcgp.23's whole point is
+ * that absence must never be inferred from a store that could not answer.
+ */
+describe("file fallback: unreachable is NOT absent", () => {
+  // chmod is meaningless on Windows, and root ignores the permission bits entirely.
+  const canDenySearch = process.platform !== "win32" && process.getuid?.() !== 0;
+
+  it.skipIf(!canDenySearch)(
+    "reports `unavailable` when the parent directory denies search, not `absent`",
+    async () => {
+      sandbox = createSandbox();
+      const dir = sandbox.path("locked");
+      const filePath = join(dir, "token");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(filePath, "mt_realtoken", { mode: 0o600 });
+
+      chmodSync(dir, 0o000); // no search permission: the token is there but unreachable
+      try {
+        const lookup = await new FileTokenStore({ path: filePath }).read();
+        expect(lookup.state).toBe("unavailable");
+        // and it must say WHICH store failed, so doctor can pick a remedy that applies
+        expect(lookup.state === "unavailable" && lookup.store).toBe("file");
+      } finally {
+        chmodSync(dir, 0o700); // restore so the sandbox can be cleaned up
+      }
+    },
+  );
+
+  it("still reports `absent` when the file genuinely is not there (ENOENT)", async () => {
+    sandbox = createSandbox();
+    const lookup = await new FileTokenStore({ path: sandbox.path("data", "token") }).read();
+    expect(lookup.state).toBe("absent");
   });
 });

@@ -2,7 +2,8 @@
  * Event sender (§9.2–9.3): POST a normalized event to `/v1/agent-events` with a
  * SHORT hard timeout; on timeout/network/transient failure, queue it and return
  * fast — never blocking or throwing into the harness. With NO machine token nothing
- * is queued at all: see the `unpaired` outcome below. The retry-vs-terminal
+ * is queued at all: see the `unpaired` outcome below. A token store that ERRORS is a
+ * third case, and a transient one — it queues (gcgp.23). The retry-vs-terminal
  * decision keys off the product error-envelope code (mirrored in `api.ts`), so the
  * queue never fills with un-deliverable events. Each send also opportunistically
  * drains the backlog (bounded by count AND by a TOTAL time budget — every harness
@@ -14,7 +15,7 @@
 import { type ErrorCode, errorEnvelopeSchema } from "./api";
 import { agentEventsResponseSchema, type BirdyBeepAgentEvent } from "./event";
 import { DEFAULT_DRAIN_MAX, type DrainOutcome, type DrainResult, LocalEventQueue } from "./queue";
-import { getToken, type TokenStoreOptions } from "./token-store";
+import { readToken, type TokenStoreOptions } from "./token-store";
 import { recordUnpairedEvent, type UnpairedNotice } from "./unpaired-notice";
 
 export const DEFAULT_SEND_TIMEOUT_MS = 3000;
@@ -56,6 +57,13 @@ export interface SendResult {
    * (gcgp.4) — what `status`/`doctor` surface. Absent on every other outcome.
    */
   unpairedNotice?: UnpairedNotice;
+  /**
+   * Set on a `queued` send whose reason was the TOKEN STORE, not the network
+   * (birdybeep-agent-gcgp.23) — carries a short, secret-free reason. Its absence on a `queued`
+   * result is what makes "offline" and "could not read the token" different sentences in
+   * `test`, `hook` and `doctor`, instead of one wrong one.
+   */
+  tokenStoreUnavailable?: { reason: string };
 }
 
 export interface SenderConfig {
@@ -170,8 +178,25 @@ export function createSender(config: SenderConfig): Sender {
   return {
     async send(event: BirdyBeepAgentEvent): Promise<SendResult> {
       const deadline = clock() + totalBudgetMs;
-      const token = await getToken(config.tokenOptions);
-      if (token === null) {
+      const lookup = await readToken(config.tokenOptions);
+      if (lookup.state === "unavailable") {
+        // The token store FAILED — it did not tell us this machine is unpaired, and gcgp.4's
+        // drop is the wrong answer to a question that was never asked (birdybeep-agent-gcgp.23).
+        // A locked macOS keychain is the everyday case (screen lock; a login before the first
+        // unlock), and it clears by itself, so this is a TRANSIENT failure like any network
+        // one: queue, and drain on a later fire when the store answers again.
+        //
+        // It deliberately does NOT touch the unpaired notice. That file means "events were lost
+        // because there was nobody to deliver them to"; nothing here is lost, and telling a
+        // paired user their events are gone would be the same wrong diagnosis in a durable form.
+        queue.enqueue(event);
+        return {
+          outcome: "queued",
+          tokenStoreUnavailable: { reason: lookup.reason },
+          drained: queue.prune(), // retention + cap still apply (87n) — we cannot drain, only trim
+        };
+      }
+      if (lookup.state === "absent") {
         // NOT PAIRED — a different failure from OFFLINE, and it does not queue (gcgp.4).
         //
         // Queueing here was wrong twice over. It could never drain (no token, no send), so the
@@ -195,6 +220,7 @@ export function createSender(config: SenderConfig): Sender {
           ...(notice !== null ? { unpairedNotice: notice } : {}),
         };
       }
+      const token = lookup.token;
       const a = await attempt(event, token, Math.min(timeoutMs, totalBudgetMs));
       let outcome: SendOutcome;
       if (a.result === "delivered") {
@@ -214,9 +240,12 @@ export function createSender(config: SenderConfig): Sender {
     },
 
     async drainNow(): Promise<DrainResult> {
-      const token = await getToken(config.tokenOptions);
-      if (token === null) return queue.prune(); // can't send, but retention applies (87n)
-      return drainQueue(token, clock() + totalBudgetMs);
+      const lookup = await readToken(config.tokenOptions);
+      // No token, or a store that would not answer: either way there is nothing to send WITH,
+      // so the backlog is only trimmed (87n). It stays put for the next drain — which is the
+      // point of queueing on an unavailable store rather than dropping (gcgp.23).
+      if (lookup.state !== "present") return queue.prune();
+      return drainQueue(lookup.token, clock() + totalBudgetMs);
     },
   };
 }

@@ -26,14 +26,16 @@ import {
   describeFilteredActivity,
   describeSurface,
   describeSurfaceCoverage,
+  describeTokenStoreUnavailable,
   describeUnpairedActivity,
   filteredActivity,
   gatherSurfaces,
-  isPaired,
   localQueueDepth,
   localQueueOverflowDrops,
+  pairingReport,
   type SurfaceCoverageOptions,
   surfaceRemedy,
+  tokenStoreRemedy,
   unpairedActivity,
 } from "../diagnostics";
 import { type Command, EXIT } from "../framework";
@@ -97,17 +99,26 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
       const checks: Check[] = [];
       const apiUrl = resolveApiUrl();
 
-      // 1. Machine token.
-      const paired = await isPaired(deps.tokenOptions ?? {});
+      // 1. Machine token. Three answers, not two (birdybeep-agent-gcgp.23): a store that could
+      // not be READ is not a missing token, and "Run `birdybeep pair`" is the wrong instruction
+      // for a paired user whose keychain is merely locked — pairing again would not fix it.
+      const pairing = await pairingReport(deps.tokenOptions ?? {});
       checks.push(
-        paired
+        pairing.state === "paired"
           ? { name: "Machine token", ok: true }
-          : {
-              name: "Machine token",
-              ok: false,
-              detail: "No machine token found.",
-              remedy: "Run `birdybeep pair` to pair this machine.",
-            },
+          : pairing.state === "unpaired"
+            ? {
+                name: "Machine token",
+                ok: false,
+                detail: "No machine token found.",
+                remedy: "Run `birdybeep pair` to pair this machine.",
+              }
+            : {
+                name: "Machine token",
+                ok: false,
+                detail: describeTokenStoreUnavailable(pairing),
+                remedy: tokenStoreRemedy(pairing),
+              },
       );
 
       // 1b. Events that fired while unpaired and were therefore never sent (gcgp.4). Placed
@@ -220,6 +231,7 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
         ctx.io.result({
           ok,
           checks,
+          pairing, // gcgp.23: paired | unpaired | unknown — never a bare boolean
           surfaces: surfaceGroups,
           queue: { depthBefore, delivered: drain.delivered, depthAfter, overflowDropped },
           ...(unpaired !== null ? { unpairedActivity: unpaired } : {}),

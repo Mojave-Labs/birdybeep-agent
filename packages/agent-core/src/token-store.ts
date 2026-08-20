@@ -12,7 +12,6 @@
 import { spawn } from "node:child_process";
 import {
   chmodSync,
-  existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -30,8 +29,29 @@ const ACCOUNT = "machine-token";
 
 export type TokenStoreKind = "keychain" | "file";
 
+/**
+ * What a token read actually found — an ERROR is not an ABSENCE (birdybeep-agent-gcgp.23).
+ *
+ * `null` collapsed the two, and after gcgp.4 that became data loss: "no token" DROPS the event
+ * deliberately, so a paired user whose keychain was merely locked (screen lock, or a login
+ * before the first unlock) lost events and was told they were not paired. Callers branch on
+ * `state`: `absent` is the gcgp.4 drop, `unavailable` is transient — queue it and try again.
+ */
+export type TokenLookup =
+  | { readonly state: "present"; readonly token: string }
+  | { readonly state: "absent" }
+  /**
+   * The store could not answer. `reason` is a short, secret-free description for the user, and
+   * `store` says WHICH store produced it — a file-fallback failure (Linux, Windows, headless)
+   * cannot be fixed by unlocking a login keychain, so the remedy has to differ.
+   */
+  | { readonly state: "unavailable"; readonly reason: string; readonly store: TokenStoreKind };
+
 export interface TokenStore {
   readonly kind: TokenStoreKind;
+  /** The full answer, including "the store failed" (gcgp.23). */
+  read(): Promise<TokenLookup>;
+  /** The token, or `null` for BOTH absence and failure. Prefer {@link TokenStore.read}. */
   get(): Promise<string | null>;
   set(token: string): Promise<void>;
   clear(): Promise<void>;
@@ -41,9 +61,42 @@ export interface TokenStore {
 export interface KeychainBackend {
   /** Whether this backend can be used on the current machine. */
   readonly available: boolean;
+  /**
+   * Resolve `null` ONLY for a genuine absence (no such item). Any other failure — a locked
+   * keychain, a denied prompt, a backend that is not answering — must REJECT, because the
+   * caller drops events on absence and queues them on failure (gcgp.23).
+   */
   get(service: string, account: string): Promise<string | null>;
   set(service: string, account: string, secret: string): Promise<void>;
   delete(service: string, account: string): Promise<void>;
+}
+
+/** Longest failure description we pass on — a diagnostic line, not a log dump. */
+const MAX_REASON_LENGTH = 160;
+
+/**
+ * A one-line, secret-free description of a token-store failure, for `status`/`doctor`/the hook's
+ * stderr line. Never carries token material: the keychain only echoes a secret on a SUCCESSFUL
+ * read, and the file store's errors are `fs` codes. Collapsed to one line and length-capped.
+ */
+export function describeTokenStoreFailure(store: TokenStoreKind, error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const flat = raw.replace(/\s+/g, " ").trim();
+  const message =
+    flat.length > MAX_REASON_LENGTH ? `${flat.slice(0, MAX_REASON_LENGTH - 1)}…` : flat;
+  const where = store === "keychain" ? "OS keychain" : "token file";
+  return message.length > 0 ? `${where}: ${message}` : `${where}: unreadable`;
+}
+
+/** The errno string on a Node system error, when it carries one. */
+function errnoOf(error: unknown): string | undefined {
+  const code: unknown = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/** Does `error` carry exactly this errno? */
+function isErrno(error: unknown, code: string): boolean {
+  return errnoOf(error) === code;
 }
 
 // ── File fallback (the always-available, fully-tested path) ──────────────────
@@ -62,11 +115,35 @@ export class FileTokenStore implements TokenStore {
   }
 
   // Sync internals, Promise-returning to satisfy the TokenStore interface.
-  get(): Promise<string | null> {
-    if (!existsSync(this.path)) return Promise.resolve(null);
-    this.#repairPerms();
-    const raw = readFileSync(this.path, "utf8").trim();
-    return Promise.resolve(raw.length > 0 ? raw : null);
+  read(): Promise<TokenLookup> {
+    try {
+      // The READ is the existence probe. `existsSync` cannot be one: it answers `false` for
+      // EVERY error, including EACCES on a parent directory with no search permission — so a
+      // token that is present but unreachable read as "absent", the sender discarded the event
+      // and called a paired machine unpaired. That is the exact data-loss path gcgp.23 exists
+      // to close, reintroduced by the guard meant to be a fast path.
+      this.#repairPerms();
+      const raw = readFileSync(this.path, "utf8").trim();
+      return Promise.resolve(
+        raw.length > 0 ? { state: "present", token: raw } : { state: "absent" },
+      );
+    } catch (error) {
+      // ENOENT is the ONLY errno that means "there is no token here". Everything else — EACCES
+      // on a hostile umask fix or an unsearchable parent, EISDIR, ENOTDIR, a failing disk — is a
+      // store that would not answer. Absence must never be inferred from it: that direction
+      // costs a lost event, this one costs a queued event.
+      if (isErrno(error, "ENOENT")) return Promise.resolve({ state: "absent" });
+      return Promise.resolve({
+        state: "unavailable",
+        reason: describeTokenStoreFailure("file", error),
+        store: "file",
+      });
+    }
+  }
+
+  async get(): Promise<string | null> {
+    const lookup = await this.read();
+    return lookup.state === "present" ? lookup.token : null;
   }
 
   set(token: string): Promise<void> {
@@ -106,8 +183,24 @@ export class KeychainTokenStore implements TokenStore {
     this.#backend = backend;
   }
 
-  get(): Promise<string | null> {
-    return this.#backend.get(SERVICE, ACCOUNT);
+  async read(): Promise<TokenLookup> {
+    try {
+      const token = await this.#backend.get(SERVICE, ACCOUNT);
+      return token !== null && token.length > 0 ? { state: "present", token } : { state: "absent" };
+    } catch (error) {
+      // A locked keychain is the everyday case, not an exotic one — and it says NOTHING about
+      // whether this machine is paired (gcgp.23).
+      return {
+        state: "unavailable",
+        reason: describeTokenStoreFailure("keychain", error),
+        store: "keychain",
+      };
+    }
+  }
+
+  async get(): Promise<string | null> {
+    const lookup = await this.read();
+    return lookup.state === "present" ? lookup.token : null;
   }
 
   set(token: string): Promise<void> {
@@ -151,6 +244,39 @@ export const SECURITY_SPAWN_OPTIONS: {
   detached: true,
 };
 
+/**
+ * A non-zero `security` exit, with the status preserved so the caller can tell "no such item"
+ * from "the keychain would not answer" (gcgp.23) instead of pattern-matching a message.
+ */
+export class SecurityCommandError extends Error {
+  readonly exitCode: number | null;
+  readonly stderr: string;
+
+  constructor(subcommand: string, exitCode: number | null, stderr: string) {
+    super(`security ${subcommand} exited ${String(exitCode)}: ${stderr.trim()}`);
+    this.name = "SecurityCommandError";
+    this.exitCode = exitCode;
+    this.stderr = stderr;
+  }
+}
+
+/**
+ * `security`'s exit status for errSecItemNotFound — the ONLY failure that means "this machine
+ * has no BirdyBeep token". Everything else (51 errSecInteractionNotAllowed on a locked keychain
+ * or a headless session, 36 errSecAuthFailed on a denied prompt, a backend that is not running)
+ * is a store that could not answer, and absence must never be inferred from it.
+ */
+export const SECURITY_ITEM_NOT_FOUND = 44;
+/** Same verdict, read off the message, for a `security` build that exits with a different code. */
+const ITEM_NOT_FOUND_TEXT = /could not be found in the keychain/i;
+/**
+ * `spawn` errno codes meaning the `security` BINARY could not be launched at all. That is not a
+ * locked keychain — it is a machine with no keychain service to read, exactly like the Linux and
+ * Windows fallback path, and it is PERMANENT. Queueing forever against a condition that never
+ * clears is the very failure gcgp.4 fixed, so this falls through to the file store instead.
+ */
+const SPAWN_FAILURE_CODES = new Set(["ENOENT", "EACCES", "EPERM", "ENOTDIR"]);
+
 /** Spawn the real `security` binary, piping `stdin` in (never the shell, never argv). */
 const spawnSecurity: SecurityRunner = (args, stdin) =>
   new Promise<string>((resolve, reject) => {
@@ -181,7 +307,7 @@ const spawnSecurity: SecurityRunner = (args, stdin) =>
     child.once("error", reject);
     child.once("close", (code) => {
       if (code === 0) resolve(stdout);
-      else reject(new Error(`security ${args[0] ?? "?"} exited ${String(code)}: ${stderr.trim()}`));
+      else reject(new SecurityCommandError(args[0] ?? "?", code, stderr));
     });
     // If `security` exits before draining stdin we get EPIPE; the `close` handler above
     // reports the real failure, so swallow it rather than crashing the host process.
@@ -191,7 +317,13 @@ const spawnSecurity: SecurityRunner = (args, stdin) =>
     child.stdin.end(stdin ?? "");
   });
 
-/** Read a secret back out of the keychain. `null` when absent/locked. */
+/**
+ * Read a secret back out of the keychain: `null` when there is no item to read (it is genuinely
+ * absent, or `security` itself cannot be launched — see {@link SPAWN_FAILURE_CODES}), and THROWS
+ * when the keychain would not answer (gcgp.23 — a locked keychain must not read as "not paired").
+ * An unrecognizable failure is treated as a failure, not as an absence: that direction costs a
+ * queued event, the other costs a lost one.
+ */
 async function findSecret(
   run: SecurityRunner,
   service: string,
@@ -201,9 +333,24 @@ async function findSecret(
     const stdout = await run(["find-generic-password", "-s", service, "-a", account, "-w"]);
     const value = stdout.replace(/\n$/, "");
     return value.length > 0 ? value : null;
-  } catch {
-    return null; // not found / locked → treat as absent
+  } catch (error) {
+    if (isItemNotFound(error) || isBinaryUnlaunchable(error)) return null;
+    throw error;
   }
+}
+
+/** Does this `security` failure mean the item is absent (rather than unreadable)? */
+function isItemNotFound(error: unknown): boolean {
+  if (error instanceof SecurityCommandError) {
+    return error.exitCode === SECURITY_ITEM_NOT_FOUND || ITEM_NOT_FOUND_TEXT.test(error.stderr);
+  }
+  return error instanceof Error && ITEM_NOT_FOUND_TEXT.test(error.message);
+}
+
+/** Did `spawn` fail to launch `security` at all? (No keychain here — not a locked one.) */
+function isBinaryUnlaunchable(error: unknown): boolean {
+  const code = errnoOf(error);
+  return code !== undefined && SPAWN_FAILURE_CODES.has(code);
 }
 
 export interface MacosKeychainOptions {
@@ -294,15 +441,38 @@ export async function setToken(
   return store.kind;
 }
 
-/** Read the machine token: keychain first if available, then the file fallback. */
-export async function getToken(options: TokenStoreOptions = {}): Promise<string | null> {
+/**
+ * Read the machine token: keychain first if available, then the file fallback — and say WHICH
+ * of "no token" and "the store would not answer" happened (birdybeep-agent-gcgp.23).
+ *
+ * A token found anywhere wins. Otherwise a store that FAILED outranks a store that was merely
+ * empty: a locked keychain plus an empty file fallback is not evidence that this machine is
+ * unpaired, and reporting it as such is what turned a screen lock into dropped events.
+ */
+export async function readToken(options: TokenStoreOptions = {}): Promise<TokenLookup> {
   const backend = options.backend ?? defaultKeychainBackend();
+  let keychain: TokenLookup = { state: "absent" };
   if (backend.available) {
-    const fromKeychain = await new KeychainTokenStore(backend).get();
-    if (fromKeychain !== null) return fromKeychain;
+    keychain = await new KeychainTokenStore(backend).read();
+    if (keychain.state === "present") return keychain;
   }
-  const file = new FileTokenStore(options.filePath !== undefined ? { path: options.filePath } : {});
-  return file.get();
+  const file = await new FileTokenStore(
+    options.filePath !== undefined ? { path: options.filePath } : {},
+  ).read();
+  if (file.state === "present") return file;
+  if (keychain.state === "unavailable") return keychain;
+  return file; // absent, or the file store's own failure
+}
+
+/**
+ * The machine token, or `null` for BOTH "not paired" and "the store failed". Kept for callers
+ * where the difference cannot change the answer (`pair`'s already-paired short-circuit,
+ * `logout`, the adapters' status probes). Anything that DECIDES the fate of an event —
+ * the sender, `status`, `doctor` — must use {@link readToken} instead (gcgp.23).
+ */
+export async function getToken(options: TokenStoreOptions = {}): Promise<string | null> {
+  const lookup = await readToken(options);
+  return lookup.state === "present" ? lookup.token : null;
 }
 
 /** Remove the token from BOTH keychain and file fallback (logout / revoke). */

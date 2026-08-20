@@ -19,7 +19,9 @@ import {
   type ObservedBuildsOptions,
   readFilteredActivity,
   readObservedBuilds,
+  readToken,
   readUnpairedNotice,
+  type TokenStoreKind,
   type TokenStoreOptions,
   type UnpairedNotice,
 } from "@birdybeep/agent-core";
@@ -55,6 +57,63 @@ export async function gatherIntegrations(adapters: AgentAdapter[]): Promise<Inte
 /** Is a machine token present in the secure store? (pairing state — never prints the token.) */
 export async function isPaired(tokenOptions: TokenStoreOptions = {}): Promise<boolean> {
   return (await getToken(tokenOptions)) !== null;
+}
+
+/**
+ * The three answers `status` and `doctor` can give about pairing (birdybeep-agent-gcgp.23).
+ * `unknown` is not a shade of `unpaired`: the store failed, so this machine may well BE paired,
+ * and telling that user "not paired" is a wrong diagnosis rather than a vague one.
+ */
+export type PairingState = "paired" | "unpaired" | "unknown";
+
+export interface PairingReport {
+  state: PairingState;
+  /** Why the store could not answer. Set only when `state` is `unknown`; never token material. */
+  reason?: string;
+  /** Which store could not answer. Set only when `state` is `unknown`; picks the remedy. */
+  store?: TokenStoreKind;
+}
+
+/** Read the pairing state, distinguishing "no token" from "the token store would not answer". */
+export async function pairingReport(tokenOptions: TokenStoreOptions = {}): Promise<PairingReport> {
+  const lookup = await readToken(tokenOptions);
+  if (lookup.state === "present") return { state: "paired" };
+  if (lookup.state === "absent") return { state: "unpaired" };
+  return { state: "unknown", reason: lookup.reason, store: lookup.store };
+}
+
+/**
+ * One line for a token store that will not answer. It carries the three facts the "not paired"
+ * line cannot: this says nothing about whether you are paired, events are being QUEUED rather
+ * than lost, and it resolves as soon as the store is readable.
+ */
+export function describeTokenStoreUnavailable(report: PairingReport): string {
+  return (
+    `Could not read the token store (${report.reason ?? "unknown error"}), so whether this ` +
+    "machine is paired is unknown. Events fired now are QUEUED, not lost, and send once it " +
+    "is readable."
+  );
+}
+
+/**
+ * What to do about a token store that will not answer — which depends on WHICH store it was.
+ * The keychain case is a lock to open. The file case (Linux, Windows, headless) is a path or a
+ * permission to repair: unlocking nothing helps, and `birdybeep pair` writes the same bad path,
+ * so telling the user to run it again is advice that cannot work.
+ */
+export function tokenStoreRemedy(report: PairingReport): string {
+  if (report.store === "file") {
+    return (
+      "Repair the token file — check that its directory and the file itself are readable and " +
+      "writable by you (`chmod 700` the directory, `chmod 600` the file), then run " +
+      "`birdybeep doctor` again to drain the queue."
+    );
+  }
+  return (
+    "Unlock your login keychain (log in to the desktop session, or unlock the screen), then " +
+    "run `birdybeep doctor` again to drain the queue. If it stays unreadable, run " +
+    "`birdybeep pair`."
+  );
 }
 
 /** Current local event-queue depth (fresh, non-expired entries). */
