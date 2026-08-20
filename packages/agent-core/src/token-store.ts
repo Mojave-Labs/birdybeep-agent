@@ -12,7 +12,6 @@
 import { spawn } from "node:child_process";
 import {
   chmodSync,
-  existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -41,8 +40,12 @@ export type TokenStoreKind = "keychain" | "file";
 export type TokenLookup =
   | { readonly state: "present"; readonly token: string }
   | { readonly state: "absent" }
-  /** The store could not answer. `reason` is a short, secret-free description for the user. */
-  | { readonly state: "unavailable"; readonly reason: string };
+  /**
+   * The store could not answer. `reason` is a short, secret-free description for the user, and
+   * `store` says WHICH store produced it — a file-fallback failure (Linux, Windows, headless)
+   * cannot be fixed by unlocking a login keychain, so the remedy has to differ.
+   */
+  | { readonly state: "unavailable"; readonly reason: string; readonly store: TokenStoreKind };
 
 export interface TokenStore {
   readonly kind: TokenStoreKind;
@@ -85,6 +88,17 @@ export function describeTokenStoreFailure(store: TokenStoreKind, error: unknown)
   return message.length > 0 ? `${where}: ${message}` : `${where}: unreadable`;
 }
 
+/** The errno string on a Node system error, when it carries one. */
+function errnoOf(error: unknown): string | undefined {
+  const code: unknown = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/** Does `error` carry exactly this errno? */
+function isErrno(error: unknown, code: string): boolean {
+  return errnoOf(error) === code;
+}
+
 // ── File fallback (the always-available, fully-tested path) ──────────────────
 
 export interface FileTokenStoreOptions {
@@ -103,18 +117,26 @@ export class FileTokenStore implements TokenStore {
   // Sync internals, Promise-returning to satisfy the TokenStore interface.
   read(): Promise<TokenLookup> {
     try {
-      if (!existsSync(this.path)) return Promise.resolve({ state: "absent" });
+      // The READ is the existence probe. `existsSync` cannot be one: it answers `false` for
+      // EVERY error, including EACCES on a parent directory with no search permission — so a
+      // token that is present but unreachable read as "absent", the sender discarded the event
+      // and called a paired machine unpaired. That is the exact data-loss path gcgp.23 exists
+      // to close, reintroduced by the guard meant to be a fast path.
       this.#repairPerms();
       const raw = readFileSync(this.path, "utf8").trim();
       return Promise.resolve(
         raw.length > 0 ? { state: "present", token: raw } : { state: "absent" },
       );
     } catch (error) {
-      // The file EXISTS but will not read (EACCES on a hostile umask fix, EISDIR, a failing
-      // disk). Before gcgp.23 this threw out of the sender and into the harness's hook.
+      // ENOENT is the ONLY errno that means "there is no token here". Everything else — EACCES
+      // on a hostile umask fix or an unsearchable parent, EISDIR, ENOTDIR, a failing disk — is a
+      // store that would not answer. Absence must never be inferred from it: that direction
+      // costs a lost event, this one costs a queued event.
+      if (isErrno(error, "ENOENT")) return Promise.resolve({ state: "absent" });
       return Promise.resolve({
         state: "unavailable",
         reason: describeTokenStoreFailure("file", error),
+        store: "file",
       });
     }
   }
@@ -168,7 +190,11 @@ export class KeychainTokenStore implements TokenStore {
     } catch (error) {
       // A locked keychain is the everyday case, not an exotic one — and it says NOTHING about
       // whether this machine is paired (gcgp.23).
-      return { state: "unavailable", reason: describeTokenStoreFailure("keychain", error) };
+      return {
+        state: "unavailable",
+        reason: describeTokenStoreFailure("keychain", error),
+        store: "keychain",
+      };
     }
   }
 
@@ -323,8 +349,8 @@ function isItemNotFound(error: unknown): boolean {
 
 /** Did `spawn` fail to launch `security` at all? (No keychain here — not a locked one.) */
 function isBinaryUnlaunchable(error: unknown): boolean {
-  const code: unknown = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" && SPAWN_FAILURE_CODES.has(code);
+  const code = errnoOf(error);
+  return code !== undefined && SPAWN_FAILURE_CODES.has(code);
 }
 
 export interface MacosKeychainOptions {

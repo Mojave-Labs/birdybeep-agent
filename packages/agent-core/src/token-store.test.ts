@@ -5,7 +5,8 @@
  * and — the headline invariant — the token NEVER lands in a repo-local file.
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   assertNoTokenInRepo,
@@ -405,4 +406,42 @@ describe("gcgp.23: classifying a `security` failure", () => {
       expect(await new KeychainTokenStore(backend).read()).toEqual({ state: "absent" });
     },
   );
+});
+
+/**
+ * The file store's own absence test must be the READ, not `existsSync`. `existsSync` answers
+ * `false` for every error — including EACCES on a parent directory with no search permission —
+ * so a token that is present but unreachable read as "absent", and gcgp.23's whole point is
+ * that absence must never be inferred from a store that could not answer.
+ */
+describe("file fallback: unreachable is NOT absent", () => {
+  // chmod is meaningless on Windows, and root ignores the permission bits entirely.
+  const canDenySearch = process.platform !== "win32" && process.getuid?.() !== 0;
+
+  it.skipIf(!canDenySearch)(
+    "reports `unavailable` when the parent directory denies search, not `absent`",
+    async () => {
+      sandbox = createSandbox();
+      const dir = sandbox.path("locked");
+      const filePath = join(dir, "token");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(filePath, "mt_realtoken", { mode: 0o600 });
+
+      chmodSync(dir, 0o000); // no search permission: the token is there but unreachable
+      try {
+        const lookup = await new FileTokenStore({ path: filePath }).read();
+        expect(lookup.state).toBe("unavailable");
+        // and it must say WHICH store failed, so doctor can pick a remedy that applies
+        expect(lookup.state === "unavailable" && lookup.store).toBe("file");
+      } finally {
+        chmodSync(dir, 0o700); // restore so the sandbox can be cleaned up
+      }
+    },
+  );
+
+  it("still reports `absent` when the file genuinely is not there (ENOENT)", async () => {
+    sandbox = createSandbox();
+    const lookup = await new FileTokenStore({ path: sandbox.path("data", "token") }).read();
+    expect(lookup.state).toBe("absent");
+  });
 });

@@ -376,6 +376,19 @@ birdybeep doctor   # drains what queued while it was locked
 
 If it stays unreadable, re-store the token with `birdybeep pair`.
 
+**On Linux, Windows and headless installs** the reason names a `token file:` instead, and there is
+no keychain in play — the file fallback is the store. Repair the path `doctor` reports:
+
+```bash
+chmod 700 "$(dirname <path>)"   # the directory has to be searchable
+chmod 600 <path>                # and the file readable by you
+birdybeep doctor                # drains what queued while it was unreachable
+```
+
+A file that exists but cannot be reached — an unreadable parent directory, a bad mode, a failing
+disk — reads as unreachable, never as "not paired", so those events queue rather than being
+discarded.
+
 ---
 
 ### Backend unreachable

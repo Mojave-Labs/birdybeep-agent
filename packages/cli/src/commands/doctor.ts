@@ -35,7 +35,7 @@ import {
   pairingReport,
   type SurfaceCoverageOptions,
   surfaceRemedy,
-  TOKEN_STORE_REMEDY,
+  tokenStoreRemedy,
   unpairedActivity,
 } from "../diagnostics";
 import { type Command, EXIT } from "../framework";
@@ -117,7 +117,7 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
                 name: "Machine token",
                 ok: false,
                 detail: describeTokenStoreUnavailable(pairing),
-                remedy: TOKEN_STORE_REMEDY,
+                remedy: tokenStoreRemedy(pairing),
               },
       );
 

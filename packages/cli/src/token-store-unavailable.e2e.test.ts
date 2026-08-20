@@ -11,7 +11,8 @@
  * genuinely online throughout, and the real CLI dispatch → hook pipeline → sender → queue path.
  */
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   type AgentAdapter,
@@ -358,4 +359,55 @@ describe("gcgp.23: a locked token store is not an unpaired machine", () => {
     expect(readUnpairedNotice()).toBeNull();
     expect(err.text()).toContain("could not read the machine token");
   });
+});
+
+/**
+ * The remedy has to match the store that actually failed. On Linux, Windows and headless
+ * installs there is no login keychain to unlock — the file fallback IS the store — so telling
+ * the user to unlock one is advice that cannot work, and `birdybeep pair` would rewrite the same
+ * unreachable path. `doctor` must name the file instead.
+ */
+describe("doctor's remedy names the store that failed", () => {
+  // chmod is meaningless on Windows, and root ignores the permission bits entirely.
+  const canDenySearch = process.platform !== "win32" && process.getuid?.() !== 0;
+
+  it.skipIf(!canDenySearch)(
+    "gives a FILE remedy when the file store is the one that failed",
+    async () => {
+      sandbox = createSandbox();
+      const dir = sandbox.path("locked");
+      const filePath = join(dir, "token");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(filePath, `bbm_TESTONLY_${randomUUID()}`, { mode: 0o600 });
+      chmodSync(dir, 0o000); // the token is there; the store cannot reach it
+
+      try {
+        const tokenOptions = { backend: unavailableKeychainBackend, filePath };
+        const out = capture();
+        const code = await runCli(["doctor"], {
+          commands: [
+            createDoctorCommand({
+              adapters: [],
+              tokenOptions,
+              createSender: () => createSender({ baseUrl: "http://127.0.0.1:1", tokenOptions }),
+              probeNetwork: () => Promise.resolve(true),
+            }),
+          ],
+          stdout: out.writer,
+          stderr: out.writer,
+          ensureConfig: false,
+        });
+
+        expect(code).toBe(EXIT.ERROR);
+        expect(out.text()).toContain("Could not read the token store");
+        expect(out.text()).toContain("Repair the token file");
+        // The keychain remedy must NOT appear: there is no keychain here to unlock.
+        expect(out.text()).not.toContain("Unlock your login keychain");
+        // Nor may it be mistaken for gcgp.4's genuinely-unpaired machine.
+        expect(out.text()).not.toContain("No machine token found.");
+      } finally {
+        chmodSync(dir, 0o700); // restore so the sandbox can be cleaned up
+      }
+    },
+  );
 });
