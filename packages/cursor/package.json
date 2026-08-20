@@ -1,6 +1,6 @@
 {
   "name": "@birdybeep/cursor",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "BirdyBeep adapter for Cursor: non-destructive hooks.json install/uninstall and event normalization.",
   "license": "MIT",
   "repository": {
