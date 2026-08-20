@@ -1,5 +1,58 @@
 # @birdybeep/opencode
 
+## 0.6.0
+
+### Patch Changes
+
+- 80ee2ed: A hook fire that sends nothing now says so and exits non-zero, instead of exiting 0 in silence.
+  That covers an empty or unparseable payload, a payload that never arrived within the stdin read
+  cap, and — new for `codex`, `opencode` and `copilot` — a payload that harness never fires. Every
+  normal outcome, including a real harness event BirdyBeep deliberately does not map, still exits 0.
+
+  Cursor: a failed tool call now produces a Beep (`postToolUseFailure` → `agent_failed`); the tool's
+  error text and arguments are never sent. Cancelling a running tool yourself does not beep.
+  `beforeSubmitPrompt` and `afterAgentResponse` are no longer registered — they could never produce a
+  Beep — and installing removes them from a hooks file an earlier version patched.
+
+- 6a684e8: Report coverage per harness build, so a desktop app that never beeps stops looking installed
+
+  `birdybeep doctor` and `birdybeep status` now list every installed build of each harness on its
+  own row, with the version that build actually runs:
+
+  ```
+  ✓  Claude Code: terminal CLI 2.1.227 — covered — 1 event(s) from this build
+  ✗  Claude Code: Claude desktop app 2.1.229 — not covered — nothing has ever fired from this
+     build, while terminal CLI 2.1.227 is delivering through the same config
+  ```
+
+  A harness is not one program. The terminal CLI and the engine a desktop app spawns are separate
+  installs on separate update channels, and they share one config file — so "hooks installed" was a
+  single answer covering both, and a desktop app that could not run the hook command looked exactly
+  like one that could.
+
+  - Detection returns a surface list: `claude` on PATH and the builds under
+    `~/Library/Application Support/Claude/claude-code`; every `codex` on PATH and the one inside
+    ChatGPT.app; `cursor-agent` and Cursor.app. Versions are read from the filesystem — no engine is
+    run, because a `--version` probe answers for whichever build is first on PATH.
+  - Coverage is graded on events actually observed from each build, not on config presence. Those
+    observations are keyed by which SURFACE fired, not by version alone — two channels can ship the
+    same version, and a version the terminal CLI has upgraded away from is not evidence about a
+    desktop build. A build is only reported as a gap once another build of the same harness is
+    delivering and it still is not; a shadowed PATH install is never blamed for not firing, and an
+    observation whose surface the harness never named settles nothing rather than picking a row.
+  - Codex, Copilot and OpenCode gained the stale-launcher check Claude Code and Cursor already had.
+    OpenCode's is different in kind: it reports the launcher record its plugin spawns, since a
+    missing one silently falls back to a `PATH` lookup that drops events with no error.
+  - `birdybeep doctor` tells a migrated Codex user that turn-complete beeps are OFF right now,
+    rather than the first-install wording.
+
+  Desktop surfaces are reported on macOS, where the layouts are known. Elsewhere the terminal rows
+  are reported and no desktop path is guessed.
+
+- Updated dependencies [80ee2ed]
+- Updated dependencies [6a684e8]
+  - @birdybeep/agent-core@0.6.0
+
 ## 0.5.0
 
 ### Patch Changes
