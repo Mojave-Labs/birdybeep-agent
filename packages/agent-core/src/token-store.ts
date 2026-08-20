@@ -138,10 +138,36 @@ export const unavailableKeychainBackend: KeychainBackend = {
  */
 export type SecurityRunner = (args: readonly string[], stdin?: string) => Promise<string>;
 
+/**
+ * Spawn options for every `security` invocation. Exported so the pty regression test can pin
+ * the no-controlling-terminal invariant against the same object the real code uses, rather
+ * than a copy that could drift away from it.
+ */
+export const SECURITY_SPAWN_OPTIONS: {
+  stdio: ["pipe", "pipe", "pipe"];
+  detached: boolean;
+} = {
+  stdio: ["pipe", "pipe", "pipe"],
+  detached: true,
+};
+
 /** Spawn the real `security` binary, piping `stdin` in (never the shell, never argv). */
 const spawnSecurity: SecurityRunner = (args, stdin) =>
   new Promise<string>((resolve, reject) => {
-    const child = spawn("security", [...args], { stdio: ["pipe", "pipe", "pipe"] });
+    // `detached: true` puts the child in a NEW SESSION with no controlling terminal, and that
+    // is load-bearing rather than cosmetic (birdybeep-agent-lz9).
+    //
+    // `security` reads a passphrase with readpassphrase(3), which opens /dev/tty whenever a
+    // controlling terminal exists and IGNORES the stdin pipe entirely. Under a real interactive
+    // terminal — the ONLY way a human ever pairs — the secret we write below therefore went
+    // nowhere: the user got `security`'s own "password data for new item:" prompt, and whatever
+    // they typed became the item. Detaching removes the tty, so readpassphrase falls back to
+    // stdin and the piped secret actually lands.
+    //
+    // This is invisible to every automated run: CI, vitest and cloud sessions are all TTY-less,
+    // which is the one condition under which the un-detached form works. The regression test
+    // therefore allocates a pty on purpose — see token-store.pty.test.ts.
+    const child = spawn("security", [...args], SECURITY_SPAWN_OPTIONS);
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");
@@ -196,8 +222,12 @@ export function macosKeychainBackend(options: MacosKeychainOptions = {}): Keycha
       // argument vector is world-readable on macOS (`ps -axo args` shows other users' args),
       // so the old `-w <token>` form let any co-located local process scrape the durable
       // machine token during the write. Instead we pass `-w` as the LAST option, which makes
-      // `security` PROMPT for the password — and it reads that prompt from stdin. The secret
-      // therefore travels over a pipe and never appears in the process table.
+      // `security` PROMPT for the password, and we feed that prompt over a pipe — so the secret
+      // never appears in the process table.
+      //
+      // That pipe only reaches `security` because spawnSecurity detaches the child from the
+      // controlling terminal; with a tty present it would read /dev/tty instead and silently
+      // ignore everything below (birdybeep-agent-lz9).
       //
       // Two wrinkles, both established by running the real binary (see the guarded E2E below):
       //  1. It prompts TWICE ("password data for new item" + "retype"), so the secret is fed
