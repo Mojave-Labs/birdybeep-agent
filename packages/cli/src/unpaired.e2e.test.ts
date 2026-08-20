@@ -242,7 +242,8 @@ describe("gcgp.4: an unpaired machine is not a silent one", () => {
       });
     }
     expect(sink.received()).toHaveLength(0);
-  });
+  }, 30_000); // 300 queue writes + a full drain; ~1.2s on macOS but >5s on Windows CI, where
+  // the filesystem is roughly 6x slower. The default 5s cut it off mid-run (gcgp.4's own gate).
 
   it("events queued AFTER pairing still deliver — the guard is a one-shot, not a mute", async () => {
     sink = await StubEventSink.start();
