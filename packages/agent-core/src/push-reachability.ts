@@ -11,7 +11,7 @@
  * content — and the response is schema-validated here, so a backend that started returning more
  * than that would fail parsing rather than get printed.
  */
-import { pushReachabilityResponseSchema, type PushReachabilityResponse } from "./api";
+import { type PushReachabilityResponse, pushReachabilityResponseSchema } from "./api";
 import { readToken, type TokenStoreOptions } from "./token-store";
 
 const PATH = "/v1/machine/push-reachability";

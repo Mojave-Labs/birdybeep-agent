@@ -31,14 +31,15 @@ const body = (over: Partial<Record<string, unknown>> = {}) => ({
   ...over,
 });
 
-const okFetch = (payload: unknown): typeof fetch =>
-  (() =>
+const okFetch =
+  (payload: unknown): typeof fetch =>
+  () =>
     Promise.resolve(
       new Response(JSON.stringify(payload), {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
-    )) as unknown as typeof fetch;
+    );
 
 describe("fetchPushReachability", () => {
   const opts = (fetchImpl: typeof fetch, token: string | null = "mt_x") => ({
@@ -78,7 +79,7 @@ describe("fetchPushReachability", () => {
 describe("describeReachability", () => {
   it("FAILS when no device can receive a beep — the green-board bug", () => {
     const out = describeReachability(
-      { state: "ok", data: body({ active_device_count: 0, most_recent_seen_at: null }) as never },
+      { state: "ok", data: body({ active_device_count: 0, most_recent_seen_at: null }) },
       NOW,
     );
     expect(out?.ok).toBe(false);
@@ -88,7 +89,7 @@ describe("describeReachability", () => {
 
   it("names dead tokens when that is why the count is zero", () => {
     const out = describeReachability(
-      { state: "ok", data: body({ active_device_count: 0, stale_device_count: 2 }) as never },
+      { state: "ok", data: body({ active_device_count: 0, stale_device_count: 2 }) },
       NOW,
     );
     expect(out?.detail).toContain("dead push token");
@@ -97,7 +98,7 @@ describe("describeReachability", () => {
   it("FAILS when the only device has not checked in for weeks (the real case)", () => {
     const cold = new Date(NOW - STALE_SEEN_AFTER_MS - 1000).toISOString();
     const out = describeReachability(
-      { state: "ok", data: body({ most_recent_seen_at: cold }) as never },
+      { state: "ok", data: body({ most_recent_seen_at: cold }) },
       NOW,
     );
     expect(out?.ok).toBe(false);
@@ -105,7 +106,7 @@ describe("describeReachability", () => {
   });
 
   it("passes a healthy account and reports the last push outcome", () => {
-    const out = describeReachability({ state: "ok", data: body() as never }, NOW);
+    const out = describeReachability({ state: "ok", data: body() }, NOW);
     expect(out?.ok).toBe(true);
     expect(out?.detail).toContain("last push ok");
   });
