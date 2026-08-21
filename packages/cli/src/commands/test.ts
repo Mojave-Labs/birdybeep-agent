@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import {
   type BirdyBeepAgentEvent,
   createSender as defaultCreateSender,
+  fetchPushReachability,
   getMachineIdentity,
   normalizeEvent,
   type NormalizeOptions,
@@ -51,6 +52,14 @@ export function buildTestEvent(opts: NormalizeOptions = {}): BirdyBeepAgentEvent
 export interface TestCommandDeps {
   createSender?: (baseUrl: string) => Sender;
   tokenOptions?: TokenStoreOptions;
+  /** fetch used by the push-reachability read (injected in tests). */
+  fetchImpl?: typeof fetch;
+  /**
+   * Base URL for BOTH the send and the reachability read. One value on purpose: injecting a
+   * sender that points at a stub while the reachability read still resolved the REAL API would
+   * make tests reach the network, and would report on a different account than the one under test.
+   */
+  baseUrl?: string;
 }
 
 export function createTestCommand(deps: TestCommandDeps = {}): Command {
@@ -67,7 +76,8 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
     usage: "birdybeep test [--json]",
     run: async (ctx) => {
       const event = buildTestEvent();
-      const result = await makeSender(resolveApiUrl()).send(event); // real path; also drains the queue
+      const baseUrl = deps.baseUrl ?? resolveApiUrl();
+      const result = await makeSender(baseUrl).send(event); // real path; also drains the queue
 
       if (ctx.flags.json) {
         ctx.io.result({
@@ -82,7 +92,30 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
         // The 202 body says what the backend DECIDED — "delivered" alone only means
         // "accepted". Claiming a beep that was suppressed is how 9fh went unnoticed.
         if (result.decision === "notified" || result.decision === undefined) {
-          ctx.io.line("✓ Test event delivered — check your phone for a test Beep.");
+          // "delivered" means the BACKEND accepted it and enqueued a push. It says nothing about
+          // whether a device exists to receive one — and this line used to promise a Beep on a
+          // machine whose account had no reachable device at all, which is precisely the state
+          // that took hours to find (birdybeep-agent-oi3). Ask, and say what is true.
+          const reach = await fetchPushReachability({
+            baseUrl,
+            ...(deps.tokenOptions ? { tokenOptions: deps.tokenOptions } : {}),
+            ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+          });
+          if (reach.state === "ok" && reach.data.active_device_count === 0) {
+            ctx.io.line(
+              "⚠ The backend accepted the test event, but NO device on this account can receive " +
+                "it — nothing will arrive. Open the BirdyBeep app on your phone to register it " +
+                "(if it says the device limit is full, free a slot in Settings › devices).",
+            );
+          } else if (reach.state === "ok") {
+            ctx.io.line(
+              `✓ Test event accepted and queued for ${String(reach.data.active_device_count)} ` +
+                "registered device(s) — check your phone for a test Beep.",
+            );
+          } else {
+            // Could not ask. Do not upgrade that into a promise.
+            ctx.io.line("✓ Test event accepted by the backend — check your phone for a test Beep.");
+          }
         } else if (result.decision === "suppressed") {
           ctx.io.line(
             "⚠ The backend accepted the test event but suppressed the push — this machine " +

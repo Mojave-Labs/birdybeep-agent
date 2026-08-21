@@ -25,6 +25,7 @@ export * from "./pairing";
 export * from "./paths";
 export * from "./pkce";
 export * from "./primitives";
+export * from "./push-reachability";
 export * from "./queue";
 export * from "./safe-spawn";
 export * from "./salt";

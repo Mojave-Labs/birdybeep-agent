@@ -179,10 +179,31 @@ describe("defaultInvokeHook resolves birdybeep on PATH, never a cwd-planted bina
   };
   let prevCwd: string | undefined;
   let prevPath: string | undefined;
+  let homeSandbox: Sandbox | undefined;
+
+  /**
+   * Isolate the whole home environment (birdybeep-agent-av3). These tests override cwd and PATH
+   * but used to inherit the developer's REAL home, so the plugin read the real BirdyBeep data dir
+   * — and its dedupe store collapsed the fixture's fixed session id as a repeat, so the event
+   * never reached the spawn path and both assertions failed. They therefore passed on a clean CI
+   * box and failed on any machine that had actually been paired and used, which reads as a flake
+   * and is not one.
+   *
+   * Uses the shared sandbox rather than redirecting HOME by hand: birdyBeepDataDir() resolves
+   * from %LOCALAPPDATA% on Windows, which a HOME-only redirect misses entirely — so the fix would
+   * have left the real store readable on exactly the paired Windows machine it was meant to
+   * isolate. createSandbox redirects the full set (HOME, USERPROFILE, HOMEPATH, XDG_*, APPDATA,
+   * LOCALAPPDATA, TMPDIR/TEMP) and cleans up after itself.
+   */
+  function isolateHome(): void {
+    homeSandbox = createSandbox();
+  }
 
   afterEach(() => {
     if (prevCwd !== undefined) process.chdir(prevCwd);
     if (prevPath !== undefined) process.env["PATH"] = prevPath;
+    homeSandbox?.cleanup();
+    homeSandbox = undefined;
     prevCwd = undefined;
     prevPath = undefined;
     vi.restoreAllMocks();
@@ -252,6 +273,7 @@ describe("defaultInvokeHook resolves birdybeep on PATH, never a cwd-planted bina
 
     prevCwd = process.cwd();
     prevPath = process.env["PATH"];
+    isolateHome(); // av3: never read the developer's real dedupe store
     process.chdir(repo); // the harness cwd == the hostile repo
     process.env["PATH"] = binDir; // only the legit birdybeep is on PATH
 
@@ -272,6 +294,7 @@ describe("defaultInvokeHook resolves birdybeep on PATH, never a cwd-planted bina
 
     prevCwd = process.cwd();
     prevPath = process.env["PATH"];
+    isolateHome(); // av3: never read the developer's real dedupe store
     process.chdir(repo);
     process.env["PATH"] = emptyBin; // birdybeep is nowhere on PATH
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);

@@ -10,7 +10,9 @@ import {
   type AgentAdapter,
   createSender as defaultCreateSender,
   DEFAULT_QUEUE_MAX_ENTRIES as QUEUE_CAP,
+  describeReachability,
   type DetectionResult,
+  fetchPushReachability,
   type Sender,
   type TokenStoreOptions,
 } from "@birdybeep/agent-core";
@@ -75,6 +77,15 @@ export interface DoctorCommandDeps {
   tokenOptions?: TokenStoreOptions;
   /** Backend reachability probe (tests inject reachable/unreachable). */
   probeNetwork?: (baseUrl: string) => Promise<boolean>;
+  /** fetch used by the push-reachability read (injected in tests). */
+  fetchImpl?: typeof fetch;
+  /**
+   * Base URL for the push-reachability read. Injected alongside createSender/probeNetwork so a
+   * doctor driven by a stub backend does not still reach the REAL API — every existing
+   * doctor.test case has a paired token, so without this each one issued an authenticated
+   * production request and could stall on the 4s timeout. Same fix as the test command's.
+   */
+  baseUrl?: string;
   /** Cursor detection for the bridge check (tests avoid shelling out to `cursor-agent`). */
   detectCursor?: () => Promise<DetectionResult>;
   /** Where the observed-builds tally lives (tests point it at a sandbox). */
@@ -97,7 +108,7 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
     usage: "birdybeep doctor [--json]",
     run: async (ctx) => {
       const checks: Check[] = [];
-      const apiUrl = resolveApiUrl();
+      const apiUrl = deps.baseUrl ?? resolveApiUrl();
 
       // 1. Machine token. Three answers, not two (birdybeep-agent-gcgp.23): a store that could
       // not be READ is not a missing token, and "Run `birdybeep pair`" is the wrong instruction
@@ -120,6 +131,28 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
                 remedy: tokenStoreRemedy(pairing),
               },
       );
+
+      // 1a. Can this ACCOUNT actually receive a beep? (birdybeep-agent-oi3.) Everything else in
+      // this command inspects the MACHINE, and all of it can be green while no push can arrive.
+      // That is what happened: a full green board for two hours while the account's only device
+      // had been stale five weeks and every push went to a dead registration. It sits directly
+      // under the token row because it answers the same question the user actually has — "why am
+      // I getting no beeps?" — and because a machine-side failure above makes it moot.
+      const reach = describeReachability(
+        await fetchPushReachability({
+          baseUrl: apiUrl,
+          ...(deps.tokenOptions ? { tokenOptions: deps.tokenOptions } : {}),
+          ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+        }),
+      );
+      if (reach !== null) {
+        checks.push({
+          name: "Push reachability",
+          ok: reach.ok,
+          detail: reach.detail,
+          ...(reach.remedy !== undefined ? { remedy: reach.remedy } : {}),
+        });
+      }
 
       // 1b. Events that fired while unpaired and were therefore never sent (gcgp.4). Placed
       // second on purpose: it is the answer to "why am I getting no beeps?", and it has to be

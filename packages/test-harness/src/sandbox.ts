@@ -115,7 +115,17 @@ export function createSandbox(prefix = "birdybeep-e2e-"): Sandbox {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
       }
-      if (existsSync(home)) rmSync(home, { recursive: true, force: true });
+      // Retry on Windows: the sandbox redirects TMPDIR/TEMP too, so a detached child spawned by
+      // the test (safeSpawn writes its stdin payload to a temp file) can still hold a handle
+      // inside `home` when teardown runs. POSIX unlinks an open file happily; Windows returns
+      // EBUSY and would fail the test on a teardown race rather than a real defect.
+      if (existsSync(home)) {
+        try {
+          rmSync(home, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
+        } catch {
+          /* a child still holds it — leave the temp dir for the runner to reap, never throw */
+        }
+      }
     },
   };
 }
