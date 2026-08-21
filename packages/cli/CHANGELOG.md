@@ -1,5 +1,49 @@
 # @birdybeep/cli
 
+## 0.7.0
+
+### Minor Changes
+
+- 5ce9fc0: Tell you when no device can receive a beep
+
+  `birdybeep doctor` checked this machine — token, hooks, harness builds, network — and reported
+  all-green while the account had no device that could receive a push, so beeps went nowhere and
+  nothing said so. It now has a "Push reachability" row that fails when no device is registered, or
+  when the ones that are have not checked in for over a week, and names the fix.
+
+  `birdybeep test` no longer promises a Beep it cannot see. It reports how many registered devices
+  the push was queued for, or says plainly that nothing will arrive.
+
+### Patch Changes
+
+- 56c24e8: Queue events when the token store cannot be read, instead of reporting "not paired"
+
+  A locked OS keychain read as "this machine has no token", so events fired while your screen was
+  locked were discarded and `status`, `doctor` and `test` told a paired user to run `birdybeep pair`.
+
+  Reading the token now distinguishes an empty store from one that will not answer:
+
+  - Events fired while the store is unreadable are **queued** and deliver when it is readable again.
+    The hook says so on stderr, and the `unpaired-events.json` record is not touched.
+  - `status` reports `Paired:  unknown` with the reason, rather than `Paired:  no`.
+  - `doctor`'s machine-token check names the store and gives the fix for that store — unlock the
+    keychain, or repair the token file's path and permissions.
+  - `birdybeep test` reports the store rather than "Offline" or "NOT PAIRED".
+  - A token file that exists and fails to read is handled the same way, instead of erroring out of
+    the hook — including one made unreachable by its parent directory, which previously read as
+    "not paired" and discarded the event.
+
+  With genuinely no token, events are still discarded and recorded, unchanged.
+
+- Updated dependencies [5ce9fc0]
+- Updated dependencies [56c24e8]
+  - @birdybeep/agent-core@0.7.0
+  - @birdybeep/claude-code@0.7.0
+  - @birdybeep/codex@0.7.0
+  - @birdybeep/copilot@0.7.0
+  - @birdybeep/cursor@0.7.0
+  - @birdybeep/opencode@0.7.0
+
 ## 0.6.1
 
 ### Patch Changes
