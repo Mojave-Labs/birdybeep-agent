@@ -33,6 +33,8 @@ export interface EventSink {
   received(): DeliveredEvent[];
   /** Drop all captured requests. */
   reset(): void;
+  /** Drive the push-reachability answer (e.g. an account with no device that can receive). */
+  setReachability(value: unknown): void;
   /** Release resources (stop the server / close connections). */
   close(): Promise<void>;
 }
@@ -59,6 +61,7 @@ export class StubEventSink implements EventSink {
   readonly url: string;
   #server: Server;
   #events: DeliveredEvent[] = [];
+  #setReachability: (value: unknown) => void = () => undefined;
 
   private constructor(server: Server, url: string) {
     this.#server = server;
@@ -68,8 +71,27 @@ export class StubEventSink implements EventSink {
   /** Start a stub sink listening on an ephemeral loopback port. */
   static async start(): Promise<StubEventSink> {
     const events: DeliveredEvent[] = [];
+    // A reachable account by default, so a test that does not care about push reachability sees
+    // the healthy path. Override with `setReachability` to drive the no-device case.
+    let reachability: unknown = {
+      active_device_count: 1,
+      stale_device_count: 0,
+      most_recent_seen_at: new Date().toISOString(),
+      last_delivery: null,
+    };
     const server = createServer((req, res) => {
       void (async () => {
+        // The push-reachability read (birdybeep-agent-oi3) is a DIAGNOSTIC GET, not a delivered
+        // event: `doctor` and `test` ask it whether the account has a device to beep. Answering
+        // it here keeps those paths exercised end-to-end, and keeping it OUT of `received()`
+        // keeps this an event sink — a GET logged as a "delivered event" would silently corrupt
+        // every assertion about what was actually sent.
+        if ((req.url ?? "").startsWith("/v1/machine/push-reachability")) {
+          res.statusCode = 200;
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify(reachability));
+          return;
+        }
         const raw = await readBody(req);
         let body: unknown = raw;
         if (raw.length > 0) {
@@ -95,11 +117,17 @@ export class StubEventSink implements EventSink {
     const address = server.address() as AddressInfo;
     const sink = new StubEventSink(server, `http://127.0.0.1:${address.port}`);
     sink.#events = events;
+    sink.#setReachability = (next: unknown) => (reachability = next);
     return sink;
   }
 
   received(): DeliveredEvent[] {
     return [...this.#events];
+  }
+
+  /** Drive the push-reachability answer (e.g. an account with no device that can receive). */
+  setReachability(value: unknown): void {
+    this.#setReachability(value);
   }
 
   reset(): void {

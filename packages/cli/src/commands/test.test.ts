@@ -89,6 +89,63 @@ describe("birdybeep test", () => {
     expect(body.title).toBe("BirdyBeep test event");
   });
 
+  // birdybeep-agent-oi3 — "delivered" means the BACKEND accepted the event and enqueued a push.
+  // It says nothing about whether a device exists to receive one, and this line used to promise a
+  // Beep on an account that had no reachable device at all. That promise is what made a genuinely
+  // broken machine look fine for hours.
+  it("does NOT promise a Beep when the account has no device that can receive it", async () => {
+    sink = await StubEventSink.start();
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    sink.setReachability({
+      active_device_count: 0,
+      stale_device_count: 0,
+      most_recent_seen_at: null,
+      last_delivery: null,
+    });
+    const sinkUrl = sink.url;
+    const cmd = createTestCommand({
+      createSender: () => createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY }),
+      tokenOptions: FILE_ONLY,
+      baseUrl: sinkUrl,
+    });
+    const out = capture();
+    await runCli(["test"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(out.text()).toContain("NO device on this account can receive it");
+    expect(out.text()).not.toContain("check your phone for a test Beep");
+  });
+
+  it("reports the device count when the account IS reachable", async () => {
+    sink = await StubEventSink.start();
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    sink.setReachability({
+      active_device_count: 2,
+      stale_device_count: 0,
+      most_recent_seen_at: new Date().toISOString(),
+      last_delivery: { status: "ok", at: new Date().toISOString() },
+    });
+    const sinkUrl = sink.url;
+    const cmd = createTestCommand({
+      createSender: () => createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY }),
+      tokenOptions: FILE_ONLY,
+      baseUrl: sinkUrl,
+    });
+    const out = capture();
+    await runCli(["test"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(out.text()).toContain("queued for 2 registered device(s)");
+  });
+
   it("queues + returns fast when offline, reporting queued", async () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);

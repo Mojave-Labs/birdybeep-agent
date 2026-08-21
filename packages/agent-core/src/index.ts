@@ -20,6 +20,7 @@ export * from "./hook-command";
 export * from "./integrations";
 export * from "./normalize";
 export * from "./notify-matrix";
+export * from "./push-reachability";
 export * from "./observed-builds";
 export * from "./pairing";
 export * from "./paths";

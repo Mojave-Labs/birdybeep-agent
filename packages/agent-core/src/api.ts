@@ -56,3 +56,22 @@ export const ERROR_STATUS = {
   quota_exceeded: 429,
   internal_error: 500,
 } as const satisfies Record<ErrorCode, number>;
+
+/**
+ * `GET /v1/machine/push-reachability` response — MIRRORED from the product
+ * `packages/schemas/api.ts` (birdybeep-agent-oi3). LOCKSTEP (§16.4): keep this identical to the
+ * product's `pushReachabilityResponseSchema`.
+ *
+ * The one question every other check leaves unasked: can this ACCOUNT receive a beep? `doctor`
+ * inspects the machine — token, hooks, harness builds, network — and reported a full green board
+ * while the only device on the account had been stale for five weeks and every push landed on a
+ * dead registration. METADATA ONLY (§15.2): counts, timestamps, a delivery status. If a push
+ * token, device name or notification content ever appears here, that is a violation.
+ */
+export const pushReachabilityResponseSchema = z.object({
+  active_device_count: z.number().int(),
+  stale_device_count: z.number().int(),
+  most_recent_seen_at: z.string().nullable(),
+  last_delivery: z.object({ status: z.string(), at: z.string() }).nullable(),
+});
+export type PushReachabilityResponse = z.infer<typeof pushReachabilityResponseSchema>;

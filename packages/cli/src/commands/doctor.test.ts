@@ -110,6 +110,22 @@ function writeForeignCursorHooks(home: string): void {
 }
 
 /** doctor with the faults switched off, so only the check under test can fail. */
+/**
+ * A fetch that answers only the push-reachability read (birdybeep-agent-oi3). Everything else
+ * doctor does is left alone, so these tests exercise exactly the new row.
+ */
+function reachabilityFetch(payload: unknown): typeof fetch {
+  return ((url: string) =>
+    String(url).includes("/v1/machine/push-reachability")
+      ? Promise.resolve(
+          new Response(JSON.stringify(payload), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        )
+      : Promise.reject(new Error("unexpected fetch"))) as unknown as typeof fetch;
+}
+
 function bridgeDoctor(deps: DoctorCommandDeps = {}): Command {
   return createDoctorCommand({
     adapters: [],
@@ -317,5 +333,89 @@ describe("birdybeep doctor", () => {
     });
     expect(code).toBe(EXIT.OK);
     expect((JSON.parse(out.text()) as DoctorJson).ok).toBe(true);
+  });
+});
+
+/**
+ * birdybeep-agent-oi3 — the row that would have ended a multi-hour investigation in one command.
+ * Every other check doctor runs is machine-side, so it printed a full green board while the
+ * account's only device had been stale for five weeks and every push landed on a dead
+ * registration: Expo ticket ok, receipt ok, nothing on the phone.
+ */
+describe("doctor: push reachability", () => {
+  const reachable = {
+    active_device_count: 1,
+    stale_device_count: 0,
+    most_recent_seen_at: new Date().toISOString(),
+    last_delivery: { status: "ok", at: new Date().toISOString() },
+  };
+
+  it("FAILS when no device on the account can receive a beep", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const out = capture();
+    const code = await runCli(["doctor"], {
+      commands: [
+        bridgeDoctor({
+          fetchImpl: reachabilityFetch({
+            ...reachable,
+            active_device_count: 0,
+            most_recent_seen_at: null,
+          }),
+        }),
+      ],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.ERROR);
+    expect(out.text()).toContain("Push reachability");
+    expect(out.text()).toContain("No device can receive a beep");
+    expect(out.text()).toContain("Open the BirdyBeep app");
+  });
+
+  it("FAILS when the only device stopped checking in weeks ago (the real case)", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const cold = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    const out = capture();
+    const code = await runCli(["doctor"], {
+      commands: [
+        bridgeDoctor({ fetchImpl: reachabilityFetch({ ...reachable, most_recent_seen_at: cold }) }),
+      ],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(code).toBe(EXIT.ERROR);
+    expect(out.text()).toContain("none has checked in since");
+  });
+
+  it("passes a healthy account and names the last push outcome", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const out = capture();
+    await runCli(["doctor"], {
+      commands: [bridgeDoctor({ fetchImpl: reachabilityFetch(reachable) })],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(out.text()).toContain("1 active device(s)");
+    expect(out.text()).toContain("last push ok");
+  });
+
+  it("does NOT manufacture a failure when the check itself could not run", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const dead = (() => Promise.reject(new Error("offline"))) as unknown as typeof fetch;
+    const out = capture();
+    await runCli(["doctor"], {
+      commands: [bridgeDoctor({ fetchImpl: dead })],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(out.text()).toContain("Could not check whether this account can receive a beep");
   });
 });
