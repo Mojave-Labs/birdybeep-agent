@@ -132,6 +132,9 @@ function bridgeDoctor(deps: DoctorCommandDeps = {}): Command {
     createSender: () => createSender({ baseUrl: "http://127.0.0.1:1", tokenOptions: FILE_ONLY }),
     tokenOptions: FILE_ONLY,
     probeNetwork: () => Promise.resolve(true),
+    // Never the real API: these cases all have a paired token, so the push-reachability read
+    // would otherwise issue an authenticated production request and stall on its timeout.
+    baseUrl: "http://127.0.0.1:1",
     ...deps,
   });
 }
@@ -346,7 +349,7 @@ describe("doctor: push reachability", () => {
   const reachable = {
     active_device_count: 1,
     stale_device_count: 0,
-    most_recent_seen_at: new Date().toISOString(),
+    most_recent_registration_at: new Date().toISOString(),
     last_delivery: { status: "ok", at: new Date().toISOString() },
   };
 
@@ -360,7 +363,7 @@ describe("doctor: push reachability", () => {
           fetchImpl: reachabilityFetch({
             ...reachable,
             active_device_count: 0,
-            most_recent_seen_at: null,
+            most_recent_registration_at: null,
           }),
         }),
       ],
@@ -374,21 +377,20 @@ describe("doctor: push reachability", () => {
     expect(out.text()).toContain("Open the BirdyBeep app");
   });
 
-  it("FAILS when the only device stopped checking in weeks ago (the real case)", async () => {
+  it("FAILS when Expo has confirmed a token is dead", async () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
-    const cold = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
     const out = capture();
     const code = await runCli(["doctor"], {
       commands: [
-        bridgeDoctor({ fetchImpl: reachabilityFetch({ ...reachable, most_recent_seen_at: cold }) }),
+        bridgeDoctor({ fetchImpl: reachabilityFetch({ ...reachable, stale_device_count: 2 }) }),
       ],
       stdout: out.writer,
       stderr: out.writer,
       ensureConfig: false,
     });
     expect(code).toBe(EXIT.ERROR);
-    expect(out.text()).toContain("none has checked in since");
+    expect(out.text()).toContain("dead push token");
   });
 
   it("passes a healthy account and names the last push outcome", async () => {

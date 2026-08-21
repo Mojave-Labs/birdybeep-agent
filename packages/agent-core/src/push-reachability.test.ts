@@ -8,14 +8,9 @@
  */
 import { describe, expect, it } from "vitest";
 
-import {
-  describeReachability,
-  fetchPushReachability,
-  STALE_SEEN_AFTER_MS,
-} from "./push-reachability";
+import { describeReachability, fetchPushReachability } from "./push-reachability";
 import { type KeychainBackend } from "./token-store";
 
-const NOW = Date.parse("2026-08-20T22:00:00.000Z");
 const tokenBackend = (token: string | null): KeychainBackend => ({
   available: true,
   get: () => Promise.resolve(token),
@@ -26,7 +21,7 @@ const tokenBackend = (token: string | null): KeychainBackend => ({
 const body = (over: Partial<Record<string, unknown>> = {}) => ({
   active_device_count: 1,
   stale_device_count: 0,
-  most_recent_seen_at: "2026-08-20T21:00:00.000Z",
+  most_recent_registration_at: "2026-08-20T21:00:00.000Z",
   last_delivery: { status: "ok", at: "2026-08-20T21:30:00.000Z" },
   ...over,
 });
@@ -78,46 +73,57 @@ describe("fetchPushReachability", () => {
 
 describe("describeReachability", () => {
   it("FAILS when no device can receive a beep — the green-board bug", () => {
-    const out = describeReachability(
-      { state: "ok", data: body({ active_device_count: 0, most_recent_seen_at: null }) },
-      NOW,
-    );
+    const out = describeReachability({
+      state: "ok",
+      data: body({ active_device_count: 0, most_recent_registration_at: null }),
+    });
     expect(out?.ok).toBe(false);
     expect(out?.detail).toContain("No device can receive a beep");
     expect(out?.remedy).toContain("Open the BirdyBeep app");
   });
 
   it("names dead tokens when that is why the count is zero", () => {
-    const out = describeReachability(
-      { state: "ok", data: body({ active_device_count: 0, stale_device_count: 2 }) },
-      NOW,
-    );
+    const out = describeReachability({
+      state: "ok",
+      data: body({ active_device_count: 0, stale_device_count: 2 }),
+    });
     expect(out?.detail).toContain("dead push token");
   });
 
-  it("FAILS when the only device has not checked in for weeks (the real case)", () => {
-    const cold = new Date(NOW - STALE_SEEN_AFTER_MS - 1000).toISOString();
-    const out = describeReachability(
-      { state: "ok", data: body({ most_recent_seen_at: cold }) },
-      NOW,
-    );
+  // birdybeep-2x9s: there is intentionally no staleness rule. last_seen_at never moves in
+  // production (touch() has no caller), so failing on it would call an active account broken.
+  it("FAILS when Expo has confirmed the tokens are dead — a fact, not a timestamp", () => {
+    const out = describeReachability({
+      state: "ok",
+      data: body({ active_device_count: 1, stale_device_count: 2 }),
+    });
     expect(out?.ok).toBe(false);
-    expect(out?.detail).toContain("none has checked in since");
+    expect(out?.detail).toContain("dead push token");
+    expect(out?.remedy).toContain("re-register");
+  });
+
+  it("does NOT fail an account merely because its registration timestamp is old", () => {
+    const ancient = "2020-01-01T00:00:00.000Z";
+    const out = describeReachability({
+      state: "ok",
+      data: body({ most_recent_registration_at: ancient }),
+    });
+    expect(out?.ok).toBe(true);
   });
 
   it("passes a healthy account and reports the last push outcome", () => {
-    const out = describeReachability({ state: "ok", data: body() }, NOW);
+    const out = describeReachability({ state: "ok", data: body() });
     expect(out?.ok).toBe(true);
     expect(out?.detail).toContain("last push ok");
   });
 
   it("does NOT manufacture a failure when it could not ask", () => {
-    const out = describeReachability({ state: "unavailable", reason: "offline" }, NOW);
+    const out = describeReachability({ state: "unavailable", reason: "offline" });
     expect(out?.ok).toBe(true);
     expect(out?.detail).toContain("Could not check");
   });
 
   it("adds no row when unpaired — the machine-token check already failed", () => {
-    expect(describeReachability({ state: "unpaired" }, NOW)).toBeNull();
+    expect(describeReachability({ state: "unpaired" })).toBeNull();
   });
 });

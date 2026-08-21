@@ -100,7 +100,7 @@ describe("birdybeep test", () => {
     sink.setReachability({
       active_device_count: 0,
       stale_device_count: 0,
-      most_recent_seen_at: null,
+      most_recent_registration_at: null,
       last_delivery: null,
     });
     const sinkUrl = sink.url;
@@ -127,7 +127,7 @@ describe("birdybeep test", () => {
     sink.setReachability({
       active_device_count: 2,
       stale_device_count: 0,
-      most_recent_seen_at: new Date().toISOString(),
+      most_recent_registration_at: new Date().toISOString(),
       last_delivery: { status: "ok", at: new Date().toISOString() },
     });
     const sinkUrl = sink.url;

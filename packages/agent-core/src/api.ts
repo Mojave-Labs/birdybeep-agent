@@ -71,7 +71,7 @@ export const ERROR_STATUS = {
 export const pushReachabilityResponseSchema = z.object({
   active_device_count: z.number().int(),
   stale_device_count: z.number().int(),
-  most_recent_seen_at: z.string().nullable(),
+  most_recent_registration_at: z.string().nullable(),
   last_delivery: z.object({ status: z.string(), at: z.string() }).nullable(),
 });
 export type PushReachabilityResponse = z.infer<typeof pushReachabilityResponseSchema>;

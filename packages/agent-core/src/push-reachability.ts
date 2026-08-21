@@ -19,12 +19,14 @@ const PATH = "/v1/machine/push-reachability";
 const DEFAULT_TIMEOUT_MS = 4000;
 
 /**
- * A device that has not checked in for this long is reported as COLD. It is not proof of
- * breakage — a phone that simply has not opened the app looks the same — so it is a warning with
- * a remedy, not a hard failure. Five weeks was the real gap; a week is early enough to be useful
- * without crying wolf at someone back from holiday.
+ * There is deliberately NO staleness check here (birdybeep-2x9s). The first draft failed an
+ * account whose devices had not "checked in" for over a week — but devices.last_seen_at is only
+ * ever written by register(); the touch() heartbeat has no production caller, so the value never
+ * moves and an actively used account would have been reported as broken. Producing a confident
+ * wrong answer is the exact failure this check exists to end, so it keys only on facts about
+ * deliverability: no active device, or a token Expo has confirmed dead. Restore a staleness
+ * check when a real heartbeat exists.
  */
-export const STALE_SEEN_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type ReachabilityResult =
   /** The backend answered. */
@@ -73,7 +75,6 @@ export async function fetchPushReachability(
 /** How `doctor` should render a reachability result: ok, plus the detail and any remedy. */
 export function describeReachability(
   result: ReachabilityResult,
-  now: number,
 ): { ok: boolean; detail: string; remedy?: string } | null {
   // `unpaired` adds nothing — the machine-token check above it already failed and said so.
   if (result.state === "unpaired") return null;
@@ -87,8 +88,10 @@ export function describeReachability(
   const {
     active_device_count: active,
     stale_device_count: stale,
-    most_recent_seen_at,
+    most_recent_registration_at: registeredAt,
   } = result.data;
+  const last = result.data.last_delivery;
+  const lastText = last ? `; last push ${last.status}` : "; no push sent yet";
 
   if (active === 0) {
     return {
@@ -103,25 +106,17 @@ export function describeReachability(
     };
   }
 
-  const seenMs = most_recent_seen_at ? Date.parse(most_recent_seen_at) : NaN;
-  const cold = Number.isFinite(seenMs) && now - seenMs > STALE_SEEN_AFTER_MS;
-  const last = result.data.last_delivery;
-  const lastText = last ? `; last push ${last.status}` : "; no push sent yet";
-
-  if (cold) {
+  // Expo confirmed the token is dead. Unlike a timestamp, that is a fact about deliverability.
+  if (stale > 0) {
     return {
       ok: false,
-      detail:
-        `${String(active)} active device(s), but none has checked in since ` +
-        `${String(most_recent_seen_at)}${lastText}.`,
-      remedy:
-        "Open the BirdyBeep app on your phone so it re-registers. A device that stopped checking " +
-        "in can still accept pushes that never appear.",
+      detail: `${String(stale)} of this account's device(s) have a dead push token and cannot receive a beep.`,
+      remedy: "Open the BirdyBeep app on those devices so they re-register.",
     };
   }
 
   return {
     ok: true,
-    detail: `${String(active)} active device(s), last seen ${String(most_recent_seen_at ?? "unknown")}${lastText}.`,
+    detail: `${String(active)} active device(s), registered ${String(registeredAt ?? "unknown")}${lastText}.`,
   };
 }

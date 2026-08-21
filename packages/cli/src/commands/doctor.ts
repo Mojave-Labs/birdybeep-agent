@@ -79,6 +79,13 @@ export interface DoctorCommandDeps {
   probeNetwork?: (baseUrl: string) => Promise<boolean>;
   /** fetch used by the push-reachability read (injected in tests). */
   fetchImpl?: typeof fetch;
+  /**
+   * Base URL for the push-reachability read. Injected alongside createSender/probeNetwork so a
+   * doctor driven by a stub backend does not still reach the REAL API — every existing
+   * doctor.test case has a paired token, so without this each one issued an authenticated
+   * production request and could stall on the 4s timeout. Same fix as the test command's.
+   */
+  baseUrl?: string;
   /** Cursor detection for the bridge check (tests avoid shelling out to `cursor-agent`). */
   detectCursor?: () => Promise<DetectionResult>;
   /** Where the observed-builds tally lives (tests point it at a sandbox). */
@@ -101,7 +108,7 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
     usage: "birdybeep doctor [--json]",
     run: async (ctx) => {
       const checks: Check[] = [];
-      const apiUrl = resolveApiUrl();
+      const apiUrl = deps.baseUrl ?? resolveApiUrl();
 
       // 1. Machine token. Three answers, not two (birdybeep-agent-gcgp.23): a store that could
       // not be READ is not a missing token, and "Run `birdybeep pair`" is the wrong instruction
@@ -137,7 +144,6 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
           ...(deps.tokenOptions ? { tokenOptions: deps.tokenOptions } : {}),
           ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
         }),
-        Date.now(),
       );
       if (reach !== null) {
         checks.push({

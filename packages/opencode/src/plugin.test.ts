@@ -179,37 +179,31 @@ describe("defaultInvokeHook resolves birdybeep on PATH, never a cwd-planted bina
   };
   let prevCwd: string | undefined;
   let prevPath: string | undefined;
-  const prevHomeVars: Partial<Record<string, string | undefined>> = {};
+  let homeSandbox: Sandbox | undefined;
 
   /**
-   * Isolate HOME (birdybeep-agent-av3). These tests override cwd and PATH but used to inherit the
-   * developer's REAL home, so the plugin read the real BirdyBeep data dir — and its dedupe store
-   * collapsed the fixture's fixed session id as a repeat, so the event never reached the spawn
-   * path and both assertions failed. They therefore passed on a clean CI box and failed on any
-   * machine that had actually been paired and used, which reads as a flake and is not one.
+   * Isolate the whole home environment (birdybeep-agent-av3). These tests override cwd and PATH
+   * but used to inherit the developer's REAL home, so the plugin read the real BirdyBeep data dir
+   * — and its dedupe store collapsed the fixture's fixed session id as a repeat, so the event
+   * never reached the spawn path and both assertions failed. They therefore passed on a clean CI
+   * box and failed on any machine that had actually been paired and used, which reads as a flake
+   * and is not one.
    *
-   * Proven, not guessed: with HOME isolated, an identical standalone probe delivered BOTH
-   * session.created and session.idle with zero breadcrumbs; without it, neither arrived.
+   * Uses the shared sandbox rather than redirecting HOME by hand: birdyBeepDataDir() resolves
+   * from %LOCALAPPDATA% on Windows, which a HOME-only redirect misses entirely — so the fix would
+   * have left the real store readable on exactly the paired Windows machine it was meant to
+   * isolate. createSandbox redirects the full set (HOME, USERPROFILE, HOMEPATH, XDG_*, APPDATA,
+   * LOCALAPPDATA, TMPDIR/TEMP) and cleans up after itself.
    */
   function isolateHome(): void {
-    const home = makeDir("bb-oc-home-");
-    for (const k of ["HOME", "USERPROFILE", "XDG_DATA_HOME", "XDG_CONFIG_HOME"]) {
-      prevHomeVars[k] = process.env[k];
-    }
-    process.env["HOME"] = home;
-    process.env["USERPROFILE"] = home;
-    process.env["XDG_DATA_HOME"] = join(home, ".local", "share");
-    process.env["XDG_CONFIG_HOME"] = join(home, ".config");
+    homeSandbox = createSandbox();
   }
 
   afterEach(() => {
     if (prevCwd !== undefined) process.chdir(prevCwd);
     if (prevPath !== undefined) process.env["PATH"] = prevPath;
-    for (const [k, v] of Object.entries(prevHomeVars)) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
-    for (const k of Object.keys(prevHomeVars)) delete prevHomeVars[k];
+    homeSandbox?.cleanup();
+    homeSandbox = undefined;
     prevCwd = undefined;
     prevPath = undefined;
     vi.restoreAllMocks();

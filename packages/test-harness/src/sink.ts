@@ -76,7 +76,7 @@ export class StubEventSink implements EventSink {
     let reachability: unknown = {
       active_device_count: 1,
       stale_device_count: 0,
-      most_recent_seen_at: new Date().toISOString(),
+      most_recent_registration_at: new Date().toISOString(),
       last_delivery: null,
     };
     const server = createServer((req, res) => {
