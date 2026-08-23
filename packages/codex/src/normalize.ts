@@ -37,11 +37,14 @@ import { closeSync, openSync, readSync } from "node:fs";
 
 import {
   type BirdyBeepAgentEvent,
+  detectRepoContext,
   getMachineIdentity,
   normalizeEvent,
   type NormalizeOptions,
   type ObservedSurfaceKind,
+  repoLabel,
   sanitizeHarnessVersion,
+  summarizeLastMessage,
 } from "@birdybeep/agent-core";
 
 /**
@@ -246,15 +249,20 @@ function mapHookEvent(payload: Record<string, unknown>, name: string): MappedEve
         body: "Subtask complete",
         metadata: { agent_type: str(payload["agent_type"]), agent_id: str(payload["agent_id"]) },
       };
-    case "Stop":
-      // last_assistant_message is assistant content — intentionally NOT persisted.
+    case "Stop": {
+      // last_assistant_message is assistant content: NEVER persisted (it stays out of metadata,
+      // below) but DOES belong in the body the user is about to read (birdybeep-agent-2ep).
+      // Those are different rules, and conflating them is why a Codex beep said only "Turn
+      // complete" while Claude Code — reading exactly this class of field — said what finished.
+      const summary = summarizeLastMessage(str(payload["last_assistant_message"]));
       return {
         eventType: "agent_completed",
         status: "completed",
         title: "Codex finished",
-        body: "Turn complete",
+        body: summary ?? "Turn complete",
         metadata: { turn_id: str(payload["turn_id"]), model: str(payload["model"]) },
       };
+    }
     default:
       throw new CodexMappingError(`unsupported Codex hook event: ${JSON.stringify(name)}`);
   }
@@ -263,13 +271,16 @@ function mapHookEvent(payload: Record<string, unknown>, name: string): MappedEve
 /** Map a Codex `notify` payload (keyed by `type`; only `agent-turn-complete` exists). */
 function mapNotifyEvent(payload: Record<string, unknown>, type: string): MappedEvent {
   if (type === "agent-turn-complete") {
-    // input-messages / last-assistant-message are user+assistant content — intentionally
-    // NOT persisted. Only the safe turn/client identifiers flow as metadata.
+    // input-messages (the USER's prompts) stay out entirely. last-assistant-message is the
+    // agent's own closing summary: never persisted — only the safe turn/client identifiers flow
+    // as metadata — but it is what makes the beep worth reading (birdybeep-agent-2ep).
+    // Note the hyphenated key: the notify payload uses kebab-case where the hook uses snake.
+    const summary = summarizeLastMessage(str(payload["last-assistant-message"]));
     return {
       eventType: "agent_completed",
       status: "completed",
       title: "Codex finished",
-      body: "Turn complete",
+      body: summary ?? "Turn complete",
       metadata: { turn_id: str(payload["turn-id"]), client: str(payload["client"]) },
     };
   }
@@ -355,6 +366,12 @@ function buildAndNormalize(input: unknown, opts: CodexNormalizeOptions): BirdyBe
   const machine = getMachineIdentity();
   // Which Codex build fired this — the terminal CLI or the ChatGPT desktop bundle. Both share
   // one config, so the rollout's own cli_version is the only thing that separates them.
+  // Which checkout produced this event — best-effort and fail-soft. Codex was one of only two
+  // adapters that never did this (birdybeep-agent-2ep), so its beeps could not be told apart
+  // when several sessions ran at once; claude-code, cursor and copilot all already led their
+  // titles with it. Derived from cwd only: a directory name and a branch, never file content.
+  const repo = detectRepoContext(str(payload["cwd"]) ?? "unknown");
+  const label = repoLabel(repo);
   const transcriptPath = str(payload["transcript_path"]);
   const readVersion = opts.readRolloutVersion ?? cliVersionFromRollout;
   const harnessVersion = transcriptPath ? readVersion(transcriptPath) : undefined;
@@ -366,7 +383,7 @@ function buildAndNormalize(input: unknown, opts: CodexNormalizeOptions): BirdyBe
     source_session_id: deriveSessionId(payload),
     machine: { label: machine.label, os: machine.os },
     workspace: { cwd: str(payload["cwd"]) ?? "unknown" },
-    title: mapped.title,
+    title: label ? `${label} — ${mapped.title}` : mapped.title,
     body: mapped.body,
     metadata: mapped.metadata,
   };
