@@ -58,7 +58,7 @@ import {
   getMachineIdentity,
   normalizeEvent,
   type NormalizeOptions,
-  type RepoContext,
+  repoLabel,
 } from "@birdybeep/agent-core";
 
 /** Thrown for an unknown/garbled Cursor hook payload (never a malformed event). */
@@ -92,10 +92,6 @@ function firstWorkspaceRoot(payload: Record<string, unknown>): string | undefine
 }
 
 /** "<repo> · <branch>" (or just "<repo>") to lead the push title; undefined when cwd isn't a checkout. */
-function repoLabel(ctx: RepoContext): string | undefined {
-  if (!ctx.repoName) return undefined;
-  return ctx.branch ? `${ctx.repoName} · ${ctx.branch}` : ctx.repoName;
-}
 
 /** Deterministic best-effort session id when Cursor provides none (§10.3). */
 function bestEffortSessionId(payload: Record<string, unknown>): string {

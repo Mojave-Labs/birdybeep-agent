@@ -75,3 +75,44 @@ export function detectRepoContext(cwd: string): RepoContext {
     return {};
   }
 }
+
+/** Longest one-line completion body composed here, before the normalizer's own caps take over. */
+const SUMMARY_MAX_CHARS = 200;
+
+/**
+ * Condense a harness's final assistant message into a one-line push body, so the beep says WHAT
+ * finished rather than only that something did (§10.2).
+ *
+ * Heuristic: the first non-empty line — agents lead with the headline — whitespace-collapsed and
+ * truncated. `undefined` for an absent/blank message so the caller falls back to generic copy.
+ * Path/secret scrubbing stays the normalizer's job.
+ *
+ * SHARED because it was Claude Code's alone (birdybeep-agent-2ep), which is the whole reason a
+ * Claude beep read "fixed the failing auth test" while a Codex beep read "Turn complete". The
+ * PRIVACY LINE this sits on: a title/body is never PERSISTED or LOGGED server-side, and Private
+ * Mode redacts it at dispatch from the event category without ever reading it. Putting the
+ * message in the body a user is about to read on their own phone is not the thing that rule
+ * forbids — Claude Code has done exactly this since §10.2 and it is why its beeps are useful.
+ */
+export function summarizeLastMessage(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const firstLine = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  if (!firstLine) return undefined;
+  const collapsed = firstLine.replace(/\s+/g, " ");
+  return collapsed.length > SUMMARY_MAX_CHARS
+    ? `${collapsed.slice(0, SUMMARY_MAX_CHARS - 1)}…`
+    : collapsed;
+}
+
+/**
+ * `"<repo> · <branch>"` (or just `"<repo>"`) to lead a push title; `undefined` when the cwd is
+ * not a checkout. Shared so every adapter labels a beep the same way — it was duplicated in three
+ * and missing from two (birdybeep-agent-2ep).
+ */
+export function repoLabel(ctx: RepoContext): string | undefined {
+  if (!ctx.repoName) return undefined;
+  return ctx.branch ? `${ctx.repoName} · ${ctx.branch}` : ctx.repoName;
+}

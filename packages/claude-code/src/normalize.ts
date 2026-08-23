@@ -25,9 +25,10 @@ import {
   normalizeEvent,
   type NormalizeOptions,
   type ObservedSurfaceKind,
-  type RepoContext,
+  repoLabel,
   sanitizeHarnessVersion,
   SESSION_NAME_METADATA_KEY,
+  summarizeLastMessage,
 } from "@birdybeep/agent-core";
 
 import { cleanSessionName, SessionNameStore } from "./session-names";
@@ -126,34 +127,6 @@ export const CLAUDE_CODE_NON_HOOK_EVENTS: readonly string[] = [
 export function isClaudeCodeHookPayload(input: unknown): boolean {
   const name = asRecord(input)["hook_event_name"];
   return typeof name === "string" && CLAUDE_CODE_HOOK_EVENTS.includes(name);
-}
-
-/** Longest one-line completion body we compose before the normalizer's own caps take over. */
-const SUMMARY_MAX_CHARS = 200;
-
-/**
- * Condense Claude Code's `last_assistant_message` into a one-line push body.
- * Heuristic: the first non-empty line (agents usually lead with the headline),
- * whitespace-collapsed and truncated. Returns undefined for an absent/blank
- * message so the caller can fall back. Path/secret scrubbing is the normalizer's job.
- */
-function summarizeLastMessage(raw: string | undefined): string | undefined {
-  if (!raw) return undefined;
-  const firstLine = raw
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-  if (!firstLine) return undefined;
-  const collapsed = firstLine.replace(/\s+/g, " ");
-  return collapsed.length > SUMMARY_MAX_CHARS
-    ? `${collapsed.slice(0, SUMMARY_MAX_CHARS - 1)}…`
-    : collapsed;
-}
-
-/** "<repo> · <branch>" (or just "<repo>") to lead the push title; undefined when cwd isn't a checkout. */
-function repoLabel(ctx: RepoContext): string | undefined {
-  if (!ctx.repoName) return undefined;
-  return ctx.branch ? `${ctx.repoName} · ${ctx.branch}` : ctx.repoName;
 }
 
 /** Deterministic best-effort session id when Claude Code provides none (§10.3). */

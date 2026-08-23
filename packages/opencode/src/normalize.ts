@@ -50,9 +50,11 @@ import { createHash } from "node:crypto";
 
 import {
   type BirdyBeepAgentEvent,
+  detectRepoContext,
   getMachineIdentity,
   normalizeEvent,
   type NormalizeOptions,
+  repoLabel,
 } from "@birdybeep/agent-core";
 
 /** Thrown for an unknown/garbled or intentionally-dropped OpenCode event (never a malformed event). */
@@ -243,6 +245,11 @@ function buildAndNormalize(input: unknown, opts: NormalizeOptions): BirdyBeepAge
   const cwd = str(payload["cwd"]) ?? str(asRecord(props["info"])["directory"]) ?? "unknown";
   const mapped = mapOpenCodeEvent(type, props); // throws OpenCodeMappingError on unmapped
   const machine = getMachineIdentity();
+  // Which checkout produced this event (birdybeep-agent-2ep). OpenCode was the other adapter
+  // with no repo label, so parallel sessions produced indistinguishable beeps. cwd-derived only:
+  // a directory name and a branch. NOT properties.info — that is conversation-derived from the
+  // user's own messages, which is why this adapter refuses to forward it anywhere.
+  const label = repoLabel(detectRepoContext(cwd));
   const draft = {
     event_type: mapped.eventType,
     status: mapped.status,
@@ -250,7 +257,7 @@ function buildAndNormalize(input: unknown, opts: NormalizeOptions): BirdyBeepAge
     source_session_id: deriveSessionId(props, cwd, type),
     machine: { label: machine.label, os: machine.os },
     workspace: { cwd },
-    title: mapped.title,
+    title: label ? `${label} — ${mapped.title}` : mapped.title,
     body: mapped.body,
     metadata: mapped.metadata,
   };

@@ -8,7 +8,11 @@
  * Fixtures use the REAL OpenCode plugin-event shape (verified against the SDK types):
  * { type, properties }, with `cwd` injected by the plugin (most bus events omit it).
  */
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   isOpenCodeEventPayload,
@@ -302,5 +306,46 @@ describe("isOpenCodeEventPayload — foreign payloads are recognized as foreign 
     // message.part.updated is real OpenCode traffic, but the plugin filters it out before the
     // hook — so seeing one here means something else built this envelope.
     expect(isOpenCodeEventPayload({ type: "message.part.updated", properties: {} })).toBe(false);
+  });
+});
+
+/**
+ * birdybeep-agent-2ep — OpenCode was the other adapter with no repo label, so parallel sessions
+ * produced beeps you could not tell apart. Derived from cwd only.
+ *
+ * NO body summary here, deliberately: OpenCode's only conversation-derived text is
+ * `properties.info`, which is composed from the USER's own messages (not the agent's closing
+ * line) AND is absent from the events that actually beep. There is nothing safe and useful to
+ * summarize, so the generic copy stands. That "nothing available" is the finding, not an omission.
+ */
+describe("title leads with the checkout (2ep)", () => {
+  const tmpDirs: string[] = [];
+  function gitCheckout(name: string, head: string): string {
+    const root = mkdtempSync(join(tmpdir(), "bb-oc-2ep-"));
+    tmpDirs.push(root);
+    const repo = join(root, name);
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    writeFileSync(join(repo, ".git", "HEAD"), head);
+    return repo;
+  }
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("leads with '<repo> · <branch>'", async () => {
+    const repo = gitCheckout("billing", "ref: refs/heads/main\n");
+    const evt = await normalizeOpenCodeEvent(
+      { type: "session.idle", properties: { sessionID: "s1" }, cwd: repo },
+      OPTS,
+    );
+    expect(evt.title).toBe("billing · main — OpenCode is waiting");
+  });
+
+  it("keeps the plain title outside a checkout", async () => {
+    const evt = await normalizeOpenCodeEvent(
+      { type: "session.idle", properties: { sessionID: "s1" }, cwd: "/tmp/not-a-repo" },
+      OPTS,
+    );
+    expect(evt.title).toBe("OpenCode is waiting");
   });
 });

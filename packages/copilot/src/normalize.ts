@@ -12,7 +12,7 @@ import {
   getMachineIdentity,
   normalizeEvent,
   type NormalizeOptions,
-  type RepoContext,
+  repoLabel,
   sanitizeHarnessVersion,
 } from "@birdybeep/agent-core";
 
@@ -47,11 +47,6 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function str(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
-}
-
-function repoLabel(context: RepoContext): string | undefined {
-  if (!context.repoName) return undefined;
-  return context.branch ? `${context.repoName} · ${context.branch}` : context.repoName;
 }
 
 function bestEffortSessionId(eventName: string, payload: Record<string, unknown>): string {

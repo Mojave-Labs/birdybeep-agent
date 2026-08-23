@@ -9,7 +9,7 @@
  * notify = argv JSON, kebab-case keys, keyed by `type`; hooks = stdin JSON, snake_case
  * keys, keyed by `hook_event_name`.
  */
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -53,7 +53,10 @@ const CASES: Case[] = [
     },
     eventType: "agent_completed",
     status: "completed",
-    body: "Turn complete",
+    // birdybeep-agent-2ep: the ASSISTANT's closing line, not generic copy. The `hook Stop` case
+    // below carries no last_assistant_message and still reads "Turn complete", which is what
+    // keeps the fallback covered.
+    body: "Done.",
     notifyDefault: true,
   },
   {
@@ -218,10 +221,22 @@ describe("privacy invariants (§15.6)", () => {
       OPTS,
     );
     const serialized = JSON.stringify(evt);
+    // The invariants, unchanged: no secret, no path, and NOTHING the USER typed.
     expect(serialized).not.toContain("sk-abcdefghijklmnop1234");
     expect(serialized).not.toContain("id_rsa");
-    expect(serialized).not.toContain("please leak");
-    expect(evt.body).toBe("Turn complete");
+    expect(serialized).not.toContain("please leak"); // input-messages is never read at all
+
+    // birdybeep-agent-2ep: the body now carries the ASSISTANT's closing line, because that is
+    // what makes a beep worth reading — and this case is the proof it is safe to. The normalizer
+    // scrubs it on the way out, which is the same guarantee claude-code has relied on since
+    // §10.2. Asserted positively so a regression in redaction fails HERE, loudly, rather than
+    // being noticed only as a secret on someone's lock screen.
+    expect(evt.body).toContain("[redacted]"); // the sk- token, scrubbed
+    expect(evt.body).toMatch(/h_[0-9a-f]{8,}/); // the path, hashed
+    expect(evt.body).not.toBe("Turn complete"); // the summary reached the body
+
+    // And the content is never PERSISTED — metadata carries identifiers only.
+    expect(JSON.stringify(evt.metadata)).not.toContain("Token");
   });
 
   it("never persists tool_input content from a hook payload", async () => {
@@ -513,5 +528,75 @@ describe("isCodexHookPayload — foreign payloads are recognized as foreign (gcg
     expect(isCodexHookPayload({ hook_event_name: "Bogus", type: "agent-turn-complete" })).toBe(
       false,
     );
+  });
+});
+
+/**
+ * birdybeep-agent-2ep — Codex was the only harness missing BOTH halves of a useful beep: no
+ * repo/branch in the title, and a body that said "Turn complete" while the assistant's own
+ * closing line sat unread in the payload. claude-code, cursor and copilot already led their
+ * titles with the checkout; these pin that Codex now does too, on both of its surfaces.
+ */
+describe("title leads with the checkout, body carries the summary (2ep)", () => {
+  const tmpDirs: string[] = [];
+  function gitCheckout(name: string, head: string): string {
+    const root = mkdtempSync(join(tmpdir(), "bb-cx-"));
+    tmpDirs.push(root);
+    const repo = join(root, name);
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    writeFileSync(join(repo, ".git", "HEAD"), head);
+    return repo;
+  }
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("notify: '<repo> · <branch> — Codex finished' with the assistant's line as the body", async () => {
+    const repo = gitCheckout("billing", "ref: refs/heads/main\n");
+    const evt = await normalizeCodexEvent(
+      {
+        type: "agent-turn-complete",
+        "thread-id": "t",
+        cwd: repo,
+        "last-assistant-message": "Fixed the failing auth test.\n\nDetails below.",
+      },
+      OPTS,
+    );
+    expect(evt.title).toBe("billing · main — Codex finished");
+    // First non-empty line only — a beep is one line, not a transcript.
+    expect(evt.body).toBe("Fixed the failing auth test.");
+  });
+
+  it("hook Stop: same treatment via the snake_case key", async () => {
+    const repo = gitCheckout("api", "ref: refs/heads/main\n");
+    const evt = await normalizeCodexEvent(
+      {
+        hook_event_name: "Stop",
+        session_id: "s",
+        cwd: repo,
+        last_assistant_message: "Shipped the migration.",
+      },
+      OPTS,
+    );
+    expect(evt.title).toBe("api · main — Codex finished");
+    expect(evt.body).toBe("Shipped the migration.");
+  });
+
+  it("keeps the plain title when the cwd is not a checkout", async () => {
+    const evt = await normalizeCodexEvent(
+      { hook_event_name: "Stop", session_id: "s", cwd: CWD, last_assistant_message: "Done." },
+      OPTS,
+    );
+    expect(evt.title).toBe("Codex finished");
+  });
+
+  it("falls back to generic copy when the harness sends no closing message", async () => {
+    const repo = gitCheckout("web", "ref: refs/heads/main\n");
+    const evt = await normalizeCodexEvent(
+      { hook_event_name: "Stop", session_id: "s", cwd: repo },
+      OPTS,
+    );
+    expect(evt.body).toBe("Turn complete");
+    expect(evt.title).toBe("web · main — Codex finished");
   });
 });
