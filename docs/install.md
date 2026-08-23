@@ -387,7 +387,8 @@ birdybeep test
 ```
 
 This pushes a test event through the actual sender path and reports whether it was delivered,
-queued for retry (offline, or the token store is unreadable), or not sent at all:
+queued for retry — and which of offline, a backend that asked for a retry, or an unreadable token
+store parked it — or not sent at all:
 
 ```text
 ✗ NOT PAIRED — this machine has no BirdyBeep machine token, so nothing was sent (and nothing was

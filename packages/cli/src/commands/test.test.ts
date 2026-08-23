@@ -221,3 +221,137 @@ describe("birdybeep test", () => {
     expect(code).toBe(EXIT.ERROR);
   });
 });
+
+/**
+ * birdybeep-agent-0yk. `test` printed "Offline — test event queued; it will deliver when you
+ * reconnect." for two states that are not offline: an event the SAME call went on to deliver
+ * from the queue, and a backend that answered with a throttle or a 500. Both were observed on a
+ * demonstrably online machine, and both send the user to debug their network.
+ */
+describe("birdybeep test — a queued outcome names the real cause (0yk)", () => {
+  function backendSays(status: number, code: string): typeof fetch {
+    return () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: { code, message: "not now" } }), {
+          status,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+  }
+
+  async function runTest(fetchImpl: typeof fetch, baseUrl = "http://127.0.0.1:1") {
+    const cmd = createTestCommand({
+      createSender: () => createSender({ baseUrl, tokenOptions: FILE_ONLY, fetchImpl }),
+      tokenOptions: FILE_ONLY,
+      baseUrl,
+      fetchImpl,
+    });
+    const out = capture();
+    const code = await runCli(["test"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    return { code, text: out.text() };
+  }
+
+  it("says the backend is THROTTLING — not that you are offline", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const { code, text } = await runTest(backendSays(429, "rate_limited"));
+    expect(text).not.toContain("Offline");
+    expect(text).not.toContain("when you reconnect");
+    expect(text).toContain("Throttled by the backend (HTTP 429)");
+    expect(text).toContain("test event queued");
+    expect(text).toContain("Not your network");
+    expect(code).toBe(EXIT.OK);
+    expect(new LocalEventQueue().size()).toBe(1); // still parked for retry
+  });
+
+  it("says the BACKEND is having trouble on a 500 — not that you are offline", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const { text } = await runTest(backendSays(500, "internal_error"));
+    expect(text).not.toContain("Offline");
+    expect(text).toContain("backend");
+    expect(text).toContain("HTTP 500");
+  });
+
+  it("still says Offline when the machine really cannot reach the backend", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const { text } = await runTest(() => Promise.reject(new TypeError("fetch failed")));
+    expect(text).toContain("Offline");
+    expect(new LocalEventQueue().size()).toBe(1);
+  });
+
+  it("keeps the terminal reject wording for a quota-exceeded 429 envelope", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const { code, text } = await runTest(backendSays(429, "quota_exceeded"));
+    expect(text).toContain("rejected by the backend");
+    expect(code).toBe(EXIT.ERROR);
+    expect(new LocalEventQueue().size()).toBe(0); // terminal → never re-queued
+  });
+
+  it("reports DELIVERED when a blip queued the event and the same call's drain sent it", async () => {
+    sink = await StubEventSink.start();
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const sinkUrl = sink.url;
+    let blipped = false;
+    // One transient failure on the ingest POST, then the real stub — the exact shape of the
+    // owner-observed run: fetch attempts 2, queue empty, and the CLI still said "Offline".
+    const blip: typeof fetch = (url, init) => {
+      const target = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (!blipped && target.includes("/v1/agent-events")) {
+        blipped = true;
+        return Promise.reject(new Error("ECONNRESET"));
+      }
+      return fetch(url, init);
+    };
+
+    const cmd = createTestCommand({
+      createSender: () =>
+        createSender({ baseUrl: sinkUrl, tokenOptions: FILE_ONLY, fetchImpl: blip }),
+      tokenOptions: FILE_ONLY,
+      baseUrl: sinkUrl,
+    });
+    const out = capture();
+    const code = await runCli(["test"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+
+    expect(out.text()).not.toContain("Offline");
+    expect(out.text()).toContain("accepted");
+    expect(code).toBe(EXIT.OK);
+    expect(sink.received()).toHaveLength(1); // it really did arrive
+    expect(new LocalEventQueue().size()).toBe(0); // and nothing is left waiting
+  });
+
+  it("mirrors the queue cause in --json", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const cmd = createTestCommand({
+      createSender: () =>
+        createSender({
+          baseUrl: "http://127.0.0.1:1",
+          tokenOptions: FILE_ONLY,
+          fetchImpl: backendSays(503, "internal_error"),
+        }),
+      tokenOptions: FILE_ONLY,
+    });
+    const out = capture();
+    await runCli(["test", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    expect(JSON.parse(out.text())).toMatchObject({ outcome: "queued", queueCause: "backend" });
+  });
+});

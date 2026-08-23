@@ -356,6 +356,7 @@ describe("token store unavailable (gcgp.23)", () => {
     const r = await sender.send(event());
     expect(r.outcome).toBe("queued"); // NOT "unpaired" — nothing said this machine is unpaired
     expect(r.tokenStoreUnavailable?.reason).toContain("User interaction is not allowed");
+    expect(r.queueCause).toBe("token_store"); // 0yk: neither offline nor a backend problem
     expect(queue.size()).toBe(1); // the event is parked, not lost
     expect(fetchSpy).not.toHaveBeenCalled(); // no token to send with
   });
@@ -406,5 +407,123 @@ describe("token store unavailable (gcgp.23)", () => {
     queue.enqueue(event(2));
     expect(await sender.drainNow()).toEqual({ delivered: 0, dropped: 0, kept: 2, pruned: 0 });
     expect(queue.size()).toBe(2); // still there for when the keychain unlocks
+  });
+});
+
+/**
+ * birdybeep-agent-0yk. `send()` decided its outcome BEFORE the opportunistic drain ran, so an
+ * event queued after a transient blip and then delivered by that same call's drain was still
+ * reported as `queued` — which is how `birdybeep test` came to say "Offline" on a machine that
+ * had just delivered the event. The outcome is now reconciled against what the drain actually
+ * did to THAT event, tracked by id rather than inferred from the drain counts.
+ */
+describe("the outcome is reconciled against the drain (0yk)", () => {
+  it("reports `delivered` when the drain delivered the event this call just enqueued", async () => {
+    let calls = 0;
+    const fetchImpl = vi.fn(() => {
+      calls += 1;
+      return calls === 1
+        ? Promise.reject(new Error("transient blip"))
+        : Promise.resolve(jsonResponse(202, { accepted: true, decision: "notified" }));
+    }) as unknown as typeof fetch;
+    const { sender, queue } = setup(fetchImpl);
+
+    const r = await sender.send(event());
+
+    expect(r.outcome).toBe("delivered"); // was "queued" while the event was already gone
+    expect(r.decision).toBe("notified"); // read off the attempt that actually delivered it
+    expect(r.queueCause).toBeUndefined(); // nothing is queued, so nothing has a queue cause
+    expect(queue.size()).toBe(0);
+    expect(r.drained?.delivered).toBe(1);
+  });
+
+  it("reports `dropped` — never `delivered` — when the drain terminally rejects it", async () => {
+    let calls = 0;
+    const { sender, queue } = setup(() => {
+      calls += 1;
+      return calls === 1
+        ? Promise.reject(new Error("transient blip"))
+        : Promise.resolve(jsonResponse(403, errorBody("quota_exceeded")));
+    });
+
+    const r = await sender.send(event());
+
+    expect(r.outcome).toBe("dropped");
+    expect(r.code).toBe("quota_exceeded");
+    expect(r.status).toBe(403);
+    expect(queue.size()).toBe(0); // the drain removed it; it is not waiting to retry
+  });
+
+  it("stays `queued` when the drain cannot deliver it either", async () => {
+    const { sender, queue } = setup(() => Promise.reject(new Error("offline")));
+    const r = await sender.send(event());
+    expect(r.outcome).toBe("queued");
+    expect(queue.size()).toBe(1);
+  });
+
+  /** Identity, not counts: another entry draining says nothing about the event we were asked about. */
+  it("does not claim `delivered` because some OTHER queued event drained", async () => {
+    const { sender, queue } = setup(((_url: string, init: RequestInit) => {
+      const body = JSON.parse(typeof init.body === "string" ? init.body : "{}") as {
+        event_id?: string;
+      };
+      return body.event_id === "evt_7"
+        ? Promise.resolve(jsonResponse(500, errorBody("internal_error")))
+        : Promise.resolve(new Response("{}", { status: 202 }));
+    }) as unknown as typeof fetch);
+    queue.enqueue(event(1)); // a backlog entry that CAN be delivered
+
+    const r = await sender.send(event(7));
+
+    expect(r.drained?.delivered).toBe(1); // the backlog entry went…
+    expect(r.outcome).toBe("queued"); // …but the event we were asked about did not
+    expect(queue.size()).toBe(1);
+  });
+});
+
+/**
+ * birdybeep-agent-0yk (second half). Every queued outcome read as "offline" to callers, so a
+ * throttled or 500ing BACKEND told the user to check their network. A queued result now carries
+ * why it was queued: a transport failure, the backend asking for a retry, or the token store.
+ */
+describe("a queued result says WHY it was queued (0yk)", () => {
+  it("a transport failure is `transport`", async () => {
+    const { sender } = setup(() => Promise.reject(new TypeError("fetch failed")));
+    const r = await sender.send(event());
+    expect(r.outcome).toBe("queued");
+    expect(r.queueCause).toBe("transport");
+  });
+
+  it("a timeout is `transport`", async () => {
+    const hanging: typeof fetch = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("aborted", "AbortError")),
+        );
+      });
+    const r = await setup(hanging).sender.send(event());
+    expect(r.queueCause).toBe("transport");
+  });
+
+  it("a 5xx is the BACKEND — the request reached it", async () => {
+    const { sender } = setup(() => Promise.resolve(jsonResponse(500, errorBody("internal_error"))));
+    const r = await sender.send(event());
+    expect(r.outcome).toBe("queued");
+    expect(r.queueCause).toBe("backend");
+    expect(r.status).toBe(500);
+  });
+
+  it("a rate_limited 429 is the BACKEND", async () => {
+    const { sender } = setup(() => Promise.resolve(jsonResponse(429, errorBody("rate_limited"))));
+    const r = await sender.send(event());
+    expect(r.queueCause).toBe("backend");
+    expect(r.code).toBe("rate_limited");
+  });
+
+  it("a bare 503 with no parseable envelope is the BACKEND", async () => {
+    const { sender } = setup(() => Promise.resolve(new Response("gateway", { status: 503 })));
+    const r = await sender.send(event());
+    expect(r.queueCause).toBe("backend");
+    expect(r.status).toBe(503);
   });
 });

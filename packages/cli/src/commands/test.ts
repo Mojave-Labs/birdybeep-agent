@@ -3,8 +3,9 @@
  * path (normalize/redact/truncate → send w/ short timeout → queue-on-fail → opportunistic
  * drain) so a developer can confirm end-to-end delivery (and trigger a test Beep) right
  * after pairing. Not a mock — it exercises the production code path. Reports delivered vs
- * NOT PAIRED vs queued (offline) vs queued (the token store would not answer) vs rejected;
- * --json mirrors the outcome.
+ * NOT PAIRED vs queued vs rejected, and for a queued event which of the three causes parked it
+ * (offline / the backend asked for a retry / the token store would not answer); --json mirrors
+ * the outcome and the cause.
  *
  * Sends event_type "test" (9fh): the backend notifies it by default and exempts it from
  * the beep quota. (The old "custom" type is unconditionally suppressed by the §10.5
@@ -84,6 +85,7 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
           outcome: result.outcome,
           ...(result.status ? { status: result.status } : {}),
           ...(result.decision ? { decision: result.decision } : {}),
+          ...(result.queueCause ? { queueCause: result.queueCause } : {}),
           ...(result.tokenStoreUnavailable !== undefined
             ? { tokenStore: "unavailable", tokenStoreReason: result.tokenStoreUnavailable.reason }
             : {}),
@@ -147,6 +149,18 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
           `• Could not read the machine token (${result.tokenStoreUnavailable.reason}) — the ` +
             "test event was queued and delivers once the token store is readable. If your " +
             "keychain is locked, unlock it and run `birdybeep test` again.",
+        );
+      } else if (result.outcome === "queued" && result.queueCause === "backend") {
+        // 0yk: rate_limited / internal_error / any 5xx also queue, and this branch used to send
+        // the user off to debug a network that had just carried the request to the backend and
+        // back. Name what answered, and say the retry is automatic.
+        const status = result.status !== undefined ? ` (HTTP ${String(result.status)})` : "";
+        ctx.io.line(
+          result.code === "rate_limited" || result.status === 429
+            ? `• Throttled by the backend${status} — test event queued; it retries on its own. ` +
+                "Not your network: the request got through."
+            : `• The backend is having trouble${status} — test event queued; it retries on its ` +
+                "own. Not your network: the request got through.",
         );
       } else if (result.outcome === "queued") {
         ctx.io.line("• Offline — test event queued; it will deliver when you reconnect.");
