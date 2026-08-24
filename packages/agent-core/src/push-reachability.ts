@@ -152,6 +152,46 @@ function windowText(quota: MachineQuota): string {
 }
 
 /**
+ * What an exhausted meter has to say: the window it is stuck in, and the one remedy that is
+ * actually available. `doctor`'s quota row and `birdybeep test` both render it, so the two
+ * commands cannot hand the same account contradictory advice about the same meter.
+ *
+ * Three cases, because only three are true:
+ *   • `period_end` already in the past — the counter cannot roll over, so neither waiting nor
+ *     paying fixes it. Name the backend fault (birdybeep-n9mn).
+ *   • `plus` — that allowance is the ceiling, not a rung. Give the reset date and no upsell.
+ *   • `free` — the reset date, and the upgrade that clears it sooner.
+ *
+ * `now` is injectable for deterministic tests.
+ */
+export function describeExhaustedQuota(
+  quota: MachineQuota,
+  now: Date = new Date(),
+): { window: string; remedy: string } {
+  const resetsAt = Date.parse(quota.period_end);
+  const stuck = Number.isFinite(resetsAt) && resetsAt <= now.getTime();
+  const resets = isoDay(quota.period_end);
+  if (stuck) {
+    return {
+      window: windowText(quota),
+      remedy:
+        `That period ended on ${resets} and the counter has not rolled over — it should have. ` +
+        "Report this with `birdybeep doctor --json`; it is a backend bug, not something you can " +
+        "fix from here.",
+    };
+  }
+  return {
+    window: windowText(quota),
+    remedy:
+      quota.plan === "plus"
+        ? `The quota resets on ${resets}. Plus is the largest beep allowance there is, so there ` +
+          "is no higher plan to move to — beeps start arriving again then."
+        : `The quota resets on ${resets}. To beep before then, upgrade to Plus in the BirdyBeep ` +
+          "app (Settings › plan).",
+  };
+}
+
+/**
  * How `doctor` should render the beep-quota row: exhausted is a FAILURE with a remedy naming the
  * reset date, everything else is informational. `now` is injectable for deterministic tests.
  *
@@ -180,21 +220,12 @@ export function describeQuota(
   const where = `${quota.plan} plan, period ${windowText(quota)}`;
 
   if (quota.exhausted) {
-    const resetsAt = Date.parse(quota.period_end);
-    // A window that ENDED in the past is the n9mn signature: the meter cannot roll over, so
-    // "wait for the reset" would be advice to wait forever. Say which one it is.
-    const stuck = Number.isFinite(resetsAt) && resetsAt <= now.getTime();
     return {
       ok: false,
       detail:
         `Beep quota EXHAUSTED — ${used} used (${where}). The backend is ACCEPTING your events ` +
         "and then rejecting every one of them, so no beep can arrive.",
-      remedy: stuck
-        ? `That period ended on ${isoDay(quota.period_end)} and the counter has not rolled over — ` +
-          "it should have. Report this with `birdybeep doctor --json`; it is a backend bug, not " +
-          "something you can fix from here."
-        : `The quota resets on ${isoDay(quota.period_end)}. To beep before then, upgrade to Plus ` +
-          "in the BirdyBeep app (Settings › plan).",
+      remedy: describeExhaustedQuota(quota, now).remedy,
     };
   }
 

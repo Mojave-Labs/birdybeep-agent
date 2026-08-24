@@ -294,7 +294,7 @@ type BirdyBeepEventType =
   | "tool_started" | "tool_finished"
   | "subagent_started" | "subagent_completed"
   | "custom"
-  | "test"; // `birdybeep test` diagnostic — notify-by-default, quota-exempt (9fh)
+  | "test"; // `birdybeep test` diagnostic — notify-by-default, metered like any other event (9fh)
 ```
 
 ## 9. Canonical agent event payload (PRD §10.2)

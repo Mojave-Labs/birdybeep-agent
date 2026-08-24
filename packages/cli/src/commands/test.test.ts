@@ -356,7 +356,6 @@ describe("birdybeep test — a queued outcome names the real cause (0yk)", () =>
   });
 });
 
-
 /**
  * A quota rejection, named (birdybeep-agent-58l).
  *
@@ -367,10 +366,19 @@ describe("birdybeep test — a queued outcome names the real cause (0yk)", () =>
  * older backend that reports no quota, the copy stops at what the error code proves.
  */
 describe("birdybeep test: quota rejection copy (58l)", () => {
+  // Dates are relative to the run, not literals: the copy branches on whether `period_end` is
+  // still ahead, so a hard-coded "2026-09-01" would silently start exercising the stuck-window
+  // branch once that date passed, and this suite would fail for a reason no one changed.
+  const DAY_MS = 86_400_000;
+  const iso = (offsetDays: number) => new Date(Date.now() + offsetDays * DAY_MS).toISOString();
+  const day = (offsetDays: number) => iso(offsetDays).slice(0, 10);
+  const OPEN_START = iso(-10);
+  const OPEN_END = iso(20);
+
   const QUOTA = {
     plan: "free",
-    period_start: "2026-08-01T00:00:00.000Z",
-    period_end: "2026-09-01T00:00:00.000Z",
+    period_start: OPEN_START,
+    period_end: OPEN_END,
     beeps_accepted: 100,
     beeps_limit: 100,
     exhausted: true,
@@ -434,15 +442,44 @@ describe("birdybeep test: quota rejection copy (58l)", () => {
     const text = await runTest({ ...reachable, quota: QUOTA });
     expect(text).toContain("monthly beep quota is used up");
     expect(text).toContain("100/100 beeps");
-    expect(text).toContain("2026-08-01 → 2026-09-01");
-    expect(text).toContain("resets on 2026-09-01");
+    expect(text).toContain(`${day(-10)} → ${day(20)}`);
+    expect(text).toContain(`resets on ${day(20)}`);
+    expect(text).toContain("upgrade to Plus");
     expect(text).not.toContain("rejected by the backend.");
   });
 
+  it("does NOT sell Plus to an account already ON Plus — that plan's limit is the ceiling", async () => {
+    // `{plan: "plus", exhausted: true}` is a real wire state (the Plus allowance is a hard cap,
+    // not a rung), and "upgrade to Plus in the app" is an impossible instruction for that user.
+    const text = await runTest({ ...reachable, quota: { ...QUOTA, plan: "plus" } });
+    expect(text).toContain("monthly beep quota is used up");
+    expect(text).toContain("plus plan");
+    expect(text).toContain(`resets on ${day(20)}`);
+    expect(text).not.toContain("upgrade to Plus");
+  });
+
+  it("a period that ALREADY ENDED is named as a backend fault, not a reset to wait for", async () => {
+    // The n9mn signature, and the reason this ticket exists: the meter cannot roll over, so both
+    // "wait until it resets" and "upgrade" are advice that can never work. `doctor` already said
+    // so; `test` reads the same block through the same function and must not disagree.
+    const text = await runTest({
+      ...reachable,
+      quota: { ...QUOTA, period_start: iso(-40), period_end: iso(-30) },
+    });
+    expect(text).toContain(`${day(-40)} → ${day(-30)}`);
+    expect(text).toContain("has not rolled over");
+    expect(text).not.toContain("resets on");
+    expect(text).not.toContain("upgrade to Plus");
+  });
+
   it("still names the CAUSE when the server reports no quota — but invents no dates", async () => {
+    // The old copy sent this user to `birdybeep doctor`, which reads THIS response: on this
+    // server it renders "does not report beep quota yet" and has no date either. Point at the
+    // one place that does know.
     const text = await runTest(reachable);
     expect(text).toContain("monthly beep quota is used up");
-    expect(text).toContain("birdybeep doctor");
+    expect(text).toContain("check your usage in the BirdyBeep app");
     expect(text).not.toContain("resets on");
+    expect(text).not.toContain("birdybeep doctor");
   });
 });

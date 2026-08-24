@@ -161,6 +161,29 @@ describe("describeQuota (58l)", () => {
     expect(out?.remedy).toContain("Plus");
   });
 
+  it("offers no upgrade to an account ALREADY on Plus — that limit is the ceiling", () => {
+    // `{plan: "plus", exhausted: true}` is a valid wire state: the Plus allowance is a hard cap,
+    // not a rung on a ladder. "Upgrade to Plus" there is an instruction the reader cannot follow.
+    const out = describeQuota(
+      {
+        state: "ok",
+        data: body({
+          quota: quota({
+            plan: "plus",
+            beeps_accepted: 10000,
+            beeps_limit: 10000,
+            exhausted: true,
+          }),
+        }),
+      },
+      NOW,
+    );
+    expect(out?.ok).toBe(false);
+    expect(out?.detail).toContain("10000/10000 beeps");
+    expect(out?.remedy).toContain("resets on 2026-09-01");
+    expect(out?.remedy).not.toContain("upgrade to Plus");
+  });
+
   it("shows BOTH window bounds, so a stuck window is visible on sight (the n9mn lesson)", () => {
     const out = describeQuota(
       { state: "ok", data: body({ quota: quota({ beeps_accepted: 7 }) }) },

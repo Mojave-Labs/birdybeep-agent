@@ -9,17 +9,19 @@
  *
  * Sends event_type "test" (9fh): the backend notifies it by default. (The old "custom" type is
  * unconditionally suppressed by the §10.5 matrix — every test "succeeded" while no push could
- * ever be sent.) It is METERED like any other event on this route — the quota exemption was
- * removed backend-side because event_type is client-controlled and an exemption keyed on it was
- * a bypass — so a `test` on an exhausted account is rejected, and says so (58l). The session id
- * is unique per run so back-to-back tests don't collapse in the backend's dedupe window, and the
- * CLI reports the backend's actual DECISION instead of assuming a beep.
+ * ever be sent.) It is METERED against the monthly beep quota like any other event on this route:
+ * the exemption was removed backend-side (cjrj) because event_type is client-controlled, so an
+ * exemption keyed on it was a bypass. A `test` on an exhausted account is therefore rejected, and
+ * says so (58l). The session id is unique per run so back-to-back tests don't collapse in the
+ * backend's dedupe window, and the CLI reports the backend's actual DECISION instead of assuming
+ * a beep.
  */
 import { randomUUID } from "node:crypto";
 
 import {
   type BirdyBeepAgentEvent,
   createSender as defaultCreateSender,
+  describeExhaustedQuota,
   fetchPushReachability,
   getMachineIdentity,
   normalizeEvent,
@@ -169,24 +171,27 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
       } else if (result.code === "quota_exceeded") {
         // 58l: "rejected by the backend" named nothing. The error envelope says WHICH rejection
         // this is, and the reachability read carries the account's meter — so name the cause and
-        // the date it clears. Everything printed here comes off the wire; when the server is old
-        // enough not to report quota, the sentence stops at what the error code proves.
+        // what actually clears it. The remedy comes from `describeExhaustedQuota`, the same
+        // function behind `doctor`'s quota row, so this command cannot promise a reset that row
+        // calls a backend fault, and cannot sell Plus to an account already on Plus.
         const reach = await fetchPushReachability({
           baseUrl,
           ...(deps.tokenOptions ? { tokenOptions: deps.tokenOptions } : {}),
           ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
         });
         const quota = reach.state === "ok" ? reach.data.quota : undefined;
+        const exhausted = quota ? describeExhaustedQuota(quota) : undefined;
         ctx.io.line(
-          quota
+          quota && exhausted
             ? `✗ Test event REJECTED — this account's monthly beep quota is used up ` +
                 `(${String(quota.beeps_accepted)}/${String(quota.beeps_limit)} beeps on the ` +
-                `${quota.plan} plan, period ${quota.period_start.slice(0, 10)} → ` +
-                `${quota.period_end.slice(0, 10)}). Every notifiable event is being rejected ` +
-                `until it resets on ${quota.period_end.slice(0, 10)} — or upgrade to Plus in the ` +
-                "BirdyBeep app."
-            : "✗ Test event REJECTED — this account's monthly beep quota is used up, so no beep " +
-                "can be sent. Run `birdybeep doctor` for the period and the reset date.",
+                `${quota.plan} plan, period ${exhausted.window}). Every notifiable event is ` +
+                `being rejected. ${exhausted.remedy}`
+            : // An older backend reports no quota, so there is no period and no reset date to
+              // give — and `doctor` cannot supply them either, since it reads this same response.
+              "✗ Test event REJECTED — this account's monthly beep quota is used up, so no beep " +
+                "can be sent. This server does not report the period or the reset date; check " +
+                "your usage in the BirdyBeep app.",
         );
       } else {
         ctx.io.line("✗ Test event was rejected by the backend. Run `birdybeep doctor`.");

@@ -34,7 +34,7 @@ const PRODUCT_EVENT_TYPES = [
   "subagent_started",
   "subagent_completed",
   "custom",
-  "test", // 9fh: the `birdybeep test` diagnostic — notify-by-default, quota-exempt server-side
+  "test", // 9fh: the `birdybeep test` diagnostic — notify-by-default, metered server-side (cjrj)
   "session_ended", // true end-of-session marker (non-notifying) — appended last
 ];
 const PRODUCT_SESSION_STATUSES = [
