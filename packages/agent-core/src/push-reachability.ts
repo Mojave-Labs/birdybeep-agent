@@ -11,7 +11,11 @@
  * content — and the response is schema-validated here, so a backend that started returning more
  * than that would fail parsing rather than get printed.
  */
-import { type PushReachabilityResponse, pushReachabilityResponseSchema } from "./api";
+import {
+  type MachineQuota,
+  type PushReachabilityResponse,
+  pushReachabilityResponseSchema,
+} from "./api";
 import { readToken, type TokenStoreOptions } from "./token-store";
 
 const PATH = "/v1/machine/push-reachability";
@@ -118,5 +122,89 @@ export function describeReachability(
   return {
     ok: true,
     detail: `${String(active)} active device(s), registered ${String(registeredAt ?? "unknown")}${lastText}.`,
+  };
+}
+
+// ── Beep quota (birdybeep-agent-58l) ─────────────────────────────────────────────────────────
+//
+// The second thing a green board could be hiding. The backend accepts an event with 202 and
+// rejects it LATER, at the quota gate, so a quota-blocked account and a healthy one produced
+// byte-identical output from this CLI — for a month, on the owner's account, while the product
+// silently stopped doing the only thing it does.
+//
+// This renders the meter the backend reports; it never computes one. Everything printed comes
+// from the response (the server derives it from the resolver the gate itself reads), so the row
+// cannot disagree with the gate — and when the server does not report quota at all, the row says
+// exactly that instead of guessing.
+
+/** Fraction of the limit past which the row starts warning while still passing. */
+const NEAR_LIMIT_FRACTION = 0.9;
+
+/** `2026-08-01T00:00:00.000Z` → `2026-08-01`; anything unparseable is passed through verbatim. */
+function isoDay(value: string): string {
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : value;
+}
+
+/** `2026-08-01 → 2026-09-01` — BOTH bounds, always. A stuck window is only visible with both. */
+function windowText(quota: MachineQuota): string {
+  return `${isoDay(quota.period_start)} → ${isoDay(quota.period_end)}`;
+}
+
+/**
+ * How `doctor` should render the beep-quota row: exhausted is a FAILURE with a remedy naming the
+ * reset date, everything else is informational. `now` is injectable for deterministic tests.
+ *
+ * Returns null when there is nothing honest to say — no token (the pairing row above already
+ * failed), or the backend could not be asked (the reachability row above already reports that
+ * failure, with the same reason; a second copy of it is noise, not information).
+ */
+export function describeQuota(
+  result: ReachabilityResult,
+  now: Date = new Date(),
+): { ok: boolean; detail: string; remedy?: string } | null {
+  if (result.state !== "ok") return null;
+
+  const quota = result.data.quota;
+  if (quota === undefined) {
+    // A backend deployed before 58l. Not a failure — an absence, named as one.
+    return {
+      ok: true,
+      detail:
+        "This BirdyBeep server does not report beep quota yet, so a quota block would not show " +
+        "up here. Check your usage in the app.",
+    };
+  }
+
+  const used = `${String(quota.beeps_accepted)}/${String(quota.beeps_limit)} beeps`;
+  const where = `${quota.plan} plan, period ${windowText(quota)}`;
+
+  if (quota.exhausted) {
+    const resetsAt = Date.parse(quota.period_end);
+    // A window that ENDED in the past is the n9mn signature: the meter cannot roll over, so
+    // "wait for the reset" would be advice to wait forever. Say which one it is.
+    const stuck = Number.isFinite(resetsAt) && resetsAt <= now.getTime();
+    return {
+      ok: false,
+      detail:
+        `Beep quota EXHAUSTED — ${used} used (${where}). The backend is ACCEPTING your events ` +
+        "and then rejecting every one of them, so no beep can arrive.",
+      remedy: stuck
+        ? `That period ended on ${isoDay(quota.period_end)} and the counter has not rolled over — ` +
+          "it should have. Report this with `birdybeep doctor --json`; it is a backend bug, not " +
+          "something you can fix from here."
+        : `The quota resets on ${isoDay(quota.period_end)}. To beep before then, upgrade to Plus ` +
+          "in the BirdyBeep app (Settings › plan).",
+    };
+  }
+
+  const remaining = quota.beeps_limit - quota.beeps_accepted;
+  const near =
+    quota.beeps_limit > 0 && quota.beeps_accepted >= quota.beeps_limit * NEAR_LIMIT_FRACTION;
+  return {
+    ok: true,
+    detail: near
+      ? `${used} used (${where}) — only ${String(remaining)} left before beeps stop; it resets on ${isoDay(quota.period_end)}.`
+      : `${used} used (${where}).`,
   };
 }

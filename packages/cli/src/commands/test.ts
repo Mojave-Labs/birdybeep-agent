@@ -7,11 +7,13 @@
  * (offline / the backend asked for a retry / the token store would not answer); --json mirrors
  * the outcome and the cause.
  *
- * Sends event_type "test" (9fh): the backend notifies it by default and exempts it from
- * the beep quota. (The old "custom" type is unconditionally suppressed by the §10.5
- * matrix — every test "succeeded" while no push could ever be sent.) The session id is
- * unique per run so back-to-back tests don't collapse in the backend's dedupe window,
- * and the CLI reports the backend's actual DECISION instead of assuming a beep.
+ * Sends event_type "test" (9fh): the backend notifies it by default. (The old "custom" type is
+ * unconditionally suppressed by the §10.5 matrix — every test "succeeded" while no push could
+ * ever be sent.) It is METERED like any other event on this route — the quota exemption was
+ * removed backend-side because event_type is client-controlled and an exemption keyed on it was
+ * a bypass — so a `test` on an exhausted account is rejected, and says so (58l). The session id
+ * is unique per run so back-to-back tests don't collapse in the backend's dedupe window, and the
+ * CLI reports the backend's actual DECISION instead of assuming a beep.
  */
 import { randomUUID } from "node:crypto";
 
@@ -164,6 +166,28 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
         );
       } else if (result.outcome === "queued") {
         ctx.io.line("• Offline — test event queued; it will deliver when you reconnect.");
+      } else if (result.code === "quota_exceeded") {
+        // 58l: "rejected by the backend" named nothing. The error envelope says WHICH rejection
+        // this is, and the reachability read carries the account's meter — so name the cause and
+        // the date it clears. Everything printed here comes off the wire; when the server is old
+        // enough not to report quota, the sentence stops at what the error code proves.
+        const reach = await fetchPushReachability({
+          baseUrl,
+          ...(deps.tokenOptions ? { tokenOptions: deps.tokenOptions } : {}),
+          ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+        });
+        const quota = reach.state === "ok" ? reach.data.quota : undefined;
+        ctx.io.line(
+          quota
+            ? `✗ Test event REJECTED — this account's monthly beep quota is used up ` +
+                `(${String(quota.beeps_accepted)}/${String(quota.beeps_limit)} beeps on the ` +
+                `${quota.plan} plan, period ${quota.period_start.slice(0, 10)} → ` +
+                `${quota.period_end.slice(0, 10)}). Every notifiable event is being rejected ` +
+                `until it resets on ${quota.period_end.slice(0, 10)} — or upgrade to Plus in the ` +
+                "BirdyBeep app."
+            : "✗ Test event REJECTED — this account's monthly beep quota is used up, so no beep " +
+                "can be sent. Run `birdybeep doctor` for the period and the reset date.",
+        );
       } else {
         ctx.io.line("✗ Test event was rejected by the backend. Run `birdybeep doctor`.");
       }

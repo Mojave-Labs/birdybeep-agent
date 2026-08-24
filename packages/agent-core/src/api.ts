@@ -68,10 +68,39 @@ export const ERROR_STATUS = {
  * dead registration. METADATA ONLY (§15.2): counts, timestamps, a delivery status. If a push
  * token, device name or notification content ever appears here, that is a violation.
  */
+/**
+ * The account's beep meter, as the backend's DECISION stage sees it — MIRRORED from the product
+ * `packages/schemas/api.ts` (birdybeep-agent-58l). LOCKSTEP (§16.4).
+ *
+ * The other half of "can this account beep", and the half nothing could see: /v1/agent-events
+ * answers 202 and the quota gate rejects the event AFTERWARDS, so for a month every notifiable
+ * event on the owner's account was rejected while `doctor` printed green and this CLI reported
+ * every event delivered. Both window bounds are on the wire so a STUCK window is visible on
+ * sight — "100/100, period ends 2026-07-27" read in August is a bug you can see, and that exact
+ * lockout (n9mn) hid for a month behind numbers nobody could read.
+ */
+export const machineQuotaSchema = z.object({
+  plan: z.enum(["free", "plus"]),
+  period_start: z.string(),
+  period_end: z.string(),
+  beeps_accepted: z.number().int(),
+  beeps_limit: z.number().int(),
+  exhausted: z.boolean(),
+});
+export type MachineQuota = z.infer<typeof machineQuotaSchema>;
+
 export const pushReachabilityResponseSchema = z.object({
   active_device_count: z.number().int(),
   stale_device_count: z.number().int(),
   most_recent_registration_at: z.string().nullable(),
   last_delivery: z.object({ status: z.string(), at: z.string() }).nullable(),
+  /**
+   * OPTIONAL, and it must stay optional (58l). The current worker always sends it, but a CLI is
+   * installed for months against whatever backend is deployed: hard-requiring a field added
+   * today turns "your server is one release behind" into `unrecognized response`, i.e. a
+   * fabricated failure in the one command whose whole job is to name the real one. Absent → the
+   * quota row says the server does not report it, and stays informational.
+   */
+  quota: machineQuotaSchema.optional(),
 });
 export type PushReachabilityResponse = z.infer<typeof pushReachabilityResponseSchema>;

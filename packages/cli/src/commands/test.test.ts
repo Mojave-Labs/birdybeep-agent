@@ -286,11 +286,11 @@ describe("birdybeep test — a queued outcome names the real cause (0yk)", () =>
     expect(new LocalEventQueue().size()).toBe(1);
   });
 
-  it("keeps the terminal reject wording for a quota-exceeded 429 envelope", async () => {
+  it("keeps a quota-exceeded 429 terminal — never queued, and it names the quota (58l)", async () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
     const { code, text } = await runTest(backendSays(429, "quota_exceeded"));
-    expect(text).toContain("rejected by the backend");
+    expect(text).toContain("monthly beep quota is used up");
     expect(code).toBe(EXIT.ERROR);
     expect(new LocalEventQueue().size()).toBe(0); // terminal → never re-queued
   });
@@ -353,5 +353,96 @@ describe("birdybeep test — a queued outcome names the real cause (0yk)", () =>
       ensureConfig: false,
     });
     expect(JSON.parse(out.text())).toMatchObject({ outcome: "queued", queueCause: "backend" });
+  });
+});
+
+
+/**
+ * A quota rejection, named (birdybeep-agent-58l).
+ *
+ * `birdybeep test` printed "rejected by the backend" — true, and useless: it names neither the
+ * cause nor anything to do about it, on the one command whose entire job is to say why beeps are
+ * not arriving. The 429 envelope carries `quota_exceeded`, and the reachability read carries the
+ * account's meter, so the real sentence is available for free. Nothing here is invented: with an
+ * older backend that reports no quota, the copy stops at what the error code proves.
+ */
+describe("birdybeep test: quota rejection copy (58l)", () => {
+  const QUOTA = {
+    plan: "free",
+    period_start: "2026-08-01T00:00:00.000Z",
+    period_end: "2026-09-01T00:00:00.000Z",
+    beeps_accepted: 100,
+    beeps_limit: 100,
+    exhausted: true,
+  };
+
+  /** 429 quota_exceeded on the send; the reachability read answers with `payload`. */
+  function quotaFetch(payload: unknown): typeof fetch {
+    return ((url: string) => {
+      const href = String(url);
+      if (href.includes("/v1/agent-events")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: { code: "quota_exceeded", message: "monthly beep limit reached" },
+            }),
+            { status: 429, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+      if (href.includes("/v1/machine/push-reachability")) {
+        return Promise.resolve(
+          new Response(JSON.stringify(payload), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      return Promise.reject(new Error(`unexpected fetch ${href}`));
+    }) as unknown as typeof fetch;
+  }
+
+  const reachable = {
+    active_device_count: 1,
+    stale_device_count: 0,
+    most_recent_registration_at: "2026-08-20T21:00:00.000Z",
+    last_delivery: { status: "ok", at: "2026-08-20T21:30:00.000Z" },
+  };
+
+  async function runTest(payload: unknown): Promise<string> {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const fetchImpl = quotaFetch(payload);
+    const cmd = createTestCommand({
+      createSender: () =>
+        createSender({ baseUrl: "https://api.test", tokenOptions: FILE_ONLY, fetchImpl }),
+      tokenOptions: FILE_ONLY,
+      baseUrl: "https://api.test",
+      fetchImpl,
+    });
+    const out = capture();
+    await runCli(["test"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    return out.text();
+  }
+
+  it("names the quota, the window and the reset date instead of 'rejected by the backend'", async () => {
+    const text = await runTest({ ...reachable, quota: QUOTA });
+    expect(text).toContain("monthly beep quota is used up");
+    expect(text).toContain("100/100 beeps");
+    expect(text).toContain("2026-08-01 → 2026-09-01");
+    expect(text).toContain("resets on 2026-09-01");
+    expect(text).not.toContain("rejected by the backend.");
+  });
+
+  it("still names the CAUSE when the server reports no quota — but invents no dates", async () => {
+    const text = await runTest(reachable);
+    expect(text).toContain("monthly beep quota is used up");
+    expect(text).toContain("birdybeep doctor");
+    expect(text).not.toContain("resets on");
   });
 });
