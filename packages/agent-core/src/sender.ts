@@ -5,7 +5,10 @@
  * is queued at all: see the `unpaired` outcome below. A token store that ERRORS is a
  * third case, and a transient one — it queues (gcgp.23). The retry-vs-terminal
  * decision keys off the product error-envelope code (mirrored in `api.ts`), so the
- * queue never fills with un-deliverable events. Each send also opportunistically
+ * queue never fills with un-deliverable events. The outcome is RECONCILED against that
+ * drain before it is returned (0yk): the drain can deliver the event this very call just
+ * enqueued, and reporting "queued" for an event already delivered is how `birdybeep test`
+ * came to say "Offline" on a machine that was online. Each send also opportunistically
  * drains the backlog (bounded by count AND by a TOTAL time budget — every harness
  * kills a hook that overruns its registered timeout, and an unbounded 50-entry drain
  * at 3s per attempt could blow well past the tightest of those, erm). The token is
@@ -39,6 +42,17 @@ const AGENT_EVENTS_PATH = "/v1/agent-events";
  */
 export type SendOutcome = "delivered" | "queued" | "dropped" | "unpaired";
 
+/**
+ * Why a `queued` result was queued (birdybeep-agent-0yk). Every queued outcome used to read as
+ * "offline" to callers, so a throttled or 500ing BACKEND told the user to check their network.
+ * The three causes have three different fixes: reconnect, wait, unlock the store.
+ *
+ * - `transport` — the request never got an answer (network error, DNS, timeout). Actually offline.
+ * - `backend` — the request REACHED the backend and it asked for a retry (429 / 5xx).
+ * - `token_store` — the token store would not answer, so nothing was sent (gcgp.23).
+ */
+export type QueueCause = "transport" | "backend" | "token_store";
+
 export interface SendResult {
   outcome: SendOutcome;
   status?: number;
@@ -64,6 +78,13 @@ export interface SendResult {
    * `test`, `hook` and `doctor`, instead of one wrong one.
    */
   tokenStoreUnavailable?: { reason: string };
+  /**
+   * Set on every `queued` send: which of the three things above parked the event (0yk). Callers
+   * that print copy MUST branch on it — "Offline" is only true for `transport`. It names the
+   * NEWEST attempt in the call that reached the backend, so a definitive 429/5xx is not erased by
+   * a transport failure on the drain's re-attempt of the same event moments later.
+   */
+  queueCause?: QueueCause;
 }
 
 export interface SenderConfig {
@@ -97,6 +118,8 @@ interface Attempt {
   status?: number | undefined;
   code?: ErrorCode | undefined;
   decision?: string | undefined;
+  /** Set on a `retry` attempt only: whether the request reached the backend at all (0yk). */
+  retryCause?: Extract<QueueCause, "transport" | "backend"> | undefined;
 }
 
 /** Decide whether a non-2xx response is worth retrying (queue) or terminal (drop). */
@@ -156,23 +179,46 @@ export function createSender(config: SenderConfig): Sender {
       } catch {
         /* non-JSON error body → fall back to status */
       }
-      return { result: classify(res.status, code), status: res.status, code };
+      const result = classify(res.status, code);
+      // The request REACHED the backend, so a retry here is the backend's problem, not the
+      // network's — the difference the "Offline" copy used to erase (0yk).
+      return {
+        result,
+        status: res.status,
+        code,
+        ...(result === "retry" ? { retryCause: "backend" as const } : {}),
+      };
     } catch {
-      return { result: "retry" }; // timeout / transport error → queue
+      return { result: "retry", retryCause: "transport" }; // timeout / transport error → queue
     } finally {
       clearTimeout(timer);
     }
   }
 
-  /** Drain the backlog until drainMax entries OR the deadline is reached. */
-  function drainQueue(token: string, deadline: number): Promise<DrainResult> {
-    return queue.drain(
-      (e) => {
+  /**
+   * Drain the backlog until drainMax entries OR the deadline is reached.
+   *
+   * `watchEventId` names ONE event — the one `send` just enqueued — and reports the attempt the
+   * drain made on it, so the caller can say what happened to THAT event instead of to the queue
+   * as a whole (0yk). Identity is the event id, which is minted per normalizeEvent call and is
+   * therefore unique to the event `send` was handed; counts cannot tell two entries apart.
+   */
+  async function drainQueue(
+    token: string,
+    deadline: number,
+    watchEventId?: string,
+  ): Promise<{ drained: DrainResult; watched?: Attempt }> {
+    let watched: Attempt | undefined;
+    const drained = await queue.drain(
+      async (e) => {
         const remaining = deadline - clock();
-        return attempt(e, token, Math.max(1, Math.min(timeoutMs, remaining))).then((a) => a.result);
+        const a = await attempt(e, token, Math.max(1, Math.min(timeoutMs, remaining)));
+        if (watchEventId !== undefined && e.event_id === watchEventId) watched = a;
+        return a.result;
       },
       { max: drainMax, stopWhen: () => deadline - clock() < MIN_DRAIN_ATTEMPT_MS },
     );
+    return watched !== undefined ? { drained, watched } : { drained };
   }
 
   return {
@@ -192,6 +238,7 @@ export function createSender(config: SenderConfig): Sender {
         queue.enqueue(event);
         return {
           outcome: "queued",
+          queueCause: "token_store",
           tokenStoreUnavailable: { reason: lookup.reason },
           drained: queue.prune(), // retention + cap still apply (87n) — we cannot drain, only trim
         };
@@ -221,21 +268,59 @@ export function createSender(config: SenderConfig): Sender {
         };
       }
       const token = lookup.token;
-      const a = await attempt(event, token, Math.min(timeoutMs, totalBudgetMs));
+      const first = await attempt(event, token, Math.min(timeoutMs, totalBudgetMs));
       let outcome: SendOutcome;
-      if (a.result === "delivered") {
+      let parked = false;
+      if (first.result === "delivered") {
         outcome = "delivered";
-      } else if (a.result === "retry") {
-        queue.enqueue(event);
+      } else if (first.result === "retry") {
+        parked = queue.enqueue(event);
         outcome = "queued";
       } else {
         outcome = "dropped"; // terminal reject → do not re-queue
       }
-      const drained = await drainQueue(token, deadline);
+
+      // The drain that follows can deliver the event we JUST enqueued — it is the newest entry
+      // and it runs inside this same call. Deciding the outcome before it ran is what made
+      // `birdybeep test` report "Offline — test event queued" for an event it had already
+      // delivered (0yk). Watch that one entry through the drain and report what happened to it.
+      const { drained, watched } = await drainQueue(
+        token,
+        deadline,
+        parked ? event.event_id : undefined,
+      );
+      // `watched` is the LAST word on the OUTCOME of this event: the drain re-sent it, so its
+      // verdict is newer than the first attempt's. A drop during the drain is reported as a drop —
+      // a terminal rejection must never be dressed up as a delivery.
+      const final = watched ?? first;
+      if (watched !== undefined) {
+        outcome =
+          watched.result === "delivered"
+            ? "delivered"
+            : watched.result === "drop"
+              ? "dropped"
+              : "queued";
+      }
+
+      // The CAUSE — and the status/code that evidence it — is chosen SEPARATELY from the outcome,
+      // because a transport failure carries no answer at all and the drain makes one likely: its
+      // per-attempt timeout is clamped to whatever is left of the total budget, which can be as
+      // little as MIN_DRAIN_ATTEMPT_MS. Letting a re-attempt that never left the machine erase the
+      // 500 (or the 429) the backend gave us 300ms earlier is the original bug one layer down: the
+      // event really is still queued, but the network is not why, and `test` would print "Offline"
+      // for a backend that answered inside this very call (0yk). So report the NEWEST attempt that
+      // actually REACHED the backend, and fall back to the last attempt only when nothing in this
+      // call ever got an answer — which is exactly when `transport` is the truth. An attempt that
+      // reached the backend always carries its HTTP status; one that did not never does.
+      const evidence = final.status === undefined && first.status !== undefined ? first : final;
+
       const result: SendResult = { outcome, drained };
-      if (a.status !== undefined) result.status = a.status;
-      if (a.code !== undefined) result.code = a.code;
-      if (a.decision !== undefined) result.decision = a.decision;
+      if (outcome === "queued" && evidence.retryCause !== undefined) {
+        result.queueCause = evidence.retryCause;
+      }
+      if (evidence.status !== undefined) result.status = evidence.status;
+      if (evidence.code !== undefined) result.code = evidence.code;
+      if (evidence.decision !== undefined) result.decision = evidence.decision;
       return result;
     },
 
@@ -245,7 +330,7 @@ export function createSender(config: SenderConfig): Sender {
       // so the backlog is only trimmed (87n). It stays put for the next drain — which is the
       // point of queueing on an unavailable store rather than dropping (gcgp.23).
       if (lookup.state !== "present") return queue.prune();
-      return drainQueue(lookup.token, clock() + totalBudgetMs);
+      return (await drainQueue(lookup.token, clock() + totalBudgetMs)).drained;
     },
   };
 }

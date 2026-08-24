@@ -461,7 +461,8 @@ birdybeep test
 ```
 
 `test` sends a real test event through the actual sender path and reports whether it was **delivered** or
-**queued**.
+**queued** — and, when queued, whether that was this machine being offline, the backend asking for a retry
+(throttled or erroring), or an unreadable token store.
 
 ---
 
