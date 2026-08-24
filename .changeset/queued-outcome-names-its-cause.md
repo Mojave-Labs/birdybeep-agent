@@ -16,7 +16,10 @@ Two separate reasons the command named the wrong cause, both seen on a machine t
   every queued outcome printed the offline copy. A queued result now carries its cause
   (`transport`, `backend` or `token_store`, mirrored in `--json` as `queueCause`), and `test`
   prints a different line for each: "Offline" only when the request never reached the backend,
-  and otherwise which backend answer parked it.
+  and otherwise which backend answer parked it. The cause is read off the newest attempt in the
+  call that actually reached the backend, so a 429 or a 500 is not relabelled "offline" when the
+  drain's re-attempt of the same event fails to reach it moments later — which is common, because
+  that re-attempt gets only whatever is left of the send budget.
 
 A 429 carrying a `quota_exceeded` envelope is still a terminal reject and still reports as
 rejected by the backend.

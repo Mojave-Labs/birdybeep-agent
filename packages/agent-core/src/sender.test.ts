@@ -527,3 +527,108 @@ describe("a queued result says WHY it was queued (0yk)", () => {
     expect(r.status).toBe(503);
   });
 });
+
+/**
+ * birdybeep-agent-0yk (review follow-up). The OUTCOME of a send is the drain's verdict on the
+ * watched entry — but the CAUSE is not, and taking both from the same attempt re-created the bug
+ * one layer down. The drain re-attempts the event this call just enqueued with a timeout clamped
+ * to whatever is left of the total budget (as little as ~250ms), so a definitive backend answer
+ * followed by a transport failure milliseconds later is the ORDINARY shape of a 500ing backend —
+ * and it was reported as "Offline" for a backend that had answered inside this very call.
+ */
+describe("a definitive backend answer outlives a transport failure on the drain (0yk)", () => {
+  it("keeps `backend` + the 500 when the drain's re-attempt never reaches the backend", async () => {
+    let calls = 0;
+    const { sender, queue } = setup(() => {
+      calls += 1;
+      return calls === 1
+        ? Promise.resolve(jsonResponse(500, errorBody("internal_error")))
+        : Promise.reject(new TypeError("fetch failed"));
+    });
+
+    const r = await sender.send(event());
+
+    expect(calls).toBe(2); // the first POST, then the drain re-attempting that same event
+    expect(r.outcome).toBe("queued"); // the drain could not clear it either — it is still parked
+    expect(r.queueCause).toBe("backend"); // NOT "transport": the backend answered, moments ago
+    expect(r.status).toBe(500); // the evidence is kept, not erased by the answerless re-attempt
+    expect(r.code).toBe("internal_error");
+    expect(queue.size()).toBe(1);
+  });
+
+  it("keeps `backend` + the 429 when the drain's re-attempt times out", async () => {
+    let calls = 0;
+    const { sender } = setup(((_url: string, init: RequestInit) => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(jsonResponse(429, errorBody("rate_limited")));
+      return new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () =>
+          reject(new DOMException("aborted", "AbortError")),
+        );
+      });
+    }) as unknown as typeof fetch);
+
+    const r = await sender.send(event());
+
+    expect(r.outcome).toBe("queued");
+    expect(r.queueCause).toBe("backend"); // throttled, not offline — the retry is automatic
+    expect(r.code).toBe("rate_limited");
+    expect(r.status).toBe(429);
+  });
+
+  it("is still `transport`, with no status to show, when NEITHER attempt reached the backend", async () => {
+    let calls = 0;
+    const { sender, queue } = setup(() => {
+      calls += 1;
+      return Promise.reject(new TypeError("fetch failed"));
+    });
+
+    const r = await sender.send(event());
+
+    expect(calls).toBe(2); // same two attempts — only the answers differ
+    expect(r.outcome).toBe("queued");
+    expect(r.queueCause).toBe("transport"); // nothing in this call ever got an answer
+    expect(r.status).toBeUndefined();
+    expect(r.code).toBeUndefined();
+    expect(queue.size()).toBe(1);
+  });
+
+  it("prefers the NEWEST backend answer when the drain reaches the backend too", async () => {
+    let calls = 0;
+    const { sender } = setup(() => {
+      calls += 1;
+      return Promise.resolve(
+        calls === 1
+          ? jsonResponse(500, errorBody("internal_error"))
+          : jsonResponse(429, errorBody("rate_limited")),
+      );
+    });
+
+    const r = await sender.send(event());
+
+    expect(r.queueCause).toBe("backend");
+    expect(r.status).toBe(429); // the older 500 is stale the moment a newer answer arrives
+    expect(r.code).toBe("rate_limited");
+  });
+
+  it("does not drag an earlier 500 onto an event the drain then DELIVERED", async () => {
+    let calls = 0;
+    const { sender, queue } = setup(() => {
+      calls += 1;
+      return Promise.resolve(
+        calls === 1
+          ? jsonResponse(500, errorBody("internal_error"))
+          : jsonResponse(202, { accepted: true, decision: "notified" }),
+      );
+    });
+
+    const r = await sender.send(event());
+
+    expect(r.outcome).toBe("delivered");
+    expect(r.status).toBe(202);
+    expect(r.code).toBeUndefined(); // the 500 is history: this event is gone, successfully
+    expect(r.queueCause).toBeUndefined();
+    expect(r.decision).toBe("notified");
+    expect(queue.size()).toBe(0);
+  });
+});

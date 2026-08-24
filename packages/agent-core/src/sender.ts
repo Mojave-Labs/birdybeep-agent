@@ -80,7 +80,9 @@ export interface SendResult {
   tokenStoreUnavailable?: { reason: string };
   /**
    * Set on every `queued` send: which of the three things above parked the event (0yk). Callers
-   * that print copy MUST branch on it — "Offline" is only true for `transport`.
+   * that print copy MUST branch on it — "Offline" is only true for `transport`. It names the
+   * NEWEST attempt in the call that reached the backend, so a definitive 429/5xx is not erased by
+   * a transport failure on the drain's re-attempt of the same event moments later.
    */
   queueCause?: QueueCause;
 }
@@ -287,9 +289,9 @@ export function createSender(config: SenderConfig): Sender {
         deadline,
         parked ? event.event_id : undefined,
       );
-      // `watched` is the LAST word on this event: the drain re-sent it, so its verdict is newer
-      // than the first attempt's. A drop during the drain is reported as a drop — a terminal
-      // rejection must never be dressed up as a delivery.
+      // `watched` is the LAST word on the OUTCOME of this event: the drain re-sent it, so its
+      // verdict is newer than the first attempt's. A drop during the drain is reported as a drop —
+      // a terminal rejection must never be dressed up as a delivery.
       const final = watched ?? first;
       if (watched !== undefined) {
         outcome =
@@ -300,13 +302,25 @@ export function createSender(config: SenderConfig): Sender {
               : "queued";
       }
 
+      // The CAUSE — and the status/code that evidence it — is chosen SEPARATELY from the outcome,
+      // because a transport failure carries no answer at all and the drain makes one likely: its
+      // per-attempt timeout is clamped to whatever is left of the total budget, which can be as
+      // little as MIN_DRAIN_ATTEMPT_MS. Letting a re-attempt that never left the machine erase the
+      // 500 (or the 429) the backend gave us 300ms earlier is the original bug one layer down: the
+      // event really is still queued, but the network is not why, and `test` would print "Offline"
+      // for a backend that answered inside this very call (0yk). So report the NEWEST attempt that
+      // actually REACHED the backend, and fall back to the last attempt only when nothing in this
+      // call ever got an answer — which is exactly when `transport` is the truth. An attempt that
+      // reached the backend always carries its HTTP status; one that did not never does.
+      const evidence = final.status === undefined && first.status !== undefined ? first : final;
+
       const result: SendResult = { outcome, drained };
-      if (outcome === "queued" && final.retryCause !== undefined) {
-        result.queueCause = final.retryCause;
+      if (outcome === "queued" && evidence.retryCause !== undefined) {
+        result.queueCause = evidence.retryCause;
       }
-      if (final.status !== undefined) result.status = final.status;
-      if (final.code !== undefined) result.code = final.code;
-      if (final.decision !== undefined) result.decision = final.decision;
+      if (evidence.status !== undefined) result.status = evidence.status;
+      if (evidence.code !== undefined) result.code = evidence.code;
+      if (evidence.decision !== undefined) result.decision = evidence.decision;
       return result;
     },
 
