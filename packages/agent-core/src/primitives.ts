@@ -27,7 +27,9 @@ export const BIRDYBEEP_EVENT_TYPES = [
   "custom",
   // "test" (9fh): the `birdybeep test` diagnostic. Notifies by default server-side
   // (unlike "custom", which the §10.5 matrix suppresses unconditionally) and is
-  // quota-exempt — the product's DEFAULT_NOTIFY/gauntlet carry the other half.
+  // METERED against the monthly beep quota like every other event on /v1/agent-events
+  // — the exemption was removed backend-side (cjrj) because event_type is
+  // client-controlled. The product's DEFAULT_NOTIFY/gauntlet carry the other half.
   "test",
   // "session_ended": a harness signalled a session truly ended (e.g. Claude Code's
   // SessionEnd hook). Non-notifying server-side; carries a terminal status. Appended

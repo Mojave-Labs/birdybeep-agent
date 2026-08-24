@@ -421,3 +421,89 @@ describe("doctor: push reachability", () => {
     expect(out.text()).toContain("Could not check whether this account can receive a beep");
   });
 });
+
+/**
+ * The beep-quota row (birdybeep-agent-58l) — the other invisible leg.
+ *
+ * A quota-blocked account and a healthy one produced identical doctor output: the backend
+ * accepts an event with 202 and rejects it afterwards at the quota gate. For a month every
+ * notifiable event on the owner's account was rejected while this command printed green.
+ */
+describe("doctor: beep quota", () => {
+  const reachable = {
+    active_device_count: 1,
+    stale_device_count: 0,
+    most_recent_registration_at: new Date().toISOString(),
+    last_delivery: { status: "ok", at: new Date().toISOString() },
+  };
+  const withQuota = (over: Record<string, unknown>) => ({
+    ...reachable,
+    quota: {
+      plan: "free",
+      period_start: "2026-08-01T00:00:00.000Z",
+      period_end: "2026-09-01T00:00:00.000Z",
+      beeps_accepted: 3,
+      beeps_limit: 100,
+      exhausted: false,
+      ...over,
+    },
+  });
+
+  async function run(payload: unknown): Promise<{ code: number; text: string }> {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const out = capture();
+    const code = await runCli(["doctor"], {
+      commands: [bridgeDoctor({ fetchImpl: reachabilityFetch(payload) })],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    return { code, text: out.text() };
+  }
+
+  it("FAILS on an exhausted quota and names the reset date — exit non-zero", async () => {
+    const { code, text } = await run(withQuota({ beeps_accepted: 100, exhausted: true }));
+    expect(code).toBe(EXIT.ERROR);
+    expect(text).toContain("Beep quota");
+    expect(text).toContain("100/100 beeps");
+    expect(text).toContain("2026-09-01");
+  });
+
+  it("prints BOTH window bounds on a healthy account, so a stuck window shows up", async () => {
+    const { code, text } = await run(withQuota({}));
+    expect(code).toBe(EXIT.OK);
+    expect(text).toContain("3/100 beeps used (free plan, period 2026-08-01 → 2026-09-01)");
+  });
+
+  it("an older server that omits quota is informational — never a false FAIL", async () => {
+    const { code, text } = await run(reachable);
+    expect(code).toBe(EXIT.OK);
+    expect(text).toContain("does not report beep quota yet");
+  });
+
+  it("--json carries the backend's raw quota block", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const out = capture();
+    await runCli(["doctor", "--json"], {
+      commands: [
+        bridgeDoctor({
+          fetchImpl: reachabilityFetch(withQuota({ beeps_accepted: 100, exhausted: true })),
+        }),
+      ],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    const parsed = JSON.parse(out.text()) as {
+      quota?: { exhausted?: boolean; period_end?: string };
+      checks: { name: string; ok: boolean }[];
+    };
+    expect(parsed.quota).toMatchObject({
+      exhausted: true,
+      period_end: "2026-09-01T00:00:00.000Z",
+    });
+    expect(parsed.checks.find((c) => c.name === "Beep quota")?.ok).toBe(false);
+  });
+});

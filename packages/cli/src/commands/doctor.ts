@@ -10,6 +10,7 @@ import {
   type AgentAdapter,
   createSender as defaultCreateSender,
   DEFAULT_QUEUE_MAX_ENTRIES as QUEUE_CAP,
+  describeQuota,
   describeReachability,
   type DetectionResult,
   fetchPushReachability,
@@ -138,19 +139,34 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
       // had been stale five weeks and every push went to a dead registration. It sits directly
       // under the token row because it answers the same question the user actually has — "why am
       // I getting no beeps?" — and because a machine-side failure above makes it moot.
-      const reach = describeReachability(
-        await fetchPushReachability({
-          baseUrl: apiUrl,
-          ...(deps.tokenOptions ? { tokenOptions: deps.tokenOptions } : {}),
-          ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
-        }),
-      );
+      const reachability = await fetchPushReachability({
+        baseUrl: apiUrl,
+        ...(deps.tokenOptions ? { tokenOptions: deps.tokenOptions } : {}),
+        ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+      });
+      const reach = describeReachability(reachability);
       if (reach !== null) {
         checks.push({
           name: "Push reachability",
           ok: reach.ok,
           detail: reach.detail,
           ...(reach.remedy !== undefined ? { remedy: reach.remedy } : {}),
+        });
+      }
+
+      // 1a-ii. And can it still SPEND a beep? (birdybeep-agent-58l.) The row above answers
+      // "is there a phone at the other end"; this one answers "is the backend still willing to
+      // send". They are separate failures and only one of them was ever visible: /v1/agent-events
+      // answers 202 and the quota gate rejects afterwards, so for a MONTH every notifiable event
+      // on the owner's account was rejected while this command printed green and the CLI reported
+      // each event delivered. Same response, same round trip — no second request.
+      const quota = describeQuota(reachability);
+      if (quota !== null) {
+        checks.push({
+          name: "Beep quota",
+          ok: quota.ok,
+          detail: quota.detail,
+          ...(quota.remedy !== undefined ? { remedy: quota.remedy } : {}),
         });
       }
 
@@ -265,6 +281,11 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
           ok,
           checks,
           pairing, // gcgp.23: paired | unpaired | unknown — never a bare boolean
+          // The backend's own quota numbers, unrendered (58l) — a script (or a bug report) gets
+          // the window and the counts, not just the sentence built from them.
+          ...(reachability.state === "ok" && reachability.data.quota !== undefined
+            ? { quota: reachability.data.quota }
+            : {}),
           surfaces: surfaceGroups,
           queue: { depthBefore, delivered: drain.delivered, depthAfter, overflowDropped },
           ...(unpaired !== null ? { unpairedActivity: unpaired } : {}),
