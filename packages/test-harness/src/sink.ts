@@ -77,6 +77,10 @@ export class StubEventSink implements EventSink {
       active_device_count: 1,
       stale_device_count: 0,
       most_recent_registration_at: new Date().toISOString(),
+      // A CURRENT backend reports the check-in too (birdybeep-agent-2x9s), so the default answer
+      // here is a live account with a fresh one. The older-backend shape (field absent) and the
+      // never-checked-in shape (field null) are driven explicitly where they are under test.
+      most_recent_check_in_at: new Date().toISOString(),
       last_delivery: null,
     };
     const server = createServer((req, res) => {

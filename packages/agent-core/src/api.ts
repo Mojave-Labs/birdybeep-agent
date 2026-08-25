@@ -93,6 +93,22 @@ export const pushReachabilityResponseSchema = z.object({
   active_device_count: z.number().int(),
   stale_device_count: z.number().int(),
   most_recent_registration_at: z.string().nullable(),
+  /**
+   * When an ACTIVE device last CHECKED IN — the real heartbeat (birdybeep-2x9s), stamped by the
+   * app from the foreground. The field above it is a REGISTRATION time that never moves, which is
+   * why `doctor` had no staleness check at all until this existed: a rule keyed on a frozen value
+   * calls an actively-used account broken.
+   *
+   * Three answers, and keeping them apart is the whole reason this row can be trusted:
+   *   • a timestamp — some active device on the account ran the app then;
+   *   • `null`      — devices exist but NONE has ever checked in. Almost always an app build older
+   *                   than the heartbeat (the backend deploys weeks before an App Store build
+   *                   lands) — an absence of evidence, never staleness;
+   *   • absent      — a backend deployed before 2x9s: a different absence again.
+   *
+   * OPTIONAL for the same reason as `quota`, and it must stay optional (2x9s). See below.
+   */
+  most_recent_check_in_at: z.string().nullable().optional(),
   last_delivery: z.object({ status: z.string(), at: z.string() }).nullable(),
   /**
    * OPTIONAL, and it must stay optional (58l). The current worker always sends it, but a CLI is

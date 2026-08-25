@@ -23,13 +23,15 @@ const PATH = "/v1/machine/push-reachability";
 const DEFAULT_TIMEOUT_MS = 4000;
 
 /**
- * There is deliberately NO staleness check here (birdybeep-2x9s). The first draft failed an
- * account whose devices had not "checked in" for over a week — but devices.last_seen_at is only
- * ever written by register(); the touch() heartbeat has no production caller, so the value never
- * moves and an actively used account would have been reported as broken. Producing a confident
- * wrong answer is the exact failure this check exists to end, so it keys only on facts about
- * deliverability: no active device, or a token Expo has confirmed dead. Restore a staleness
- * check when a real heartbeat exists.
+ * `describeReachability` still keys ONLY on facts about deliverability — no active device, or a
+ * token Expo has confirmed dead. Its first draft failed an account whose devices had not "checked
+ * in" for a week, reading `most_recent_registration_at`, which never moves; an actively used
+ * account would have been reported as broken.
+ *
+ * The heartbeat that makes staleness answerable now exists (birdybeep-2x9s), and it is reported
+ * SEPARATELY by {@link describeCheckIn} — on the new field only, and as a warning rather than a
+ * failure. Keeping the two apart is deliberate: this function's answers are about whether a beep
+ * CAN arrive, and a check-in is not one of those.
  */
 
 export type ReachabilityResult =
@@ -122,6 +124,127 @@ export function describeReachability(
   return {
     ok: true,
     detail: `${String(active)} active device(s), registered ${String(registeredAt ?? "unknown")}${lastText}.`,
+  };
+}
+
+// ── Device check-in (birdybeep-2x9s) ─────────────────────────────────────────────────────────
+//
+// The question `doctor` had to stop asking. The incident that started it: a push APNs accepted,
+// for a registration whose app had long since been deleted — every check green, no beep anywhere.
+// The obvious diagnostic ("when did a device last check in?") was unavailable, because
+// `devices.last_seen_at` is written once at registration and never again, so the first attempt at
+// this row would have called a phone in daily use stale. The check was dropped rather than shipped
+// wrong (oi3).
+//
+// A real heartbeat exists now — the app stamps it on every foreground — so the row is back,
+// keyed on that field and NOTHING else, with two rules that keep it honest:
+//
+//  1. It NEVER fails. A phone in a drawer for a month is not a broken account, and `doctor`'s ✗
+//     is reserved for the states that mean no beep can arrive: no active device, a token Expo
+//     confirmed dead, an exhausted quota. Making this the fourth would teach people to ignore the
+//     other three. It warns, in the detail, which is where an `ok` row's guidance has to live
+//     (the renderer prints a remedy only for failures — same as the near-limit quota row).
+//  2. It never turns an ABSENCE into a claim. No check-in reported and no check-in recorded are
+//     different facts, and both are different from "checked in long ago" — so each gets its own
+//     sentence saying exactly which one it is.
+
+/** Past this, a check-in is old enough to mention. Two weeks clears a holiday; a month is a phone
+ *  nobody has opened. Deliberately generous: a false "abandoned" is worse than a late one. */
+const STALE_CHECK_IN_DAYS = 14;
+const DAY_MS = 86_400_000;
+
+/** `2026-07-14T…` → `42 days` / `1 day`. Plain and copy-pasteable; no fuzzy "about a month". */
+function daysAgoText(days: number): string {
+  return `${String(days)} day${days === 1 ? "" : "s"}`;
+}
+
+/**
+ * How `doctor` should render the device check-in row, or null when there is nothing honest to
+ * say. `now` is injectable for deterministic tests.
+ *
+ * Null (no row at all) when: the backend could not be asked (the reachability row above already
+ * reports that, with the reason — a second copy is noise), or the account has no active device
+ * (that row already FAILED, and "nothing checked in" adds nothing to "there is nothing").
+ */
+export function describeCheckIn(
+  result: ReachabilityResult,
+  now: Date = new Date(),
+): { ok: boolean; detail: string } | null {
+  if (result.state !== "ok") return null;
+  if (result.data.active_device_count === 0) return null;
+
+  const checkedInAt = result.data.most_recent_check_in_at;
+
+  if (checkedInAt === undefined) {
+    // A backend deployed before 2x9s. Not a failure — an absence, named as one, so nobody reads
+    // a silent row as "checked in fine".
+    return {
+      ok: true,
+      detail:
+        "This BirdyBeep server does not report device check-ins yet, so an abandoned " +
+        "registration would not show up here.",
+    };
+  }
+
+  if (checkedInAt === null) {
+    // Devices exist and none has ever checked in. Overwhelmingly this is an app older than the
+    // heartbeat, since the backend ships weeks ahead of the App Store — so it is reported as an
+    // unknown, explicitly NOT as staleness. Guessing here is the exact mistake oi3 avoided.
+    return {
+      ok: true,
+      detail:
+        "No device on this account has checked in yet, so how recently your phone was used is " +
+        "unknown — check-ins arrive with a newer version of the BirdyBeep app. This is not a " +
+        "sign that anything is wrong.",
+    };
+  }
+
+  const at = Date.parse(checkedInAt);
+  if (!Number.isFinite(at)) {
+    // An unreadable timestamp is a backend oddity, not an old phone. Say which — and echo the
+    // value BOUNDED, because it is server-supplied text on its way to a terminal.
+    const shown = checkedInAt.length > 40 ? `${checkedInAt.slice(0, 40)}…` : checkedInAt;
+    return {
+      ok: true,
+      detail: `This server reported an unreadable check-in time (${shown}), so device activity could not be checked.`,
+    };
+  }
+
+  // Derived from the PARSED instant, not sliced off the raw string: the schema guarantees a
+  // string, not an ISO one, so slicing a `Aug 20 2026`-shaped value would print nonsense.
+  const day = new Date(at).toISOString().slice(0, 10);
+
+  // A check-in the SERVER stamped can only sit ahead of this machine's clock if the two disagree,
+  // so the row says that. It used to clamp the age to zero, which printed "0 days ago" beside a
+  // date that has not happened yet — a smoothed-over disagreement reads as a measurement, and this
+  // row's whole job is to stop looking like it measured something it did not. Not a failure and
+  // not staleness: nothing about device activity is measurable from here until the clocks agree.
+  if (at > now.getTime()) {
+    return {
+      ok: true,
+      detail:
+        `The most recent check-in (${new Date(at).toISOString()}) is in the future — most likely ` +
+        "clock skew between this machine and the server, not anything wrong with your phone. How " +
+        "long ago a device was last used cannot be measured from here until the clocks agree.",
+    };
+  }
+
+  const days = Math.floor((now.getTime() - at) / DAY_MS);
+  if (days < STALE_CHECK_IN_DAYS) {
+    return { ok: true, detail: `A device last checked in ${daysAgoText(days)} ago (${day}).` };
+  }
+
+  // Says what a check-in IS evidence of — that nobody has opened the app — and nothing else. It
+  // used to add "beeps are still being sent", which this row has read nothing to support: the
+  // quota may be exhausted or the token dead, and those are exactly what the rows ABOVE judge.
+  return {
+    ok: true,
+    detail:
+      `No device on this account has checked in for ${daysAgoText(days)} (last: ${day}). That ` +
+      "means nobody has opened the app in that time — an uninstalled or long-unopened app still " +
+      "takes pushes without showing them. It does not say a beep cannot arrive; whether beeps " +
+      "can still arrive is what the rows above measure. Open BirdyBeep on your phone to clear " +
+      "this.",
   };
 }
 
