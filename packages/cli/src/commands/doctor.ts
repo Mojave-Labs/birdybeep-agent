@@ -10,6 +10,7 @@ import {
   type AgentAdapter,
   createSender as defaultCreateSender,
   DEFAULT_QUEUE_MAX_ENTRIES as QUEUE_CAP,
+  describeCheckIn,
   describeQuota,
   describeReachability,
   type DetectionResult,
@@ -154,6 +155,20 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
         });
       }
 
+      // 1a-i. And is anyone actually THERE? (birdybeep-agent-2x9s.) The row above answers "is a
+      // device registered and is its token alive"; a registration outlives the app that made it,
+      // and APNs accepts a push for one long after the app was deleted — which is the incident
+      // that started this. The question could not be asked before, because the only timestamp on
+      // a device was written at registration and never moved (that is why oi3 shipped WITHOUT a
+      // staleness check rather than shipping one that called a phone in daily use stale). The app
+      // now checks in on every foreground, so the row is back — on the new field only, and as a
+      // warning, never a ✗: a phone in a drawer is not a broken account, and this command's
+      // failures have to keep meaning "no beep can arrive".
+      const checkIn = describeCheckIn(reachability);
+      if (checkIn !== null) {
+        checks.push({ name: "Device check-in", ok: checkIn.ok, detail: checkIn.detail });
+      }
+
       // 1a-ii. And can it still SPEND a beep? (birdybeep-agent-58l.) The row above answers
       // "is there a phone at the other end"; this one answers "is the backend still willing to
       // send". They are separate failures and only one of them was ever visible: /v1/agent-events
@@ -285,6 +300,13 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
           // the window and the counts, not just the sentence built from them.
           ...(reachability.state === "ok" && reachability.data.quota !== undefined
             ? { quota: reachability.data.quota }
+            : {}),
+          // The raw check-in (2x9s), unrendered. Present ONLY when the server reported the field
+          // at all, so a script can still tell "this backend predates check-ins" (key absent)
+          // from "no device has ever checked in" (key present, null) — the same distinction the
+          // rendered row is careful about.
+          ...(reachability.state === "ok" && reachability.data.most_recent_check_in_at !== undefined
+            ? { mostRecentCheckInAt: reachability.data.most_recent_check_in_at }
             : {}),
           surfaces: surfaceGroups,
           queue: { depthBefore, delivered: drain.delivered, depthAfter, overflowDropped },

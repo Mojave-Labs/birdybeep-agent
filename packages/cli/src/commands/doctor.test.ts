@@ -507,3 +507,115 @@ describe("doctor: beep quota", () => {
     expect(parsed.checks.find((c) => c.name === "Beep quota")?.ok).toBe(false);
   });
 });
+
+/**
+ * The device check-in row (birdybeep-agent-2x9s) — the check oi3 deliberately did NOT ship.
+ *
+ * A push APNs accepted, for a registration whose app had been deleted, with every check green.
+ * The obvious diagnostic was unavailable: the only timestamp a device carried was written at
+ * registration and never moved, so a rule keyed on it would have called a phone in daily use
+ * abandoned. The app now checks in on every foreground, so the row is back — and these pin that
+ * it stays a WARNING (doctor's ✗ still means "no beep can arrive") and that it never turns an
+ * absence into a claim.
+ */
+describe("doctor: device check-in", () => {
+  const reachable = {
+    active_device_count: 1,
+    stale_device_count: 0,
+    most_recent_registration_at: "2026-05-01T09:00:00.000Z",
+    last_delivery: { status: "ok", at: new Date().toISOString() },
+  };
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+
+  async function doctorWith(payload: unknown, args: string[] = ["doctor"]) {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const out = capture();
+    const code = await runCli(args, {
+      commands: [bridgeDoctor({ fetchImpl: reachabilityFetch(payload) })],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+    return { code, text: out.text() };
+  }
+
+  it("reports a recent check-in as healthy", async () => {
+    const { code, text } = await doctorWith({
+      ...reachable,
+      most_recent_check_in_at: daysAgo(1),
+    });
+    expect(code).toBe(EXIT.OK);
+    expect(text).toContain("Device check-in");
+    expect(text).toContain("A device last checked in 1 day ago");
+    expect(text).toContain("All checks passed.");
+  });
+
+  it("WARNS about a long-abandoned check-in WITHOUT failing the run", async () => {
+    // The whole design of the row. It has to be visible — this is the state that produced a push
+    // to nobody — and it must not exit non-zero, or a phone left in a drawer over a holiday would
+    // fail CI and teach people that a ✗ from this command means nothing.
+    const { code, text } = await doctorWith({
+      ...reachable,
+      most_recent_check_in_at: daysAgo(45),
+    });
+    expect(code).toBe(EXIT.OK);
+    expect(text).toContain("has checked in for 45 days");
+    expect(text).toContain("Open BirdyBeep on your phone");
+    expect(text).toContain("All checks passed.");
+    // Explicitly a ✓ row, not a ✗ one.
+    expect(text).toMatch(/✓ {2}Device check-in/);
+  });
+
+  it("says a check-in was never recorded, and does NOT call that staleness", async () => {
+    // Every account is in this state the day the backend ships the heartbeat, because the app
+    // reaches phones weeks later. Reporting it as an abandoned device is exactly the confident
+    // wrong answer this row exists to avoid.
+    const { code, text } = await doctorWith({ ...reachable, most_recent_check_in_at: null });
+    expect(code).toBe(EXIT.OK);
+    expect(text).toContain("No device on this account has checked in yet");
+    expect(text).toContain("newer version of the BirdyBeep app");
+    expect(text).not.toContain("Open BirdyBeep on your phone");
+  });
+
+  it("names a server that does not report check-ins at all", async () => {
+    // Absent ≠ null: a silent row would read as "checked in fine" to anyone scanning the board.
+    const { code, text } = await doctorWith(reachable);
+    expect(code).toBe(EXIT.OK);
+    expect(text).toContain("does not report device check-ins yet");
+  });
+
+  it("adds no row when the account has no active device — that row already failed", async () => {
+    const { code, text } = await doctorWith({
+      ...reachable,
+      active_device_count: 0,
+      most_recent_check_in_at: null,
+    });
+    expect(code).toBe(EXIT.ERROR); // the reachability row, not this one
+    expect(text).not.toContain("Device check-in");
+  });
+
+  it("--json keeps 'absent' and 'never checked in' distinguishable", async () => {
+    const seen = await doctorWith(
+      { ...reachable, most_recent_check_in_at: "2026-08-20T10:00:00.000Z" },
+      ["doctor", "--json"],
+    );
+    const withField = JSON.parse(seen.text) as {
+      mostRecentCheckInAt?: string | null;
+      checks: { name: string; ok: boolean }[];
+    };
+    expect(withField.mostRecentCheckInAt).toBe("2026-08-20T10:00:00.000Z");
+    expect(withField.checks.find((c) => c.name === "Device check-in")?.ok).toBe(true);
+
+    const never = await doctorWith({ ...reachable, most_recent_check_in_at: null }, [
+      "doctor",
+      "--json",
+    ]);
+    const nullField = JSON.parse(never.text) as { mostRecentCheckInAt?: string | null };
+    expect(nullField).toHaveProperty("mostRecentCheckInAt", null);
+
+    const older = await doctorWith(reachable, ["doctor", "--json"]);
+    const absentField = JSON.parse(older.text) as Record<string, unknown>;
+    expect(absentField).not.toHaveProperty("mostRecentCheckInAt");
+  });
+});
