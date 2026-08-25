@@ -565,6 +565,24 @@ describe("doctor: device check-in", () => {
     expect(text).toContain("All checks passed.");
     // Explicitly a ✓ row, not a ✗ one.
     expect(text).toMatch(/✓ {2}Device check-in/);
+    // …and it does not tell the reader beeps are still arriving. This row read one timestamp; the
+    // rows above it are the ones that know whether a beep can be delivered at all.
+    expect(text).not.toMatch(/beeps are still/i);
+    expect(text).toContain("the rows above measure");
+  });
+
+  it("calls a future check-in clock skew, not a check-in '0 days ago'", async () => {
+    // A server-stamped time ahead of this machine's clock means the clocks disagree — printing
+    // "0 days ago" next to a date that has not happened yet is a measurement the row cannot make.
+    const { code, text } = await doctorWith({
+      ...reachable,
+      most_recent_check_in_at: daysAgo(-3),
+    });
+    expect(code).toBe(EXIT.OK);
+    expect(text).toMatch(/✓ {2}Device check-in/);
+    expect(text).toContain("is in the future");
+    expect(text).toContain("clock skew between this machine and the server");
+    expect(text).not.toContain("days ago");
   });
 
   it("says a check-in was never recorded, and does NOT call that staleness", async () => {

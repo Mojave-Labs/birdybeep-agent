@@ -213,19 +213,38 @@ export function describeCheckIn(
   // Derived from the PARSED instant, not sliced off the raw string: the schema guarantees a
   // string, not an ISO one, so slicing a `Aug 20 2026`-shaped value would print nonsense.
   const day = new Date(at).toISOString().slice(0, 10);
-  // A future timestamp is clock skew between this machine and the backend, never staleness.
-  const days = Math.max(0, Math.floor((now.getTime() - at) / DAY_MS));
+
+  // A check-in the SERVER stamped can only sit ahead of this machine's clock if the two disagree,
+  // so the row says that. It used to clamp the age to zero, which printed "0 days ago" beside a
+  // date that has not happened yet — a smoothed-over disagreement reads as a measurement, and this
+  // row's whole job is to stop looking like it measured something it did not. Not a failure and
+  // not staleness: nothing about device activity is measurable from here until the clocks agree.
+  if (at > now.getTime()) {
+    return {
+      ok: true,
+      detail:
+        `The most recent check-in (${new Date(at).toISOString()}) is in the future — most likely ` +
+        "clock skew between this machine and the server, not anything wrong with your phone. How " +
+        "long ago a device was last used cannot be measured from here until the clocks agree.",
+    };
+  }
+
+  const days = Math.floor((now.getTime() - at) / DAY_MS);
   if (days < STALE_CHECK_IN_DAYS) {
     return { ok: true, detail: `A device last checked in ${daysAgoText(days)} ago (${day}).` };
   }
 
+  // Says what a check-in IS evidence of — that nobody has opened the app — and nothing else. It
+  // used to add "beeps are still being sent", which this row has read nothing to support: the
+  // quota may be exhausted or the token dead, and those are exactly what the rows ABOVE judge.
   return {
     ok: true,
     detail:
-      `No device on this account has checked in for ${daysAgoText(days)} (last: ${day}). Beeps ` +
-      "are still being sent, so this is only worth acting on if you expected to be using the " +
-      "app — an uninstalled or long-unopened app takes pushes without showing them. Open " +
-      "BirdyBeep on your phone to clear this.",
+      `No device on this account has checked in for ${daysAgoText(days)} (last: ${day}). That ` +
+      "means nobody has opened the app in that time — an uninstalled or long-unopened app still " +
+      "takes pushes without showing them. It does not say a beep cannot arrive; whether beeps " +
+      "can still arrive is what the rows above measure. Open BirdyBeep on your phone to clear " +
+      "this.",
   };
 }
 

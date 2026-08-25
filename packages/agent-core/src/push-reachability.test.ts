@@ -194,6 +194,24 @@ describe("describeCheckIn (2x9s)", () => {
     expect(out?.detail).toContain("Open BirdyBeep on your phone");
   });
 
+  it("does NOT claim beeps are still being delivered — it has read nothing that says so", () => {
+    // The warning used to end "Beeps are still being sent". This row reads ONE field: a check-in
+    // timestamp. The quota may be exhausted and the token may be dead — the two rows ABOVE it are
+    // the ones that judge that — so asserting delivery here is the same class of confident wrong
+    // answer the whole check was built to avoid, just pointed the reassuring way.
+    const out = describeCheckIn(
+      { state: "ok", data: body({ most_recent_check_in_at: "2026-07-05T10:00:00.000Z" }) },
+      CHECK_IN_NOW,
+    );
+    expect(out?.detail).not.toContain("still being sent");
+    expect(out?.detail).not.toMatch(/beeps are still/i);
+    // It says what it does know (nobody opened the app), what that does not mean, and who does
+    // answer the delivery question.
+    expect(out?.detail).toContain("nobody has opened the app");
+    expect(out?.detail).toContain("does not say a beep cannot arrive");
+    expect(out?.detail).toContain("the rows above measure");
+  });
+
   it("draws the warning line at 14 days and not a day earlier", () => {
     const at = (days: number) =>
       describeCheckIn(
@@ -233,13 +251,50 @@ describe("describeCheckIn (2x9s)", () => {
     expect(out?.detail).toContain("does not report device check-ins yet");
   });
 
-  it("treats a FUTURE timestamp as clock skew, never as staleness", () => {
+  it("NAMES a future timestamp as clock skew, instead of clamping it to '0 days ago'", () => {
+    // Intentional behaviour change (Codex review of PR #79): this used to assert the clamp, which
+    // printed "0 days ago" beside a date that has not happened yet — a disagreement between two
+    // clocks, rendered as a measurement. The row now says which it is and measures nothing.
     const out = describeCheckIn(
       { state: "ok", data: body({ most_recent_check_in_at: "2026-09-01T00:00:00.000Z" }) },
       CHECK_IN_NOW,
     );
     expect(out?.ok).toBe(true);
+    expect(out?.detail).toContain("is in the future");
+    expect(out?.detail).toContain("clock skew between this machine and the server");
+    expect(out?.detail).toContain("2026-09-01T00:00:00.000Z");
+    expect(out?.detail).not.toContain("days ago");
+    // …and it is not smuggled in as staleness either: no warning, no remedy-in-detail.
+    expect(out?.detail).not.toContain("Open BirdyBeep on your phone");
+  });
+
+  it("names skew for a timestamp only seconds ahead, rather than rounding it to today", () => {
+    // The boundary that matters is `> now`, not "a day ahead": a one-second-future stamp is still
+    // two clocks disagreeing, and clamping it is how the old wording produced its wrong answer.
+    const out = describeCheckIn(
+      {
+        state: "ok",
+        data: body({
+          most_recent_check_in_at: new Date(CHECK_IN_NOW.getTime() + 1_000).toISOString(),
+        }),
+      },
+      CHECK_IN_NOW,
+    );
+    expect(out?.ok).toBe(true);
+    expect(out?.detail).toContain("is in the future");
+    expect(out?.detail).not.toContain("0 days ago");
+  });
+
+  it("still measures a check-in stamped at exactly `now` rather than calling it skew", () => {
+    const out = describeCheckIn(
+      {
+        state: "ok",
+        data: body({ most_recent_check_in_at: CHECK_IN_NOW.toISOString() }),
+      },
+      CHECK_IN_NOW,
+    );
     expect(out?.detail).toContain("0 days ago");
+    expect(out?.detail).not.toContain("in the future");
   });
 
   it("says an unreadable timestamp is unreadable rather than old", () => {
