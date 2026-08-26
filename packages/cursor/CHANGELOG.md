@@ -1,5 +1,14 @@
 # @birdybeep/cursor
 
+## 0.8.0
+
+### Patch Changes
+
+- Updated dependencies [2cc183a]
+- Updated dependencies [dd2bc79]
+- Updated dependencies [e1ef7dd]
+  - @birdybeep/agent-core@0.8.0
+
 ## 0.7.0
 
 ### Patch Changes

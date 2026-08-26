@@ -1,5 +1,73 @@
 # @birdybeep/cli
 
+## 0.8.0
+
+### Minor Changes
+
+- 2cc183a: Show when the backend has stopped sending your beeps
+
+  `birdybeep doctor` has a new "Beep quota" row: your plan, beeps used against the limit, and both
+  dates of the current period. It warns once you are close to the limit and fails when the quota is
+  exhausted, naming the date it resets — and, on the free plan, the upgrade that clears it sooner. A
+  period whose end date has already passed is reported as a backend fault rather than a reset to wait
+  for. A server that does not report quota gets an informational line instead of a failure.
+
+  `birdybeep test` says the same thing when a send is rejected for quota, instead of "rejected by the
+  backend": the counter, the plan, the period, and what clears it.
+
+  `doctor --json` carries the raw quota block.
+
+- dd2bc79: Tell an abandoned phone from a phone you are actually using
+
+  `birdybeep doctor` has a new "Device check-in" row: how long ago a device on your account last
+  opened the BirdyBeep app. A registration outlives the app that made it — APNs will happily accept
+  a push for a phone whose app was deleted months ago — and until now nothing in this CLI could see
+  the difference.
+
+  It warns, and never fails, when no device has checked in for a fortnight: a phone left in a drawer
+  is not a broken account, so a ✗ from this command keeps meaning what it always meant — no beep can
+  arrive. A server that does not report check-ins yet, an account where no device has ever checked
+  in (which is every account until the phone app updates), and a check-in stamped ahead of this
+  machine's clock (clock skew, named as such) each say exactly that instead of being reported as a
+  stale device. The row reports activity and only activity: whether a beep can actually be delivered
+  is what the push-reachability and beep-quota rows above it answer.
+
+  `doctor --json` carries the raw check-in timestamp, and distinguishes "this server does not report
+  it" from "no device has ever checked in".
+
+### Patch Changes
+
+- e1ef7dd: Stop `birdybeep test` reporting "Offline" for an event it just delivered
+
+  Two separate reasons the command named the wrong cause, both seen on a machine that was online:
+
+  - The outcome was decided before the opportunistic queue drain ran. A transient blip on the first
+    POST queued the event, the drain in the same call delivered it, and the command still said the
+    event was queued and offline. The outcome is now reconciled against what the drain did to that
+    event — tracked by event id, not inferred from the drain counts — so it reports delivered when
+    it was delivered, and a terminal rejection during the drain as rejected.
+  - A throttled or erroring backend queues for retry the same way an unreachable network does, and
+    every queued outcome printed the offline copy. A queued result now carries its cause
+    (`transport`, `backend` or `token_store`, mirrored in `--json` as `queueCause`), and `test`
+    prints a different line for each: "Offline" only when the request never reached the backend,
+    and otherwise which backend answer parked it. The cause is read off the newest attempt in the
+    call that actually reached the backend, so a 429 or a 500 is not relabelled "offline" when the
+    drain's re-attempt of the same event fails to reach it moments later — which is common, because
+    that re-attempt gets only whatever is left of the send budget.
+
+  A 429 carrying a `quota_exceeded` envelope is still a terminal reject and still reports as
+  rejected by the backend.
+
+- Updated dependencies [2cc183a]
+- Updated dependencies [dd2bc79]
+- Updated dependencies [e1ef7dd]
+  - @birdybeep/agent-core@0.8.0
+  - @birdybeep/claude-code@0.8.0
+  - @birdybeep/codex@0.8.0
+  - @birdybeep/copilot@0.8.0
+  - @birdybeep/cursor@0.8.0
+  - @birdybeep/opencode@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes
