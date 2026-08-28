@@ -180,16 +180,23 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
           ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
         });
         const quota = reach.state === "ok" ? reach.data.quota : undefined;
-        const exhausted = quota ? describeExhaustedQuota(quota) : undefined;
+        const exhausted =
+          quota !== undefined && quota.beeps_limit !== null
+            ? describeExhaustedQuota({ ...quota, beeps_limit: quota.beeps_limit })
+            : undefined;
         ctx.io.line(
-          quota && exhausted
-            ? `✗ Test event REJECTED — this account's monthly beep quota is used up ` +
+          quota?.beeps_limit === null
+            ? "✗ Test event REJECTED — the backend rejected this event for quota, but this " +
+                "account now reports unlimited beeps on Plus. The plan changed between those " +
+                "requests; run `birdybeep test` again. If it repeats, run `birdybeep doctor`."
+            : quota && exhausted
+              ? `✗ Test event REJECTED — this account's monthly beep quota is used up ` +
                 `(${String(quota.beeps_accepted)}/${String(quota.beeps_limit)} beeps on the ` +
                 `${quota.plan} plan, period ${exhausted.window}). Every notifiable event is ` +
                 `being rejected. ${exhausted.remedy}`
-            : // An older backend reports no quota, so there is no period and no reset date to
-              // give — and `doctor` cannot supply them either, since it reads this same response.
-              "✗ Test event REJECTED — this account's monthly beep quota is used up, so no beep " +
+              : // An older backend reports no quota, so there is no period and no reset date to
+                // give — and `doctor` cannot supply them either, since it reads this same response.
+                "✗ Test event REJECTED — this account's monthly beep quota is used up, so no beep " +
                 "can be sent. This server does not report the period or the reset date; check " +
                 "your usage in the BirdyBeep app.",
         );

@@ -476,6 +476,16 @@ describe("doctor: beep quota", () => {
     expect(text).toContain("3/100 beeps used (free plan, period 2026-08-01 → 2026-09-01)");
   });
 
+  it("prints unlimited for Plus without a reset or numeric meter", async () => {
+    const { code, text } = await run(
+      withQuota({ plan: "plus", beeps_accepted: 2480, beeps_limit: null }),
+    );
+    expect(code).toBe(EXIT.OK);
+    expect(text).toContain("Unlimited beeps (plus plan)");
+    expect(text).not.toContain("2480/null");
+    expect(text).not.toContain("resets");
+  });
+
   it("an older server that omits quota is informational — never a false FAIL", async () => {
     const { code, text } = await run(reachable);
     expect(code).toBe(EXIT.OK);

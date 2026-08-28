@@ -84,7 +84,7 @@ export const machineQuotaSchema = z.object({
   period_start: z.string(),
   period_end: z.string(),
   beeps_accepted: z.number().int(),
-  beeps_limit: z.number().int(),
+  beeps_limit: z.number().int().nullable(),
   exhausted: z.boolean(),
 });
 export type MachineQuota = z.infer<typeof machineQuotaSchema>;
