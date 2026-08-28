@@ -263,6 +263,14 @@ export function describeCheckIn(
 /** Fraction of the limit past which the row starts warning while still passing. */
 const NEAR_LIMIT_FRACTION = 0.9;
 
+/** An exhausted quota is necessarily finite; unlimited Plus has no exhaustion/reset remedy. */
+export type ExhaustedMachineQuota = MachineQuota & { readonly beeps_limit: number };
+
+/** Narrow a wire quota before using finite-meter/reset copy. */
+function hasFiniteBeepLimit(quota: MachineQuota): quota is ExhaustedMachineQuota {
+  return quota.beeps_limit !== null;
+}
+
 /** `2026-08-01T00:00:00.000Z` → `2026-08-01`; anything unparseable is passed through verbatim. */
 function isoDay(value: string): string {
   const ms = Date.parse(value);
@@ -288,7 +296,7 @@ function windowText(quota: MachineQuota): string {
  * `now` is injectable for deterministic tests.
  */
 export function describeExhaustedQuota(
-  quota: MachineQuota,
+  quota: ExhaustedMachineQuota,
   now: Date = new Date(),
 ): { window: string; remedy: string } {
   const resetsAt = Date.parse(quota.period_end);
@@ -339,7 +347,7 @@ export function describeQuota(
     };
   }
 
-  if (quota.beeps_limit === null) {
+  if (!hasFiniteBeepLimit(quota)) {
     return { ok: true, detail: `Unlimited beeps (${quota.plan} plan).` };
   }
 

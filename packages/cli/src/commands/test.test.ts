@@ -458,6 +458,24 @@ describe("birdybeep test: quota rejection copy (58l)", () => {
     expect(text).not.toContain("upgrade to Plus");
   });
 
+  it("handles an upgrade race without printing a null meter or reset advice", async () => {
+    const text = await runTest({
+      ...reachable,
+      quota: {
+        ...QUOTA,
+        plan: "plus",
+        beeps_accepted: 100,
+        beeps_limit: null,
+        exhausted: false,
+      },
+    });
+    expect(text).toContain("now reports unlimited beeps on Plus");
+    expect(text).toContain("plan changed between those requests");
+    expect(text).toContain("run `birdybeep test` again");
+    expect(text).not.toContain("100/null");
+    expect(text).not.toContain("resets on");
+  });
+
   it("a period that ALREADY ENDED is named as a backend fault, not a reset to wait for", async () => {
     // The n9mn signature, and the reason this ticket exists: the meter cannot roll over, so both
     // "wait until it resets" and "upgrade" are advice that can never work. `doctor` already said
