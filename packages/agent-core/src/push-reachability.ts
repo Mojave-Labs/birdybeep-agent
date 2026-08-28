@@ -339,6 +339,10 @@ export function describeQuota(
     };
   }
 
+  if (quota.beeps_limit === null) {
+    return { ok: true, detail: `Unlimited beeps (${quota.plan} plan).` };
+  }
+
   const used = `${String(quota.beeps_accepted)}/${String(quota.beeps_limit)} beeps`;
   const where = `${quota.plan} plan, period ${windowText(quota)}`;
 

@@ -355,8 +355,7 @@ describe("describeQuota (58l)", () => {
   });
 
   it("offers no upgrade to an account ALREADY on Plus — that limit is the ceiling", () => {
-    // `{plan: "plus", exhausted: true}` is a valid wire state: the Plus allowance is a hard cap,
-    // not a rung on a ladder. "Upgrade to Plus" there is an instruction the reader cannot follow.
+    // Backward compatibility with a backend deployed before Plus became unlimited.
     const out = describeQuota(
       {
         state: "ok",
@@ -375,6 +374,21 @@ describe("describeQuota (58l)", () => {
     expect(out?.detail).toContain("10000/10000 beeps");
     expect(out?.remedy).toContain("resets on 2026-09-01");
     expect(out?.remedy).not.toContain("upgrade to Plus");
+  });
+
+  it("renders an unlimited Plus quota without a fake meter or reset", () => {
+    const out = describeQuota({
+      state: "ok",
+      data: body({
+        quota: quota({
+          plan: "plus",
+          beeps_accepted: 2480,
+          beeps_limit: null,
+          exhausted: false,
+        }),
+      }),
+    });
+    expect(out).toEqual({ ok: true, detail: "Unlimited beeps (plus plan)." });
   });
 
   it("shows BOTH window bounds, so a stuck window is visible on sight (the n9mn lesson)", () => {
@@ -445,6 +459,13 @@ describe("fetchPushReachability + quota parsing (58l)", () => {
   it("parses the quota block when present", async () => {
     const res = await fetchPushReachability(opts(okFetch(body({ quota: quota() }))));
     expect(res).toMatchObject({ state: "ok", data: { quota: { beeps_limit: 100 } } });
+  });
+
+  it("parses the nullable limit used for unlimited Plus", async () => {
+    const res = await fetchPushReachability(
+      opts(okFetch(body({ quota: quota({ plan: "plus", beeps_limit: null }) }))),
+    );
+    expect(res).toMatchObject({ state: "ok", data: { quota: { beeps_limit: null } } });
   });
 
   it("still parses a response with NO quota block (an older deployment)", async () => {
