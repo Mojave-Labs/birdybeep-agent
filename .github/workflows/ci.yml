@@ -37,7 +37,15 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm lint
       - run: pnpm typecheck
+      # nn9: each package starts its own Vitest worker pool. Running all eight package suites at
+      # once exhausted the two-core Windows hosted runner's process-launch capacity: the same
+      # spawn tests took 5-8s there (and once failed with STATUS_DLL_INIT_FAILED) while their
+      # success receipts proved the child work itself had completed. Serialize package suites on
+      # Windows; every test still runs, with its original timeout and assertions intact.
       - run: pnpm test
+        if: runner.os != 'Windows'
+      - run: pnpm test:windows
+        if: runner.os == 'Windows'
       - run: pnpm build
       - run: pnpm format:check
       # birdybeep-agent-fuf: prove the codex notify send survives `codex exec` reaping its

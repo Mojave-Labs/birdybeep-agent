@@ -282,6 +282,12 @@ function windowText(quota: MachineQuota): string {
   return `${isoDay(quota.period_start)} → ${isoDay(quota.period_end)}`;
 }
 
+/** Whether the backend is still reporting a billing period that should already have rolled. */
+function hasStalledWindow(quota: MachineQuota, now: Date): boolean {
+  const resetsAt = Date.parse(quota.period_end);
+  return Number.isFinite(resetsAt) && resetsAt <= now.getTime();
+}
+
 /**
  * What an exhausted meter has to say: the window it is stuck in, and the one remedy that is
  * actually available. `doctor`'s quota row and `birdybeep test` both render it, so the two
@@ -299,10 +305,8 @@ export function describeExhaustedQuota(
   quota: ExhaustedMachineQuota,
   now: Date = new Date(),
 ): { window: string; remedy: string } {
-  const resetsAt = Date.parse(quota.period_end);
-  const stuck = Number.isFinite(resetsAt) && resetsAt <= now.getTime();
   const resets = isoDay(quota.period_end);
-  if (stuck) {
+  if (hasStalledWindow(quota, now)) {
     return {
       window: windowText(quota),
       remedy:
@@ -353,6 +357,21 @@ export function describeQuota(
 
   const used = `${String(quota.beeps_accepted)}/${String(quota.beeps_limit)} beeps`;
   const where = `${quota.plan} plan, period ${windowText(quota)}`;
+
+  // gl9: a stale period is the same rollover fault whether or not this meter has reached zero.
+  // Keep the row passing while the backend still reports allowance (beeps can flow), but name the
+  // fault now instead of waiting for exhaustion to turn the first visible symptom into a FAIL.
+  if (hasStalledWindow(quota, now) && !quota.exhausted) {
+    const remaining = Math.max(0, quota.beeps_limit - quota.beeps_accepted);
+    return {
+      ok: true,
+      detail:
+        `${used} used (${where}) — WARNING: that period ended on ${isoDay(quota.period_end)} ` +
+        `and the counter has not rolled over. The backend still reports ${String(remaining)} ` +
+        "beep(s) available, so beeps can still flow, but the stalled window is a backend bug. " +
+        "Report this with `birdybeep doctor --json`.",
+    };
+  }
 
   if (quota.exhausted) {
     return {

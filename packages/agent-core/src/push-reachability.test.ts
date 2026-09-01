@@ -422,6 +422,29 @@ describe("describeQuota (58l)", () => {
     expect(out?.remedy).not.toContain("upgrade to Plus");
   });
 
+  it("warns about an ended window BEFORE exhaustion while beeps can still flow (gl9)", () => {
+    const out = describeQuota(
+      {
+        state: "ok",
+        data: body({
+          quota: quota({
+            period_start: "2026-07-26T17:00:54.000Z",
+            period_end: "2026-07-27T17:00:54.000Z",
+            beeps_accepted: 40,
+            exhausted: false,
+          }),
+        }),
+      },
+      NOW,
+    );
+    expect(out?.ok).toBe(true); // allowance remains: warning, not failure
+    expect(out?.detail).toContain("WARNING");
+    expect(out?.detail).toContain("has not rolled over");
+    expect(out?.detail).toContain("60 beep(s) available");
+    expect(out?.detail).toContain("backend bug");
+    expect(out?.detail).not.toContain("resets on");
+  });
+
   it("passes while under the limit, and warns without failing when close to it", () => {
     const healthy = describeQuota({ state: "ok", data: body({ quota: quota() }) }, NOW);
     expect(healthy?.ok).toBe(true);

@@ -7,7 +7,7 @@
  * wrangler-dev delivered-event check is the deferred cross-repo gate.
  */
 import { randomUUID } from "node:crypto";
-import { readdirSync } from "node:fs";
+import { readdirSync, writeFileSync } from "node:fs";
 
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -124,6 +124,25 @@ describe("transient failures queue and return fast", () => {
     const rate = setup(() => Promise.resolve(jsonResponse(429, errorBody("rate_limited"))));
     expect((await rate.sender.send(event())).outcome).toBe("queued");
     expect(rate.queue.size()).toBe(1);
+  });
+
+  it("reports `failed` when a retryable event cannot be persisted (9u0)", async () => {
+    sandbox = createSandbox();
+    const blocker = sandbox.path("blocked-data");
+    writeFileSync(blocker, "a file where the queue parent directory should be");
+    const queue = new LocalEventQueue({ dir: sandbox.path("blocked-data", "queue") });
+    const sender = createSender({
+      baseUrl: "http://api.test",
+      queue,
+      fetchImpl: () => Promise.reject(new Error("offline")),
+      tokenOptions: { backend: tokenBackend(TOKEN), filePath: sandbox.path("token") },
+    });
+
+    const r = await sender.send(event());
+
+    expect(r.outcome).toBe("failed");
+    expect(r.queueCause).toBeUndefined(); // nothing was queued, so there is no queue promise
+    expect(queue.size()).toBe(0);
   });
 });
 

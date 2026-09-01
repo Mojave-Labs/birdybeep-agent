@@ -15,6 +15,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "pnpm test:scripts && turbo run test",
+    "test:windows": "pnpm test:scripts && turbo run test --concurrency=1",
     "test:scripts": "node --test scripts/*.test.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

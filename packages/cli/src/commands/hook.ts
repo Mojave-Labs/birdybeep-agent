@@ -458,6 +458,7 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
         eventType: result.eventType,
         ...(result.send?.decision ? { decision: result.send.decision } : {}),
         ...(result.send?.status !== undefined ? { status: result.send.status } : {}),
+        ...(result.send?.queueCause !== undefined ? { queueCause: result.send.queueCause } : {}),
         ...(result.send?.tokenStoreUnavailable !== undefined ? { tokenStore: "unavailable" } : {}),
       });
       // birdybeep-agent-gcgp.4: an unpaired machine sent NOTHING and said NOTHING — the defect
@@ -472,11 +473,21 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
             "Run `birdybeep pair` (or `birdybeep doctor` to see how many events this has cost).",
         );
       }
+      // 9u0: a retryable send is still lost when the queue cannot write it. Hooks remain exit 0
+      // (BirdyBeep must not break the harness), but stderr and --json must not promise a retry.
+      if (result.outcome === "failed") {
+        ctx.io.errline(
+          "birdybeep: the event could not be sent, and the local queue could not save it — it " +
+            "will not retry. Check that BirdyBeep can write to its user data directory; run " +
+            "`birdybeep doctor` for details.",
+        );
+      }
       // birdybeep-agent-gcgp.23: the same line for a store that would not ANSWER would be a
       // wrong diagnosis — this machine may well be paired. Say what actually happened: the
       // event is queued and will go when the store is readable, so there is nothing to fix in
       // BirdyBeep and nothing lost. Exit stays 0 for the same reason as above.
-      const unavailable = result.send?.tokenStoreUnavailable;
+      const unavailable =
+        result.outcome === "queued" ? result.send?.tokenStoreUnavailable : undefined;
       if (unavailable !== undefined) {
         ctx.io.errline(
           `birdybeep: could not read the machine token (${unavailable.reason}) — the event was ` +

@@ -40,7 +40,7 @@ const AGENT_EVENTS_PATH = "/v1/agent-events";
  * test` report "Offline" on a machine that was online. It is its own outcome so every caller —
  * `test`, `hook`, `doctor` — has to say which of the two actually happened.
  */
-export type SendOutcome = "delivered" | "queued" | "dropped" | "unpaired";
+export type SendOutcome = "delivered" | "queued" | "dropped" | "unpaired" | "failed";
 
 /**
  * Why a `queued` result was queued (birdybeep-agent-0yk). Every queued outcome used to read as
@@ -235,10 +235,10 @@ export function createSender(config: SenderConfig): Sender {
         // It deliberately does NOT touch the unpaired notice. That file means "events were lost
         // because there was nobody to deliver them to"; nothing here is lost, and telling a
         // paired user their events are gone would be the same wrong diagnosis in a durable form.
-        queue.enqueue(event);
+        const parked = queue.enqueue(event);
         return {
-          outcome: "queued",
-          queueCause: "token_store",
+          outcome: parked ? "queued" : "failed",
+          ...(parked ? { queueCause: "token_store" as const } : {}),
           tokenStoreUnavailable: { reason: lookup.reason },
           drained: queue.prune(), // retention + cap still apply (87n) — we cannot drain, only trim
         };
@@ -275,7 +275,9 @@ export function createSender(config: SenderConfig): Sender {
         outcome = "delivered";
       } else if (first.result === "retry") {
         parked = queue.enqueue(event);
-        outcome = "queued";
+        // 9u0: `queued` is a promise that a later hook can retry. If the queue itself is
+        // unwritable, the event is gone; report that distinct failure instead of inventing a retry.
+        outcome = parked ? "queued" : "failed";
       } else {
         outcome = "dropped"; // terminal reject → do not re-queue
       }
