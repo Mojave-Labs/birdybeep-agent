@@ -7,7 +7,7 @@
   "type": "module",
   "packageManager": "pnpm@10.28.2",
   "engines": {
-    "node": ">=20.11.0",
+    "node": ">=22.11.0",
     "pnpm": ">=10"
   },
   "scripts": {
@@ -28,7 +28,7 @@
     "prepare": "node scripts/install-hooks.mjs"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.31.0",
+    "@changesets/cli": "^3.0.1",
     "@eslint/js": "^9",
     "@types/node": "^22",
     "eslint": "^9",
