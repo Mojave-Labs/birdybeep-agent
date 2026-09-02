@@ -22,6 +22,8 @@ import { describe, expect, it } from "vitest";
 // src -> test-harness -> packages -> repo root
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const GITHUB_DIR = join(REPO_ROOT, ".github");
+const CI_WORKFLOW = join(GITHUB_DIR, "workflows", "ci.yml");
+const ROOT_PACKAGE = join(REPO_ROOT, "package.json");
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 
@@ -104,5 +106,20 @@ describe("GitHub Actions are pinned to immutable commit SHAs", () => {
 
     expect(changesets.length).toBe(1);
     expect(changesets[0]!.value.split("@")[1]).toMatch(FULL_SHA);
+  });
+});
+
+describe("Windows CI process pressure is bounded (nn9)", () => {
+  it("serializes package test suites on Windows without skipping any tests", () => {
+    const workflow = readFileSync(CI_WORKFLOW, "utf8");
+    const rootPackage = JSON.parse(readFileSync(ROOT_PACKAGE, "utf8")) as {
+      scripts?: Record<string, string>;
+    };
+
+    expect(rootPackage.scripts?.["test:windows"]).toBe(
+      "pnpm test:scripts && turbo run test --concurrency=1",
+    );
+    expect(workflow).toMatch(/- run: pnpm test:windows\s+if: runner\.os == 'Windows'/);
+    expect(workflow).toMatch(/- run: pnpm test\s+if: runner\.os != 'Windows'/);
   });
 });

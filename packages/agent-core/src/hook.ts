@@ -27,6 +27,8 @@ export type HookOutcome =
   | "delivered"
   | "queued"
   | "dropped"
+  /** Delivery was retryable, but the local queue could not persist the event (9u0). */
+  | "failed"
   | "deduped"
   | "skipped"
   /**

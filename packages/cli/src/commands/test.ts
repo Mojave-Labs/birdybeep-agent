@@ -146,6 +146,14 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
           "✗ NOT PAIRED — this machine has no BirdyBeep machine token, so nothing was sent " +
             "(and nothing was queued). Run `birdybeep pair`.",
         );
+      } else if (result.outcome === "failed") {
+        // 9u0: a retryable send plus an unwritable queue is loss, not "queued". Say so before
+        // token-store handling, because that path can also fail to persist its event.
+        ctx.io.line(
+          "✗ Could not send the test event, and BirdyBeep could not save it to the local queue — " +
+            "it was not queued and will not retry. Check that BirdyBeep can write to its user " +
+            "data directory, then run `birdybeep test` again.",
+        );
       } else if (result.tokenStoreUnavailable !== undefined) {
         // gcgp.23: the machine is online and may well be paired — the token store just would
         // not answer, so neither "Offline" nor "NOT PAIRED" names the real cause.
@@ -208,7 +216,11 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
       // momentarily unreadable — the event is parked, not lost). A hard reject is an error —
       // and so is being unpaired, which sent nothing at all (`status` already exits non-zero
       // for it, so a script can branch on either command).
-      return result.outcome === "dropped" || result.outcome === "unpaired" ? EXIT.ERROR : EXIT.OK;
+      return result.outcome === "dropped" ||
+        result.outcome === "unpaired" ||
+        result.outcome === "failed"
+        ? EXIT.ERROR
+        : EXIT.OK;
     },
   };
 }

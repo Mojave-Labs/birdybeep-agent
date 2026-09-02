@@ -10,7 +10,12 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { createSender, setToken, unavailableKeychainBackend } from "@birdybeep/agent-core";
+import {
+  createSender,
+  type Sender,
+  setToken,
+  unavailableKeychainBackend,
+} from "@birdybeep/agent-core";
 import type { CopilotHookEventName } from "@birdybeep/copilot";
 import {
   assertNoAbsolutePaths,
@@ -208,6 +213,34 @@ describe("hook command dispatch (full CLI path)", () => {
     expect(code).toBe(EXIT.OK);
     expect(JSON.parse(out.text())).toMatchObject({ harness: "claude", outcome: "delivered" });
     expect(sink.received()).toHaveLength(1);
+  });
+
+  it("includes the sender's queue cause under --json (www)", async () => {
+    const sender: Sender = {
+      send: () =>
+        Promise.resolve({ outcome: "queued", queueCause: "backend", status: 503 as const }),
+      drainNow: () => Promise.resolve({ delivered: 0, dropped: 0, kept: 0, pruned: 0 }),
+    };
+    const cmd = createHookCommand({
+      createSender: () => sender,
+      readStdin: () => Promise.resolve(JSON.stringify(PAYLOADS[0]!.payload)),
+    });
+    const out = capture();
+
+    const code = await runCli(["hook", "claude", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+
+    expect(code).toBe(EXIT.OK);
+    expect(JSON.parse(out.text())).toMatchObject({
+      harness: "claude",
+      outcome: "queued",
+      queueCause: "backend",
+      status: 503,
+    });
   });
 
   // birdybeep-agent-fuf: a Codex NOTIFY fire (payload as the trailing argv arg) now re-launches

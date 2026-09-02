@@ -85,19 +85,13 @@ jobs:
       # together. Enforced by packages/test-harness/src/workflow-pinning.test.ts.
       - name: Create Version PR or publish to npm
         id: changesets
-        # PINNED TO v1.9.0 DELIBERATELY. Dependabot bumped this to v2.1.0 (#58), which requires
-        # Changesets CLI v3 — this repo is on ^2.31.0 — and renames the `publish`/`version` inputs
-        # to `publish-script`/`version-script`. The bump passed CI because CI never runs this
-        # workflow; release only fires on push to main, so it failed three times there instead.
-        # Moving to v2 means a Changesets CLI major upgrade: see birdybeep-agent-gcgp.32.
-        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        uses: changesets/action@198f833dd7d863100ea6e28967bc9a9fdefadb0a # v2.1.0
         with:
           # Default `version` command (`changeset version`) applies the fixed-group
-          # bump + changelogs for the Version PR. `publish` runs only once that PR
+          # bump + changelogs for the Version PR. `publish-script` runs only once that PR
           # is merged and no changesets remain.
-          publish: pnpm release:ci
+          publish-script: pnpm release:ci
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           # Generate npm provenance for a public, auditable supply chain.
           NPM_CONFIG_PROVENANCE: "true"

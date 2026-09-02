@@ -5,6 +5,7 @@
  * queued; with no machine token it says NOT PAIRED and queues nothing. --json mirrors the outcome.
  */
 import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
 
 import {
   createSender,
@@ -170,6 +171,38 @@ describe("birdybeep test", () => {
     expect(Date.now() - start).toBeLessThan(5000); // fast even offline
     expect(JSON.parse(out.text())).toMatchObject({ outcome: "queued" });
     expect(new LocalEventQueue().size()).toBe(1); // parked in the queue
+  });
+
+  it("does not promise a retry when the local queue cannot persist the event (9u0)", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const blocker = sandbox.path("blocked-data");
+    writeFileSync(blocker, "a file where the queue parent directory should be");
+    const queue = new LocalEventQueue({ dir: sandbox.path("blocked-data", "queue") });
+    const cmd = createTestCommand({
+      createSender: () =>
+        createSender({
+          baseUrl: "http://127.0.0.1:1",
+          tokenOptions: FILE_ONLY,
+          queue,
+          fetchImpl: () => Promise.reject(new Error("offline")),
+        }),
+      tokenOptions: FILE_ONLY,
+    });
+    const out = capture();
+
+    const code = await runCli(["test"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+
+    expect(code).toBe(EXIT.ERROR);
+    expect(out.text()).toContain("was not queued and will not retry");
+    expect(out.text()).not.toContain("it will deliver");
+    expect(out.text()).not.toContain("retries on its own");
+    expect(queue.size()).toBe(0);
   });
 
   /**

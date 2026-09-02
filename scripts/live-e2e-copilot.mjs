@@ -49,14 +49,16 @@ const PRIVATE_PROMPT =
   AUTH_MODE === "github"
     ? `Use the bash tool to run exactly this harmless command, then reply with a brief confirmation: printf '${PRIVATE_COMMAND}\\n'`
     : "PRIVATE COPILOT PROMPT E2E 7f3a";
-const EXPECTED_EVENTS = [
+// Tool hooks are intentionally `local_only` in the mirrored notify matrix: they prove the
+// installed hook is live through the bounded local tally, but must never spend an HTTP request or
+// appear in D1. Keep the two expectations separate so this live gate protects both halves.
+const EXPECTED_SERVER_EVENTS = [
   "session_started",
   "session_active",
-  "tool_started",
-  "tool_finished",
   "agent_completed",
   "session_ended",
 ];
+const EXPECTED_LOCAL_EVENTS = ["tool_started", "tool_finished"];
 
 const log = (message) => console.log(`[live-e2e-copilot] ${message}`);
 function fail(message) {
@@ -119,6 +121,15 @@ const work = join(sandbox, "work");
 const bin = join(sandbox, "bin");
 const copilotHome = join(home, ".copilot");
 const wranglerLog = join(stateDir, "wrangler.log");
+const filteredActivityPath = join(
+  process.platform === "win32"
+    ? join(home, "AppData", "Local")
+    : process.platform === "darwin"
+      ? join(home, "Library", "Application Support")
+      : join(home, ".local", "share"),
+  "birdybeep",
+  "filtered-events.json",
+);
 for (const directory of [home, work, bin, copilotHome]) mkdirSync(directory, { recursive: true });
 
 if (AUTH_MODE === "github") {
@@ -552,7 +563,7 @@ try {
     if (session) {
       detail = await api("GET", `/v1/sessions/${session.id}`, { token: userToken });
       const have = new Set((detail.body?.recent_events ?? []).map((event) => event.event_type));
-      if (EXPECTED_EVENTS.every((event) => have.has(event)) && expoSends.length > 0) break;
+      if (EXPECTED_SERVER_EVENTS.every((event) => have.has(event)) && expoSends.length > 0) break;
     }
     await sleep(250);
   }
@@ -560,8 +571,19 @@ try {
   const deliveredTypes = new Set(
     (detail.body?.recent_events ?? []).map((event) => event.event_type),
   );
-  for (const expected of EXPECTED_EVENTS) {
+  for (const expected of EXPECTED_SERVER_EVENTS) {
     assert(deliveredTypes.has(expected), `live backend did not record ${expected}`);
+  }
+  const filteredActivity = JSON.parse(readFileSync(filteredActivityPath, "utf8"));
+  for (const expected of EXPECTED_LOCAL_EVENTS) {
+    assert(
+      filteredActivity.byType?.[expected] > 0,
+      `real Copilot hook did not record local-only ${expected}`,
+    );
+    assert(
+      !deliveredTypes.has(expected),
+      `local-only ${expected} reached D1 instead of staying on the machine`,
+    );
   }
   assert(detail.body?.harness === "copilot", "live session has the wrong harness");
   assert(detail.body?.status === "completed", `live session ended as ${detail.body?.status}`);
@@ -591,7 +613,7 @@ try {
   assert(!existsSync(hooksPath), "from-scratch uninstall left the managed hook file behind");
 
   log(
-    `PASS — real ${copilotVersion.stdout.trim()} (${AUTH_MODE}) → ${EXPECTED_EVENTS.length} normalized events → wrangler dev D1/Queue → Expo wire`,
+    `PASS — real ${copilotVersion.stdout.trim()} (${AUTH_MODE}) → ${String(EXPECTED_SERVER_EVENTS.length)} server events through wrangler dev D1/Queue → Expo wire; ${String(EXPECTED_LOCAL_EVENTS.length)} tool events proved local-only`,
   );
 } finally {
   stopWrangler(wrangler);

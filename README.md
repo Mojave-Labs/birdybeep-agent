@@ -255,7 +255,8 @@ pnpm typecheck
 pnpm test
 ```
 
-Requires Node `>=20.11.0` and pnpm `>=10`.
+Developing the workspace requires Node `>=22.11.0` and pnpm `>=10`. The published packages support
+Node `>=20.11.0`.
 
 ## License
 

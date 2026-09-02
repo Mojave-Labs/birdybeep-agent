@@ -8,7 +8,7 @@ lifecycle event, so reproducibility and privacy are part of correctness.
 Open a GitHub issue for a bug or new harness so maintainers can confirm the scope. For a security
 problem, follow [SECURITY.md](./SECURITY.md) and do not disclose it in an issue.
 
-Use Node 20.11 or newer and pnpm 10 or newer:
+Use Node 22.11 or newer and pnpm 10 or newer:
 
 ```bash
 pnpm install --frozen-lockfile
