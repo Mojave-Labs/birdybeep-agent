@@ -82,6 +82,48 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+/**
+ * ChatGPT desktop runs hidden Codex turns for task-title generation and ambient follow-up
+ * suggestions. Their assistant result is an implementation envelope, not a user-visible turn,
+ * but both Codex completion surfaces currently forward it like an ordinary final message.
+ *
+ * Match only the two complete, exact envelopes observed from those jobs. Prefix/suffix text,
+ * malformed JSON, extra keys, and unrelated JSON remain ordinary completion messages. This
+ * deliberately avoids a broad "JSON means internal" rule that would hide legitimate results.
+ */
+export function isCodexInternalResultPayload(input: unknown): boolean {
+  const payload = asRecord(input);
+  const message =
+    payload["hook_event_name"] === "Stop"
+      ? str(payload["last_assistant_message"])
+      : payload["hook_event_name"] === undefined && payload["type"] === "agent-turn-complete"
+        ? str(payload["last-assistant-message"])
+        : undefined;
+  if (message === undefined) return false;
+
+  let result: unknown;
+  try {
+    result = JSON.parse(message);
+  } catch {
+    return false;
+  }
+  if (!isPlainObject(result)) return false;
+
+  if (hasExactKeys(result, ["description", "title"])) {
+    return typeof result["title"] === "string" && typeof result["description"] === "string";
+  }
+  return hasExactKeys(result, ["suggestions"]) && Array.isArray(result["suggestions"]);
+}
+
 /** Deterministic best-effort session id when Codex provides none (§10.3). */
 function bestEffortSessionId(payload: Record<string, unknown>): string {
   const seed = [
@@ -362,6 +404,9 @@ export function isCodexLifecycleHookPayload(input: unknown): boolean {
 
 function buildAndNormalize(input: unknown, opts: CodexNormalizeOptions): BirdyBeepAgentEvent {
   const payload = asRecord(input);
+  if (isCodexInternalResultPayload(payload)) {
+    throw new CodexMappingError("suppressed internal Codex result");
+  }
   const mapped = mapCodexPayload(payload); // throws CodexMappingError on unknown
   const machine = getMachineIdentity();
   // Which Codex build fired this — the terminal CLI or the ChatGPT desktop bundle. Both share

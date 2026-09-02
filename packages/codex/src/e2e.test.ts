@@ -287,6 +287,52 @@ describe("CX-E2E: install → fire real notify + hooks → assert delivered", ()
     });
   });
 
+  it("skips ChatGPT internal result envelopes but still delivers unrelated JSON", async () => {
+    const { fire } = await setUp();
+    const titleResult = JSON.stringify({
+      title: "Add CLI install guidance",
+      description: "Create BirdyBeep setup help",
+    });
+    const suggestionsResult = JSON.stringify({ suggestions: [] });
+
+    expect(
+      await fire({
+        ...hookBase,
+        hook_event_name: "Stop",
+        turn_id: "internal-title-turn",
+        last_assistant_message: titleResult,
+      }),
+    ).toBe("skipped");
+    // The lifecycle command still fired, so suppression must not regress /hooks trust proof.
+    expect(await codexAdapter.status()).toBe("installed");
+
+    expect(
+      await fire({
+        type: "agent-turn-complete",
+        "thread-id": "internal-suggestions-thread",
+        "turn-id": "internal-suggestions-turn",
+        cwd: RAW_CWD,
+        client: "Codex Desktop",
+        "last-assistant-message": suggestionsResult,
+      }),
+    ).toBe("skipped");
+    expect(sink!.received()).toHaveLength(0);
+
+    const userJson = '{"result":"done","count":2}';
+    expect(
+      await fire({
+        type: "agent-turn-complete",
+        "thread-id": "ordinary-json-thread",
+        "turn-id": "ordinary-json-turn",
+        cwd: RAW_CWD,
+        client: "Codex Desktop",
+        "last-assistant-message": userJson,
+      }),
+    ).toBe("delivered");
+    expect(sink!.received()).toHaveLength(1);
+    expect((sink!.received()[0]!.body as { body: string }).body).toBe(userJson);
+  });
+
   it("dedupes a repeated event: two identical notify → exactly ONE agent_completed", async () => {
     const { fire } = await setUp();
     const first = await fire({ type: "agent-turn-complete", "thread-id": SESSION, cwd: RAW_CWD });
