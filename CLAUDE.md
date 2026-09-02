@@ -46,19 +46,9 @@ This package edits real config files in users' home directories and hooks into r
 ## 🔁 The work loop (every ticket)
 `bd ready` → claim → read `bd show <id>` and its **Testing (mandatory)** section → write test/snapshot first → implement → **run the real install + fire real events in the sandbox** → inspect output → `bd close` → commit + push (Session Completion below; the hook re-verifies). File follow-ups with `bd create`; durable notes with `bd remember`.
 
-## 🔗 Linear mirror (beads is the source of truth)
+## 🔀 Beads repository boundaries
 
-**beads is the source of truth; Linear is a read-only human mirror.** This repo's beads (`birdybeep-agent-*`) push **into the same shared Birdybeep project** in Linear (team **Mojave Labs / ML**) as the product repo. Work originates in beads (`bd create` / `bd ready` / `bd close`); status is pushed up for the human to watch. Config: `.beads/config.yaml` (`linear.team_id`, `linear.project_id`, `id_mode: hash`) + `LINEAR_API_KEY` in env.
-
-**Sync is push-dominant:**
-- **Push status UP** (the main direction): `bd linear push <id>` for tickets you create/close — as you go or at session close. Pushes are additive and idempotent by `external_ref`.
-- **Pull is the exception**, only to capture tickets the human filed *in Linear*: `bd linear sync --pull` (scoped to the project by `project_id`). Otherwise Linear edits don't matter — a push overwrites them; use `--prefer-local` (beads wins) on any reconcile.
-- **NEVER** run bare/unattended `bd linear sync` — bidirectional sync pulls the *whole* ML team into this repo's DB.
-
-**Notes:**
-- **Free-tier cap:** the ML workspace is on Linear's free plan (~250 issues). Creating issues *fails at the cap* — that's what surfaced as bd's "not returned in batch create response" (a cap symptom, not a beads bug). Push **active-only** (leave closed history in beads/Dolt); single-issue `bd linear push <id>` is the reliable path.
-- Tag new issues with the **`surface`** label (usually `agent`; also backend/web/mobile/cli) so the mirror's cross-surface views work.
-- **Do NOT run `bd repo sync` / `bd repo add`** (multi-repo hydration) — it imports the *sibling* repo's issues into this DB and the auto-export hooks would commit them, re-polluting. For cross-repo context, read the shared Linear project or peek with `bd -C /path/to/sibling <cmd>`.
+- **Do NOT run `bd repo sync` / `bd repo add`** (multi-repo hydration) — it imports the *sibling* repo's issues into this DB and the auto-export hooks would commit them, re-polluting. For cross-repo context, peek with `bd -C /path/to/sibling <cmd>`.
 - **Beads vs git conflicts:** on a `.beads/issues.jsonl` conflict during `git pull --rebase`/merge, don't hand-merge it — the shared Dolt server is the truth. Resolve by regenerating the file (`bd export`) and verify `bd count` + `external_ref` links after.
 
 ## 🗄️ Beads data service
