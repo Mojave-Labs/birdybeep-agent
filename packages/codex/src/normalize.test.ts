@@ -23,6 +23,7 @@ import {
   CodexMappingError,
   codexSurfaceFromPayload,
   isCodexHookPayload,
+  isCodexInternalResultPayload,
   normalizeCodexEvent,
 } from "./normalize";
 
@@ -528,6 +529,81 @@ describe("isCodexHookPayload — foreign payloads are recognized as foreign (gcg
     expect(isCodexHookPayload({ hook_event_name: "Bogus", type: "agent-turn-complete" })).toBe(
       false,
     );
+  });
+});
+
+describe("ChatGPT desktop internal-result suppression (1wm)", () => {
+  const internalMessages = [
+    JSON.stringify({
+      title: "Add CLI install guidance",
+      description: "Create BirdyBeep setup help",
+    }),
+    JSON.stringify({ suggestions: [] }),
+    JSON.stringify({
+      suggestions: [
+        {
+          title: "Tighten the notification gate",
+          description: "Keep internal jobs off the lock screen",
+          prompt: "Implement the focused adapter fix",
+        },
+      ],
+    }),
+  ];
+
+  for (const [index, message] of internalMessages.entries()) {
+    it(`recognizes known internal envelope ${index + 1} on both completion surfaces`, async () => {
+      const stop = {
+        hook_event_name: "Stop",
+        session_id: `internal-stop-${index}`,
+        cwd: CWD,
+        last_assistant_message: message,
+      };
+      const notify = {
+        type: "agent-turn-complete",
+        "thread-id": `internal-notify-${index}`,
+        cwd: CWD,
+        "last-assistant-message": message,
+      };
+
+      expect(isCodexInternalResultPayload(stop)).toBe(true);
+      expect(isCodexInternalResultPayload(notify)).toBe(true);
+      await expect(normalizeCodexEvent(stop, OPTS)).rejects.toBeInstanceOf(CodexMappingError);
+      await expect(normalizeCodexEvent(notify, OPTS)).rejects.toBeInstanceOf(CodexMappingError);
+    });
+  }
+
+  it("requires an exact, complete known envelope", async () => {
+    const allowed = [
+      '{"result":"done","count":2}',
+      '{"title":"Release notes"}',
+      '{"title":"Release notes","description":"Drafted","extra":true}',
+      '{"suggestions":[],"source":"user"}',
+      '{"suggestions":"none"}',
+      'Result: {"suggestions":[]}',
+      '{"suggestions":[]',
+    ];
+
+    for (const [index, message] of allowed.entries()) {
+      const payload = {
+        type: "agent-turn-complete",
+        "thread-id": `ordinary-json-${index}`,
+        cwd: CWD,
+        "last-assistant-message": message,
+      };
+      expect(isCodexInternalResultPayload(payload), message).toBe(false);
+      expect((await normalizeCodexEvent(payload, OPTS)).body).toBe(message);
+    }
+  });
+
+  it("does not inspect JSON-looking content on non-completion events", () => {
+    expect(
+      isCodexInternalResultPayload({
+        hook_event_name: "PermissionRequest",
+        session_id: "approval",
+        cwd: CWD,
+        last_assistant_message: '{"suggestions":[]}',
+      }),
+    ).toBe(false);
   });
 });
 

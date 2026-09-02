@@ -17,11 +17,12 @@
  * (PermissionRequest → approval_required) was still untrusted and silently dropped —
  * telling the user "you'll be notified when I need approval" when they will not be.
  * So we record trust only for a hook_event_name-keyed payload that actually reached
- * delivery (`delivered` or `queued`).
+ * the command and was processed as a recognized hook.
  *
  * `skipped` (unmappable) and `dropped` (terminal backend reject) are deliberately NOT
- * counted: neither is a clean end-to-end hook fire, and erring toward `needs_trust` is
- * the safe direction — it under-claims rather than falsely promising approval beeps.
+ * counted: neither is a clean end-to-end hook fire. The one narrow exception is a known
+ * ChatGPT internal result: it is intentionally skipped before delivery, but its recognized
+ * lifecycle envelope still proves Codex ran the trust-gated command.
  *
  * The signal is a small marker file in the BirdyBeep user data dir (strict perms, never
  * repo-local). `runCodexHook` writes it on the first trust-gated hook; `status()`
@@ -40,7 +41,7 @@ import {
 } from "@birdybeep/agent-core";
 
 import { codexAdapter } from "./adapter";
-import { isCodexLifecycleHookPayload } from "./normalize";
+import { isCodexInternalResultPayload, isCodexLifecycleHookPayload } from "./normalize";
 
 /**
  * Outcomes that prove the trust-gated hook command ran end-to-end. `queued` counts: the
@@ -109,17 +110,22 @@ export function codexTrustMarkerIsStrict(opts: CodexTrustOptions = {}): boolean 
  *
  * A notify fire (agent-turn-complete) is NOT proof of trust — Codex runs the notify
  * program without it — so it never flips the state, no matter how cleanly it delivers
- * (birdybeep-agent-qyf). Neither does a `skipped` (unmappable) or `dropped` (terminal
- * reject) outcome. The CLI `hook codex` command and the E2E both call this.
+ * (birdybeep-agent-qyf). Neither does a `skipped` unmappable payload or `dropped` terminal
+ * reject. A recognized internal result is intentionally skipped but still proves the
+ * lifecycle command fired. The CLI `hook codex` command and the E2E both call this.
  */
 export async function runCodexHook(
   rawInput: unknown,
   options: RunHookOptions & CodexTrustOptions,
 ): Promise<HookResult> {
+  const internalResult = isCodexInternalResultPayload(rawInput);
   const result = await runAgentHook(codexAdapter, rawInput, options);
-  // Trust proof = a trust-gated hook payload AND a clean end-to-end fire. Both halves
-  // matter: the notify path satisfies the second but never the first.
-  if (isCodexLifecycleHookPayload(rawInput) && TRUST_PROVING_OUTCOMES.has(result.outcome)) {
+  // Trust proof = a trust-gated hook payload AND a recognized fire. Known internal-result
+  // hooks are suppressed before delivery, but reaching this command still proves trust.
+  if (
+    isCodexLifecycleHookPayload(rawInput) &&
+    (TRUST_PROVING_OUTCOMES.has(result.outcome) || internalResult)
+  ) {
     recordCodexEventSeen(options);
   }
   return result;
