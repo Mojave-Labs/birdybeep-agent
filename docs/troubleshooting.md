@@ -11,11 +11,10 @@ Installation steps are in [`install.md`](install.md); data and token handling ar
 
 ## Diagnostic output
 
-| Marker | Meaning                         |
-| ------ | ------------------------------- |
-| `✓`    | check passed                    |
-| `✗`    | check failed                    |
-| `!`    | action or information available |
+| Marker | Meaning      |
+| ------ | ------------ |
+| `✓`    | check passed |
+| `✗`    | check failed |
 
 `doctor` exits with status 1 when a required check fails. `--json` returns the same checks without terminal formatting.
 
@@ -180,7 +179,9 @@ Both integrations can remain installed. Duplicate events are collapsed.
 
 ## Hook errors
 
-`birdybeep hook <harness>` exits non-zero when it cannot accept or preserve an event. The harness hook log contains the diagnostic.
+`birdybeep hook <harness>` exits non-zero for an invalid invocation or payload: an unknown harness, a missing or invalid Copilot event name, a stdin timeout, an empty payload, invalid JSON, or a payload that does not belong to the selected harness. The harness hook log contains the diagnostic.
+
+Recognized events return zero so BirdyBeep does not break the coding harness. That includes events that cannot be sent because the machine is unpaired and events that cannot be delivered or saved locally. Check stderr or the `--json` outcome for those loss states; a zero exit alone does not confirm delivery or queue preservation.
 
 | Diagnostic                                                | Action                                         |
 | --------------------------------------------------------- | ---------------------------------------------- |

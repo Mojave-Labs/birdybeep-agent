@@ -33,9 +33,7 @@ Not installed: OpenCode. Install it, then run `birdybeep setup` again.
 ✓ Test event accepted for 1 registered device(s). Check your phone for a test Beep.
 ```
 
-Installers preserve existing configuration and write one backup before the first modification. Machine tokens remain in the OS keychain or a restricted fallback file.
-
-Adapter files, activation requirements, and tested versions are listed in the [installation guide](./docs/install.md). Exact generated configuration is under [`examples/`](./examples/README.md).
+Adapter files, activation requirements, tested versions, and configuration backups are covered in the [installation guide](./docs/install.md#what-each-install-writes). Machine token storage is covered in [Security and privacy](./docs/security.md#tokens). Exact generated configuration is under [`examples/`](./examples/README.md).
 
 ## Commands
 
