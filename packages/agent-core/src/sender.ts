@@ -21,14 +21,20 @@ import { DEFAULT_DRAIN_MAX, type DrainOutcome, type DrainResult, LocalEventQueue
 import { readToken, type TokenStoreOptions } from "./token-store";
 import { recordUnpairedEvent, type UnpairedNotice } from "./unpaired-notice";
 
-export const DEFAULT_SEND_TIMEOUT_MS = 3000;
+/**
+ * A production ingest traverses three Durable Object checks plus D1 before the queue ack. A live
+ * healthy request took 5.8s; the old 3s deadline aborted it, queued an event the backend had
+ * already accepted, and could cancel the Worker before enqueue. Eight seconds is still a short,
+ * hard bound while leaving useful headroom over observed healthy latency.
+ */
+export const DEFAULT_SEND_TIMEOUT_MS = 8000;
 /**
  * Total wall-clock budget for one send() (first attempt + opportunistic drain).
- * Sized against the TIGHTEST hook timeout any adapter registers — 10s (Claude Code
- * and Codex; Cursor registers 30s, and the OpenCode plugin runs in-process with no
- * harness-imposed timeout) — leaving headroom for process spawn + stdin read around it.
+ * Equal to the primary deadline so a fully-spent request is queued and returned rather than
+ * immediately retried with a tiny leftover allowance. Managed Claude/Codex/Copilot hooks allow
+ * 15s (Cursor 30s; OpenCode is in-process), leaving room for the 3s stdin cap + process startup.
  */
-export const DEFAULT_TOTAL_BUDGET_MS = 5000;
+export const DEFAULT_TOTAL_BUDGET_MS = 8000;
 /** Stop draining when less than this remains — a send that can't finish shouldn't start. */
 const MIN_DRAIN_ATTEMPT_MS = 250;
 const AGENT_EVENTS_PATH = "/v1/agent-events";

@@ -10,7 +10,7 @@ exports[`generated config snapshots (§21.1) > from-scratch install writes the c
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -22,7 +22,7 @@ exports[`generated config snapshots (§21.1) > from-scratch install writes the c
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -34,7 +34,7 @@ exports[`generated config snapshots (§21.1) > from-scratch install writes the c
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -46,7 +46,7 @@ exports[`generated config snapshots (§21.1) > from-scratch install writes the c
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -58,7 +58,7 @@ exports[`generated config snapshots (§21.1) > from-scratch install writes the c
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -70,7 +70,7 @@ exports[`generated config snapshots (§21.1) > from-scratch install writes the c
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -82,7 +82,7 @@ exports[`generated config snapshots (§21.1) > from-scratch install writes the c
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -112,7 +112,7 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -124,7 +124,7 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -136,7 +136,7 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -148,7 +148,7 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -160,7 +160,7 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -172,7 +172,7 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -184,7 +184,7 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -218,7 +218,7 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -230,7 +230,7 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -242,7 +242,7 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -254,7 +254,7 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -266,7 +266,7 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -278,7 +278,7 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -290,7 +290,7 @@ exports[`generated config snapshots (§21.1) > patches into an existing config w
           {
             "type": "command",
             "command": "birdybeep hook claude",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }

@@ -245,7 +245,7 @@ A managed hook entry looks like this:
 ```json
 {
   "matcher": "",
-  "hooks": [{ "type": "command", "command": "birdybeep hook claude", "timeout": 10 }]
+  "hooks": [{ "type": "command", "command": "birdybeep hook claude", "timeout": 15 }]
 }
 ```
 

@@ -34,7 +34,8 @@ import {
 import { copilotHooksPath, type CopilotPathOptions } from "./paths";
 
 export const COPILOT_HOOKS_VERSION = 1;
-export const COPILOT_HOOK_TIMEOUT_SECONDS = 10;
+/** Per-hook timeout: 3s stdin + 8s bounded send + startup headroom. */
+export const COPILOT_HOOK_TIMEOUT_SECONDS = 15;
 export const COPILOT_HOOK_EVENTS = [
   "sessionStart",
   "userPromptSubmitted",

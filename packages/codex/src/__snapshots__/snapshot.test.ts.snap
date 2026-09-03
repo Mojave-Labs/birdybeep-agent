@@ -7,7 +7,7 @@ matcher = ""
 [[hooks.SessionStart.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 
 [[hooks.PermissionRequest]]
 matcher = ""
@@ -15,7 +15,7 @@ matcher = ""
 [[hooks.PermissionRequest.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 
 [[hooks.PostToolUse]]
 matcher = ""
@@ -23,7 +23,7 @@ matcher = ""
 [[hooks.PostToolUse.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 
 [[hooks.SubagentStart]]
 matcher = ""
@@ -31,7 +31,7 @@ matcher = ""
 [[hooks.SubagentStart.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 
 [[hooks.SubagentStop]]
 matcher = ""
@@ -39,7 +39,7 @@ matcher = ""
 [[hooks.SubagentStop.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 
 [[hooks.Stop]]
 matcher = ""
@@ -47,7 +47,7 @@ matcher = ""
 [[hooks.Stop.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 "
 `;
 
@@ -64,7 +64,7 @@ matcher = ""
 [[hooks.SessionStart.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 
 [[hooks.PermissionRequest]]
 matcher = ""
@@ -72,7 +72,7 @@ matcher = ""
 [[hooks.PermissionRequest.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 
 [[hooks.PostToolUse]]
 matcher = ""
@@ -80,7 +80,7 @@ matcher = ""
 [[hooks.PostToolUse.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 
 [[hooks.SubagentStart]]
 matcher = ""
@@ -88,7 +88,7 @@ matcher = ""
 [[hooks.SubagentStart.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 
 [[hooks.SubagentStop]]
 matcher = ""
@@ -96,7 +96,7 @@ matcher = ""
 [[hooks.SubagentStop.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 
 [[hooks.Stop]]
 matcher = ""
@@ -104,7 +104,7 @@ matcher = ""
 [[hooks.Stop.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 "
 `;
 
@@ -128,7 +128,7 @@ matcher = ""
 [[hooks.PostToolUse.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 
 [[hooks.SessionStart]]
 matcher = ""
@@ -136,7 +136,7 @@ matcher = ""
 [[hooks.SessionStart.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 
 [[hooks.PermissionRequest]]
 matcher = ""
@@ -144,7 +144,7 @@ matcher = ""
 [[hooks.PermissionRequest.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 
 [[hooks.SubagentStart]]
 matcher = ""
@@ -152,7 +152,7 @@ matcher = ""
 [[hooks.SubagentStart.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 
 [[hooks.SubagentStop]]
 matcher = ""
@@ -160,7 +160,7 @@ matcher = ""
 [[hooks.SubagentStop.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 
 [[hooks.Stop]]
 matcher = ""
@@ -168,6 +168,6 @@ matcher = ""
 [[hooks.Stop.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 "
 `;

@@ -4,7 +4,7 @@
 
 ## Installed entries
 
-Each managed entry runs `birdybeep hook codex` with a 10-second timeout.
+Each managed entry runs `birdybeep hook codex` with a 15-second timeout.
 
 | Hook event          | Event                                |
 | ------------------- | ------------------------------------ |
@@ -22,7 +22,7 @@ matcher = ""
 [[hooks.SessionStart.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 ```
 
 ## Existing configuration

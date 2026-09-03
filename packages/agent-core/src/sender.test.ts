@@ -16,12 +16,13 @@ import { type ErrorCode } from "./api";
 import { type BirdyBeepAgentEvent } from "./event";
 import { normalizeEvent } from "./normalize";
 import { LocalEventQueue, QUEUE_RETENTION_MS } from "./queue";
-import { createSender } from "./sender";
+import { createSender, DEFAULT_SEND_TIMEOUT_MS, DEFAULT_TOTAL_BUDGET_MS } from "./sender";
 import { type KeychainBackend } from "./token-store";
 import { readUnpairedNotice } from "./unpaired-notice";
 
 let sandbox: Sandbox | undefined;
 afterEach(() => {
+  vi.useRealTimers();
   sandbox?.cleanup();
   sandbox = undefined;
   vi.restoreAllMocks();
@@ -96,6 +97,41 @@ describe("happy path", () => {
     });
     await sender.send(event());
     expect(seenAuth).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it("accepts a healthy six-second production response instead of falsely queueing it", async () => {
+    vi.useFakeTimers();
+    sandbox = createSandbox();
+    const queue = new LocalEventQueue({ dir: sandbox.path("data", "q") });
+    const fetchImpl = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          const timer = setTimeout(
+            () => resolve(jsonResponse(202, { accepted: true, decision: "notified" })),
+            6000,
+          );
+          init?.signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    ) as unknown as typeof fetch;
+    const sender = createSender({
+      baseUrl: "http://api.test",
+      queue,
+      fetchImpl,
+      tokenOptions: { backend: tokenBackend(TOKEN), filePath: sandbox.path("data", "token") },
+    });
+
+    const pending = sender.send(event());
+    await vi.advanceTimersByTimeAsync(6000);
+    const result = await pending;
+
+    expect(DEFAULT_SEND_TIMEOUT_MS).toBeGreaterThan(6000);
+    expect(DEFAULT_TOTAL_BUDGET_MS).toBeGreaterThan(6000);
+    expect(result).toMatchObject({ outcome: "delivered", status: 202, decision: "notified" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(queue.size()).toBe(0);
   });
 });
 

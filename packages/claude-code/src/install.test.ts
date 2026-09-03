@@ -134,7 +134,7 @@ describe("hook command resolution (gcgp.9 — the exit-127 fix)", () => {
     expect(installedBirdyBeepCommands(parsed)).toEqual([ABSOLUTE]);
     for (const event of BIRDYBEEP_HOOK_EVENTS) {
       expect(entriesFor(parsed, event)).toEqual([
-        { matcher: "", hooks: [{ type: "command", command: ABSOLUTE, timeout: 10 }] },
+        { matcher: "", hooks: [{ type: "command", command: ABSOLUTE, timeout: 15 }] },
       ]);
     }
   });
@@ -164,7 +164,7 @@ describe("hook command resolution (gcgp.9 — the exit-127 fix)", () => {
     expect(JSON.stringify(stop[0])).toContain("my-own-hook");
     expect(stop[1]).toEqual({
       matcher: "",
-      hooks: [{ type: "command", command: ABSOLUTE, timeout: 10 }],
+      hooks: [{ type: "command", command: ABSOLUTE, timeout: 15 }],
     });
   });
 
@@ -203,7 +203,7 @@ describe("hook command resolution (gcgp.9 — the exit-127 fix)", () => {
         matcher: "Bash", // not reset to ""
         description: "user note — an unknown field we must not drop",
         hooks: [
-          { type: "command", command: ABSOLUTE, timeout: 10 }, // only the command changed
+          { type: "command", command: ABSOLUTE, timeout: 15 }, // old managed default upgraded
           { type: "command", command: "/usr/local/bin/my-audit-hook --stop", timeout: 30 },
         ],
       });
