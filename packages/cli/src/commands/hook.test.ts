@@ -277,6 +277,71 @@ describe("hook command dispatch (full CLI path)", () => {
     expect(receivedBudget).toBe(3500);
   });
 
+  it("discovers preserved Cursor and Copilot deadlines through their live config readers", async () => {
+    sandbox = createSandbox();
+    const cursorDir = join(sandbox.home, ".cursor");
+    mkdirSync(cursorDir, { recursive: true });
+    writeFileSync(
+      join(cursorDir, "hooks.json"),
+      JSON.stringify({
+        version: 1,
+        hooks: { sessionEnd: [{ command: "birdybeep hook cursor", timeout: 7 }] },
+      }),
+    );
+    const copilotDir = join(sandbox.home, ".copilot", "hooks");
+    mkdirSync(copilotDir, { recursive: true });
+    writeFileSync(
+      join(copilotDir, "birdybeep.json"),
+      JSON.stringify({
+        version: 1,
+        hooks: {
+          sessionStart: [
+            {
+              type: "command",
+              bash: "birdybeep hook copilot sessionStart",
+              powershell: "birdybeep hook copilot sessionStart",
+              timeoutSec: 7,
+            },
+          ],
+        },
+      }),
+    );
+
+    for (const { harness, payload, args } of [
+      { harness: "cursor" as const, payload: PAYLOADS[3]!.payload, args: ["hook", "cursor"] },
+      {
+        harness: "copilot" as const,
+        payload: PAYLOADS[4]!.payload,
+        args: ["hook", "copilot", "sessionStart"],
+      },
+    ]) {
+      let clock = 0;
+      let receivedBudget: number | undefined;
+      const cmd = createHookCommand({
+        createSender: (_baseUrl, budgetMs) => {
+          receivedBudget = budgetMs;
+          return {
+            send: () => Promise.resolve({ outcome: "delivered", status: 202 }),
+            drainNow: () => Promise.resolve({ delivered: 0, dropped: 0, kept: 0, pruned: 0 }),
+          };
+        },
+        readStdin: () => {
+          clock = 2500;
+          return Promise.resolve(JSON.stringify(payload));
+        },
+        now: () => clock,
+      });
+      const code = await runCli(args, {
+        commands: [cmd],
+        stdout: capture().writer,
+        stderr: capture().writer,
+        ensureConfig: false,
+      });
+      expect(code, harness).toBe(EXIT.OK);
+      expect(receivedBudget, harness).toBe(3500);
+    }
+  });
+
   it("delivers via stdin payload and emits the outcome under --json", async () => {
     sink = await StubEventSink.start();
     sandbox = createSandbox();

@@ -44,12 +44,18 @@ import {
   runCodexHook,
 } from "@birdybeep/codex";
 import {
+  configuredCopilotHookTimeoutSeconds,
   type CopilotHookEventName,
   isCopilotHookEventName,
   isCopilotHookPayload,
   runCopilotHook,
 } from "@birdybeep/copilot";
-import { isCursorHookEventName, isCursorHookPayload, runCursorHook } from "@birdybeep/cursor";
+import {
+  configuredCursorHookTimeoutSeconds,
+  isCursorHookEventName,
+  isCursorHookPayload,
+  runCursorHook,
+} from "@birdybeep/cursor";
 import { isOpenCodeEventPayload, runOpenCodeHook } from "@birdybeep/opencode";
 
 import { resolveApiUrl } from "../config";
@@ -111,6 +117,8 @@ export function hookRuntimeBudgetMs(configuredTimeoutSeconds: number | undefined
 function configuredHookTimeoutSeconds(harness: HarnessName): number | undefined {
   if (harness === "claude") return configuredClaudeHookTimeoutSeconds();
   if (harness === "codex") return configuredCodexHookTimeoutSeconds();
+  if (harness === "cursor") return configuredCursorHookTimeoutSeconds();
+  if (harness === "copilot") return configuredCopilotHookTimeoutSeconds();
   return undefined;
 }
 
