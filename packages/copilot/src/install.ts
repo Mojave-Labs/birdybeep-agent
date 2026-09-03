@@ -128,6 +128,9 @@ function isBirdyBeepEntry(
   timeoutSeconds: number,
 ): boolean {
   const record = asRecord(entry);
+  // This predicate grants ownership to install/uninstall, so matching our required fields is not
+  // enough: an extra field is user data and must make the file foreign/preservable.
+  if (Object.keys(record).length !== 4) return false;
   if (record["type"] !== "command") return false;
   if (record["timeoutSec"] !== timeoutSeconds) return false;
   // BOTH shells must name our command for this event: a half-rewritten file is drift, not ours.
@@ -150,6 +153,7 @@ function isBirdyBeepEntry(
  */
 function isCopilotHooksWithTimeout(input: unknown, timeoutSeconds: number): boolean {
   const record = asRecord(input);
+  if (Object.keys(record).length !== 2) return false;
   if (record["version"] !== COPILOT_HOOKS_VERSION) return false;
   const hooks = asRecord(record["hooks"]);
   if (Object.keys(hooks).length !== COPILOT_HOOK_EVENTS.length) return false;

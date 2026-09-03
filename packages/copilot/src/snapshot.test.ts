@@ -33,6 +33,17 @@ function legacyManagedHooksText(): string {
   return `${JSON.stringify(file, null, 2)}\n`;
 }
 
+function customizedLegacyHooksText(location: "root" | "entry"): string {
+  const file = JSON.parse(legacyManagedHooksText()) as Record<string, unknown>;
+  if (location === "root") {
+    file["customPolicy"] = "keep-me";
+  } else {
+    const hooks = file["hooks"] as Record<string, Array<Record<string, unknown>>>;
+    hooks["sessionStart"]![0]!["customPolicy"] = "keep-me";
+  }
+  return `${JSON.stringify(file, null, 2)}\n`;
+}
+
 describe("Copilot generated hook snapshot", () => {
   it("keeps the public generated-config example byte-for-byte current", () => {
     const example = readFileSync(
@@ -133,4 +144,28 @@ describe("Copilot generated hook snapshot", () => {
     expect(existsSync(path)).toBe(false);
     expect(existsSync(backup)).toBe(false);
   });
+
+  it.each(["root", "entry"] as const)(
+    "preserves a legacy-looking file with a custom %s field",
+    async (location) => {
+      sandbox = createSandbox();
+      const path = copilotHooksPath(options(sandbox));
+      const backup = copilotBackupPath(path);
+      const original = customizedLegacyHooksText(location);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, original);
+
+      const refused = await uninstallCopilot(options(sandbox));
+      expect(refused).toEqual({ changed: false, removedFiles: [], restoredFiles: [] });
+      expect(readFileSync(path, "utf8")).toBe(original);
+
+      const installed = await installCopilot(options(sandbox));
+      expect(installed.backupFiles).toEqual([backup]);
+      expect(readFileSync(backup, "utf8")).toBe(original);
+
+      const removed = await uninstallCopilot(options(sandbox));
+      expect(removed.restoredFiles).toEqual([path]);
+      expect(readFileSync(path, "utf8")).toBe(original);
+    },
+  );
 });
