@@ -118,6 +118,7 @@ describe("birdybeep test", () => {
       ensureConfig: false,
     });
     expect(out.text()).toContain("No active device can receive a Beep");
+    expect(out.text()).toContain("sign in to register it");
     expect(out.text()).not.toContain("check your phone for a test Beep");
   });
 

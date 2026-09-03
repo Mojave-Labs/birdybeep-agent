@@ -132,7 +132,7 @@ Pair this machine to you@example.com? [y/N] y
 Answer anything but `y`/`yes` and **no token is stored** (exit code 1). On a headless box or in CI,
 pass `--expect-email <addr>` to pin the account that must have approved it (recommended) or `--yes`
 to skip the question — without one of them a non-interactive `pair` fails closed instead of hanging.
-Full detail in [Pairing → Confirming the approving account](./pairing.md#confirming-the-approving-account).
+Full detail in [Pairing → Confirm the approving account](./pairing.md#confirm-the-approving-account).
 
 What this does with your token:
 
@@ -256,7 +256,7 @@ A managed hook entry looks like this:
   `PostToolUse`, `SubagentStart`, `SubagentStop`, and `Stop` (turn complete). Each hook runs
   `birdybeep hook codex`. Your own config is preserved, including the top-level `notify` program,
   which BirdyBeep never writes — see
-  [`examples/codex/README.md`](../examples/codex/README.md#the-notify-program).
+  [`examples/codex/README.md`](../examples/codex/README.md#existing-configuration).
 - **Status:** `needs_trust` — see the gotcha below.
 
 #### OpenCode

@@ -109,8 +109,8 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
           });
           if (reach.state === "ok" && reach.data.active_device_count === 0) {
             ctx.io.line(
-              "⚠ No active device can receive a Beep. Open BirdyBeep on a registered phone. " +
-                "If the device limit is full, free a slot in Settings › devices.",
+              "⚠ No active device can receive a Beep. Open BirdyBeep on your phone and sign in " +
+                "to register it. If the device limit is full, free a slot in Settings › devices.",
             );
           } else if (reach.state === "ok") {
             ctx.io.line(
