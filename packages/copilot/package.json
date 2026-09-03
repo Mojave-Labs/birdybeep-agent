@@ -1,6 +1,6 @@
 {
   "name": "@birdybeep/copilot",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "BirdyBeep adapter for GitHub Copilot CLI lifecycle hooks.",
   "license": "MIT",
   "repository": {
