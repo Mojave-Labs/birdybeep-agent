@@ -35,14 +35,6 @@ Not installed: OpenCode. Install it, then run `birdybeep setup` again.
 
 Installers preserve existing configuration and write one backup before the first modification. Machine tokens remain in the OS keychain or a restricted fallback file.
 
-| Harness            | Target     | Config written or patched                                     | Activation                                        |
-| ------------------ | ---------- | ------------------------------------------------------------- | ------------------------------------------------- |
-| Claude Code        | `claude`   | `~/.claude/settings.json`                                     | immediate                                         |
-| Codex              | `codex`    | `$CODEX_HOME/config.toml` or `~/.codex/config.toml`           | run `/hooks`; waits for a trusted lifecycle event |
-| OpenCode           | `opencode` | `$XDG_CONFIG_HOME/opencode/opencode.json` or its default path | restart; waits for a plugin event                 |
-| Cursor             | `cursor`   | `~/.cursor/hooks.json`                                        | immediate                                         |
-| GitHub Copilot CLI | `copilot`  | `$COPILOT_HOME/hooks/birdybeep.json` or its default path      | immediate                                         |
-
 Adapter files, activation requirements, and tested versions are listed in the [installation guide](./docs/install.md). Exact generated configuration is under [`examples/`](./examples/README.md).
 
 ## Commands
