@@ -76,6 +76,33 @@ function inspectHooks(home: string): HookState {
   return { exists: true, parseable: true, present, total, stalePaths };
 }
 
+/** Smallest user-configured deadline on a BirdyBeep Cursor hook, if readable. */
+export function configuredCursorHookTimeoutSeconds(home: string = homedir()): number | undefined {
+  try {
+    const parsed = asRecord(JSON.parse(readFileSync(cursorHooksPath(home), "utf8")));
+    const hooks = asRecord(parsed["hooks"]);
+    const timeouts: number[] = [];
+    for (const entries of Object.values(hooks)) {
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        const record = asRecord(entry);
+        const timeout = record["timeout"];
+        if (
+          isBirdyBeepEntry(entry) &&
+          typeof timeout === "number" &&
+          Number.isFinite(timeout) &&
+          timeout > 0
+        ) {
+          timeouts.push(timeout);
+        }
+      }
+    }
+    return timeouts.length > 0 ? Math.min(...timeouts) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function resolveDetect(opts: StatusOptions): Promise<DetectionResult> {
   if (opts.detect) return opts.detect();
   return detectCursor(opts.home !== undefined ? { home: opts.home } : {});

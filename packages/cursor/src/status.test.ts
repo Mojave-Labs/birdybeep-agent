@@ -12,7 +12,13 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { backupPathFor, installCursor } from "./install";
 import { cursorHooksPath } from "./paths";
-import { CURSOR_ADAPTER_VERSION, cursorDoctor, cursorStatus, cursorStatusReport } from "./status";
+import {
+  configuredCursorHookTimeoutSeconds,
+  CURSOR_ADAPTER_VERSION,
+  cursorDoctor,
+  cursorStatus,
+  cursorStatusReport,
+} from "./status";
 
 let sandbox: Sandbox | undefined;
 afterEach(() => {
@@ -30,6 +36,21 @@ const POSIX = process.platform !== "win32";
 const ROOT = POSIX && typeof process.getuid === "function" && process.getuid() === 0;
 
 describe("status()", () => {
+  it("reads the smallest configured BirdyBeep hook deadline", () => {
+    sandbox = createSandbox();
+    writeFileSync(
+      seedDir(sandbox),
+      JSON.stringify({
+        version: 1,
+        hooks: {
+          sessionStart: [{ command: "birdybeep hook cursor", timeout: 8 }],
+          sessionEnd: [{ command: "birdybeep hook cursor", timeout: 7 }],
+        },
+      }),
+    );
+    expect(configuredCursorHookTimeoutSeconds(sandbox.home)).toBe(7);
+  });
+
   it("is `installed` (immediately — no trust/restart gate) when present + all hooks registered", async () => {
     sandbox = createSandbox();
     await installCursor({}, sandbox.home);

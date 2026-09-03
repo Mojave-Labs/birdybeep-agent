@@ -5,9 +5,14 @@ import type { DetectionResult } from "@birdybeep/agent-core";
 import { createSandbox, type Sandbox } from "@birdybeep/test-harness";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { installCopilot } from "./install";
+import { generatedCopilotHooks, installCopilot } from "./install";
 import { copilotHooksPath } from "./paths";
-import { copilotDoctor, copilotStatus, copilotStatusReport } from "./status";
+import {
+  configuredCopilotHookTimeoutSeconds,
+  copilotDoctor,
+  copilotStatus,
+  copilotStatusReport,
+} from "./status";
 
 let sandbox: Sandbox | undefined;
 afterEach(() => {
@@ -26,6 +31,19 @@ function options(sb: Sandbox) {
 }
 
 describe("Copilot status + doctor", () => {
+  it("reads the smallest configured BirdyBeep hook deadline", () => {
+    sandbox = createSandbox();
+    const path = copilotHooksPath(options(sandbox));
+    mkdirSync(dirname(path), { recursive: true });
+    const config = generatedCopilotHooks() as {
+      hooks: Record<string, { timeoutSec: number }[]>;
+    };
+    config.hooks["sessionStart"]![0]!.timeoutSec = 8;
+    config.hooks["sessionEnd"]![0]!.timeoutSec = 7;
+    writeFileSync(path, JSON.stringify(config));
+    expect(configuredCopilotHookTimeoutSeconds(options(sandbox))).toBe(7);
+  });
+
   it("moves from unknown to installed and reports versions", async () => {
     sandbox = createSandbox();
     expect(await copilotStatus({ ...options(sandbox), detect: present() })).toBe("unknown");

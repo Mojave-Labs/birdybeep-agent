@@ -6,7 +6,7 @@
         "type": "command",
         "bash": "birdybeep hook copilot sessionStart",
         "powershell": "birdybeep hook copilot sessionStart",
-        "timeoutSec": 10
+        "timeoutSec": 15
       }
     ],
     "userPromptSubmitted": [
@@ -14,7 +14,7 @@
         "type": "command",
         "bash": "birdybeep hook copilot userPromptSubmitted",
         "powershell": "birdybeep hook copilot userPromptSubmitted",
-        "timeoutSec": 10
+        "timeoutSec": 15
       }
     ],
     "preToolUse": [
@@ -22,7 +22,7 @@
         "type": "command",
         "bash": "birdybeep hook copilot preToolUse",
         "powershell": "birdybeep hook copilot preToolUse",
-        "timeoutSec": 10
+        "timeoutSec": 15
       }
     ],
     "postToolUse": [
@@ -30,7 +30,7 @@
         "type": "command",
         "bash": "birdybeep hook copilot postToolUse",
         "powershell": "birdybeep hook copilot postToolUse",
-        "timeoutSec": 10
+        "timeoutSec": 15
       }
     ],
     "agentStop": [
@@ -38,7 +38,7 @@
         "type": "command",
         "bash": "birdybeep hook copilot agentStop",
         "powershell": "birdybeep hook copilot agentStop",
-        "timeoutSec": 10
+        "timeoutSec": 15
       }
     ],
     "subagentStop": [
@@ -46,7 +46,7 @@
         "type": "command",
         "bash": "birdybeep hook copilot subagentStop",
         "powershell": "birdybeep hook copilot subagentStop",
-        "timeoutSec": 10
+        "timeoutSec": 15
       }
     ],
     "errorOccurred": [
@@ -54,7 +54,7 @@
         "type": "command",
         "bash": "birdybeep hook copilot errorOccurred",
         "powershell": "birdybeep hook copilot errorOccurred",
-        "timeoutSec": 10
+        "timeoutSec": 15
       }
     ],
     "sessionEnd": [
@@ -62,7 +62,7 @@
         "type": "command",
         "bash": "birdybeep hook copilot sessionEnd",
         "powershell": "birdybeep hook copilot sessionEnd",
-        "timeoutSec": 10
+        "timeoutSec": 15
       }
     ]
   }

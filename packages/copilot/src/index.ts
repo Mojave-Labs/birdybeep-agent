@@ -28,6 +28,7 @@ export {
   type CopilotPathOptions,
 } from "./paths";
 export {
+  configuredCopilotHookTimeoutSeconds,
   COPILOT_ADAPTER_VERSION,
   copilotDoctor,
   copilotStatus,

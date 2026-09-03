@@ -47,8 +47,9 @@ export const BIRDYBEEP_HOOK_COMMAND = hookCommand("claude");
 export function resolveClaudeHookCommand(): string {
   return resolveHookCommand("claude");
 }
-/** Per-hook timeout (seconds) so a slow/offline send never hangs Claude Code. */
-export const HOOK_TIMEOUT_SECONDS = 10;
+/** Per-hook timeout: 3s stdin + 8s bounded send + startup headroom. */
+export const HOOK_TIMEOUT_SECONDS = 15;
+const LEGACY_HOOK_TIMEOUT_SECONDS = 10;
 /** The REAL Claude Code hook events BirdyBeep registers (see §9.5 reconciliation above). */
 export const BIRDYBEEP_HOOK_EVENTS = [
   "SessionStart",
@@ -103,10 +104,10 @@ export function isBirdyBeepEntry(entry: unknown): boolean {
 }
 
 /**
- * Rewrite ONLY our inner hook's command, leaving the matcher entry otherwise byte-identical:
- * the user's sibling commands, the `matcher` itself, our hook's own `timeout`, and any field
- * either object carries that we do not know about all survive. Returns the original object
- * (not a copy) when nothing needs changing, so an unchanged entry is preserved exactly.
+ * Rewrite ONLY our inner hook's managed fields, leaving the matcher entry otherwise
+ * byte-identical: the user's sibling commands, the `matcher`, customized timeouts, and unknown
+ * fields survive. The old managed 10s default is upgraded to 15s alongside the sender budget;
+ * any other timeout is treated as the user's and preserved.
  */
 function repairEntryCommand(entry: unknown, command: string): { entry: unknown; changed: boolean } {
   const record = asRecord(entry);
@@ -116,9 +117,15 @@ function repairEntryCommand(entry: unknown, command: string): { entry: unknown; 
   const nextHooks = (hooks as unknown[]).map((hook): unknown => {
     if (!isBirdyBeepHook(hook)) return hook; // a user's sibling command — never touched
     const inner = asRecord(hook);
-    if (inner["command"] === command) return hook;
+    const commandChanged = inner["command"] !== command;
+    const timeoutChanged = inner["timeout"] === LEGACY_HOOK_TIMEOUT_SECONDS;
+    if (!commandChanged && !timeoutChanged) return hook;
     changed = true;
-    return { ...inner, command }; // preserve type/timeout/unknown fields on OUR hook
+    return {
+      ...inner,
+      ...(commandChanged ? { command } : {}),
+      ...(timeoutChanged ? { timeout: HOOK_TIMEOUT_SECONDS } : {}),
+    };
   });
   if (!changed) return { entry, changed: false };
   return { entry: { ...record, hooks: nextHooks }, changed: true };

@@ -462,7 +462,7 @@ matcher = ""
 [[hooks.SessionStart.hooks]]
 type = "command"
 command = "birdybeep hook codex"
-timeout = 10
+timeout = 15
 ```
 
 ---
@@ -531,7 +531,7 @@ export async function runAgentHook(adapter, rawInput, options): Promise<HookResu
   (`harness:session:event_type`) inside a short window (default 10s), so the user gets one beep, not
   two. It fails **open** — a ledger I/O error allows the send rather than dropping a notification.
 - **Sender** ([`sender.ts`](../packages/agent-core/src/sender.ts)): `POST`s the event to
-  `/v1/agent-events` with a short hard timeout (default 3s), reading the token from secure storage
+  `/v1/agent-events` with a short hard timeout (default 8s), reading the token from secure storage
   at send time. On timeout/network/transient failure it **queues** the event and returns fast; it
   also opportunistically drains the backlog on each send. With no machine token it queues nothing,
   returns `unpaired`, and records the discard for `status` / `doctor` to report. The

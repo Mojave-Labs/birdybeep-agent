@@ -29,6 +29,7 @@ export {
   cursorHooksPath,
 } from "./paths";
 export {
+  configuredCursorHookTimeoutSeconds,
   CURSOR_ADAPTER_VERSION,
   cursorDoctor,
   cursorStatus,

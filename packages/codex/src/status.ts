@@ -28,6 +28,7 @@ import {
   BIRDYBEEP_HOOK_EVENTS,
   codexTurnCompleteIsDark,
   installedBirdyBeepCommands,
+  isBirdyBeepHook,
   isBirdyBeepHookEntry,
   MIGRATION_WARNING,
   notifyIsLegacyBirdyBeep,
@@ -100,6 +101,37 @@ function inspectConfig(home: string): ConfigState {
     total,
     stalePaths,
   };
+}
+
+/** Smallest user-configured deadline on a BirdyBeep Codex lifecycle hook, if readable. */
+export function configuredCodexHookTimeoutSeconds(home: string = homedir()): number | undefined {
+  try {
+    const parsed = asRecord(parse(readFileSync(codexConfigFile({ home }), "utf8")));
+    const hooks = asRecord(parsed["hooks"]);
+    const timeouts: number[] = [];
+    for (const entries of Object.values(hooks)) {
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        const innerHooks = asRecord(entry)["hooks"];
+        if (!Array.isArray(innerHooks)) continue;
+        for (const hook of innerHooks) {
+          const record = asRecord(hook);
+          const timeout = record["timeout"];
+          if (
+            isBirdyBeepHook(hook) &&
+            typeof timeout === "number" &&
+            Number.isFinite(timeout) &&
+            timeout > 0
+          ) {
+            timeouts.push(timeout);
+          }
+        }
+      }
+    }
+    return timeouts.length > 0 ? Math.min(...timeouts) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function resolveDetect(opts: CodexStatusOptions): Promise<DetectionResult> {

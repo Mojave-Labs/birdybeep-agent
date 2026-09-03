@@ -16,12 +16,13 @@ import { type ErrorCode } from "./api";
 import { type BirdyBeepAgentEvent } from "./event";
 import { normalizeEvent } from "./normalize";
 import { LocalEventQueue, QUEUE_RETENTION_MS } from "./queue";
-import { createSender } from "./sender";
+import { createSender, DEFAULT_SEND_TIMEOUT_MS, DEFAULT_TOTAL_BUDGET_MS } from "./sender";
 import { type KeychainBackend } from "./token-store";
 import { readUnpairedNotice } from "./unpaired-notice";
 
 let sandbox: Sandbox | undefined;
 afterEach(() => {
+  vi.useRealTimers();
   sandbox?.cleanup();
   sandbox = undefined;
   vi.restoreAllMocks();
@@ -97,6 +98,41 @@ describe("happy path", () => {
     await sender.send(event());
     expect(seenAuth).toBe(`Bearer ${TOKEN}`);
   });
+
+  it("accepts a healthy six-second production response instead of falsely queueing it", async () => {
+    vi.useFakeTimers();
+    sandbox = createSandbox();
+    const queue = new LocalEventQueue({ dir: sandbox.path("data", "q") });
+    const fetchImpl = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          const timer = setTimeout(
+            () => resolve(jsonResponse(202, { accepted: true, decision: "notified" })),
+            6000,
+          );
+          init?.signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    ) as unknown as typeof fetch;
+    const sender = createSender({
+      baseUrl: "http://api.test",
+      queue,
+      fetchImpl,
+      tokenOptions: { backend: tokenBackend(TOKEN), filePath: sandbox.path("data", "token") },
+    });
+
+    const pending = sender.send(event());
+    await vi.advanceTimersByTimeAsync(6000);
+    const result = await pending;
+
+    expect(DEFAULT_SEND_TIMEOUT_MS).toBeGreaterThan(6000);
+    expect(DEFAULT_TOTAL_BUDGET_MS).toBeGreaterThan(6000);
+    expect(result).toMatchObject({ outcome: "delivered", status: 202, decision: "notified" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(queue.size()).toBe(0);
+  });
 });
 
 describe("transient failures queue and return fast", () => {
@@ -114,6 +150,49 @@ describe("transient failures queue and return fast", () => {
     expect(r.outcome).toBe("queued");
     expect(queue.size()).toBe(1);
     expect(elapsed).toBeLessThan(1000); // 50ms timeout → fast return
+  });
+
+  it("counts secure-store lookup against the total timeout budget", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    sandbox = createSandbox();
+    const queue = new LocalEventQueue({ dir: sandbox.path("data", "q") });
+    const backend: KeychainBackend = {
+      available: true,
+      get: () => {
+        // A slow-but-successful token lookup used 1.5s of the outer 8s budget.
+        vi.setSystemTime(1500);
+        return Promise.resolve(TOKEN);
+      },
+      set: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+    };
+    const fetchImpl = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    ) as unknown as typeof fetch;
+    const sender = createSender({
+      baseUrl: "http://api.test",
+      queue,
+      fetchImpl,
+      tokenOptions: { backend, filePath: sandbox.path("data", "token") },
+      timeoutMs: 8000,
+      totalBudgetMs: 8000,
+    });
+
+    const pending = sender.send(event());
+    await vi.advanceTimersByTimeAsync(6500);
+    const result = await pending;
+
+    // The request received only the 6.5s that remained, rather than a fresh 8s after lookup.
+    expect(Date.now()).toBe(8000);
+    expect(result).toMatchObject({ outcome: "queued", queueCause: "transport" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(queue.size()).toBe(1);
   });
 
   it("a 5xx and a 429 rate_limited both queue", async () => {

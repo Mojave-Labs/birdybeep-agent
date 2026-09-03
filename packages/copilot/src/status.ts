@@ -2,16 +2,22 @@
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 
 import type { DetectionResult, DoctorResult, IntegrationStatus } from "@birdybeep/agent-core";
-import { staleHookCommandPaths } from "@birdybeep/agent-core";
+import { isBirdyBeepHookCommand, staleHookCommandPaths } from "@birdybeep/agent-core";
 
 import { detectCopilot } from "./detect";
-import { installedBirdyBeepCommands, isCurrentCopilotHooks } from "./install";
+import { COPILOT_HOOK_EVENTS, installedBirdyBeepCommands, isCurrentCopilotHooks } from "./install";
 import { copilotHooksDir, copilotHooksPath, type CopilotPathOptions } from "./paths";
 
 export const COPILOT_ADAPTER_VERSION = "0.0.0";
 
 export interface CopilotStatusOptions extends CopilotPathOptions {
   detect?: () => Promise<DetectionResult>;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 interface HookState {
@@ -48,6 +54,34 @@ function inspectHooks(options: CopilotPathOptions): HookState {
     };
   } catch {
     return { exists: true, parseable: false, current: false, stalePaths: [] };
+  }
+}
+
+/** Smallest user-configured deadline on a BirdyBeep Copilot hook, if readable. */
+export function configuredCopilotHookTimeoutSeconds(
+  options: CopilotPathOptions = {},
+): number | undefined {
+  try {
+    const parsed = asRecord(JSON.parse(readFileSync(copilotHooksPath(options), "utf8")));
+    const hooks = asRecord(parsed["hooks"]);
+    const timeouts: number[] = [];
+    for (const event of COPILOT_HOOK_EVENTS) {
+      const entries = hooks[event];
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        const record = asRecord(entry);
+        const timeout = record["timeoutSec"];
+        const isBirdyBeep = ["bash", "powershell"].some((shell) =>
+          isBirdyBeepHookCommand(record[shell], "copilot", [event]),
+        );
+        if (isBirdyBeep && typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0) {
+          timeouts.push(timeout);
+        }
+      }
+    }
+    return timeouts.length > 0 ? Math.min(...timeouts) : undefined;
+  } catch {
+    return undefined;
   }
 }
 

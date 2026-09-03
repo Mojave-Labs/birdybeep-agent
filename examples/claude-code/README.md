@@ -4,7 +4,7 @@
 
 ## Installed entries
 
-Each managed entry runs `birdybeep hook claude` with a 10-second timeout.
+Each managed entry runs `birdybeep hook claude` with a 15-second timeout.
 
 | Hook event          | Event                                |
 | ------------------- | ------------------------------------ |
@@ -23,7 +23,7 @@ Each managed entry runs `birdybeep hook claude` with a 10-second timeout.
     {
       "type": "command",
       "command": "birdybeep hook claude",
-      "timeout": 10
+      "timeout": 15
     }
   ]
 }
