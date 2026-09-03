@@ -181,7 +181,7 @@ function renderRootHelp(version: string, commands: Command[]): string {
   const lines = commands.map((c) => `  ${c.name.padEnd(width)}  ${c.summary}`);
   const featured = commands.filter((c) => c.gettingStarted !== undefined);
   return [
-    `birdybeep ${version} — stream coding-agent lifecycle events to BirdyBeep.`,
+    `birdybeep ${version}: phone alerts for coding agents.`,
     "",
     "Usage:",
     "  birdybeep <command> [options]",
@@ -222,7 +222,7 @@ function commandFlagTokens(...commands: (Command | undefined)[]): ReadonlySet<st
 
 function renderCommandHelp(path: string, command: Command): string {
   const lines = [
-    `birdybeep ${path} — ${command.summary}`,
+    `birdybeep ${path}: ${command.summary}`,
     "",
     "Usage:",
     `  ${command.usage ?? `birdybeep ${path} [options]`}`,

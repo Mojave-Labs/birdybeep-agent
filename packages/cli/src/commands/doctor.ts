@@ -195,8 +195,8 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
           ok: false,
           detail: describeUnpairedActivity(unpaired),
           remedy:
-            "Run `birdybeep pair`. Events that fired before pairing are gone — a first pairing " +
-            "does not replay them.",
+            "Run `birdybeep pair`. Events that fired before pairing were not saved and will not " +
+            "be replayed.",
         });
       }
 
@@ -211,12 +211,12 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
           name: "Approval beeps from Cursor",
           ok: false,
           detail:
-            "Cursor is running your agent through the Claude Code hooks — that is why Cursor " +
+            "Cursor is running your agent through the Claude Code hooks. This is why Cursor " +
             "events arrive without a Cursor install. Its bridge drops Notification and " +
             "PermissionRequest, so approvals never reach you.",
           remedy:
             "Run `birdybeep agent install cursor` to get approval beeps from Cursor's own shell " +
-            "and MCP permission prompts. Keeping both installed is safe — duplicate events are " +
+            "and MCP permission prompts. Keeping both installed is safe; duplicate events are " +
             "collapsed.",
         });
       }
@@ -285,7 +285,7 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
               name: "Backend reachable",
               ok: false,
               detail: `Could not reach ${apiUrl}.`,
-              remedy: "Check your network; queued events will retry automatically.",
+              remedy: "Check your network. Queued events retry automatically.",
             },
       );
 
@@ -315,10 +315,10 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
         });
       } else {
         for (const c of checks) {
-          ctx.io.line(`${c.ok ? "✓" : "✗"}  ${c.name}${c.detail ? ` — ${c.detail}` : ""}`);
+          ctx.io.line(`${c.ok ? "✓" : "✗"}  ${c.name}${c.detail ? `: ${c.detail}` : ""}`);
           if (!c.ok && c.remedy) ctx.io.line(`     → ${c.remedy}`);
         }
-        ctx.io.line(ok ? "\nAll checks passed." : "\nSome checks failed — see fixes above.");
+        ctx.io.line(ok ? "\nAll checks passed." : "\nSome checks failed. See fixes above.");
       }
       return ok ? EXIT.OK : EXIT.ERROR;
     },

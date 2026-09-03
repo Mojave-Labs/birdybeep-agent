@@ -2,7 +2,7 @@
   "name": "birdybeep-agent",
   "version": "0.0.0",
   "private": true,
-  "description": "Public, MIT-licensed BirdyBeep CLI and adapters for Claude Code, Codex, OpenCode, Cursor, and GitHub Copilot CLI.",
+  "description": "BirdyBeep CLI and adapters for Claude Code, Codex, OpenCode, Cursor, and GitHub Copilot CLI.",
   "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@10.28.2",

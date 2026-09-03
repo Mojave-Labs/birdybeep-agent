@@ -246,7 +246,7 @@ describe("codexDoctor — trust after a migration", () => {
     expect(check?.detail).toMatch(/has not fired a trusted lifecycle hook yet/);
   });
 
-  it("says turn-complete is OFF right now when an install migrated an existing user", async () => {
+  it("says completion notifications are disabled after an install migration", async () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
     const dataDir = sandbox.path("data");
@@ -254,7 +254,7 @@ describe("codexDoctor — trust after a migration", () => {
     const r = await doctorFor(sandbox.home, dataDir);
     const check = r.checks.find((c) => c.name === "Codex hooks trusted");
     expect(check?.ok).toBe(false);
-    expect(check?.detail).toMatch(/turn-complete beeps are OFF right now/i);
+    expect(check?.detail).toMatch(/completion notifications are disabled/i);
     expect(check?.remedy).toMatch(/\/hooks/);
   });
 

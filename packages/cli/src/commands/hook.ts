@@ -359,7 +359,7 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       if (harness === "copilot" && copilotEventName === undefined) {
         ctx.io.errline(
           `birdybeep hook copilot: second argument must be a Copilot hook event name, got ` +
-            `${JSON.stringify(ctx.args[1] ?? "(none)")} — nothing was sent.`,
+            `${JSON.stringify(ctx.args[1] ?? "(none)")}. Nothing was sent.`,
         );
         return EXIT.USAGE;
       }
@@ -399,7 +399,7 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       // output); an unparseable one is described by BYTE LENGTH only.
       const drop = (reason: string, detail: string): number => {
         ctx.io.result({ harness, outcome: "skipped", reason });
-        ctx.io.errline(`birdybeep hook ${harness}: ${detail} — nothing was sent.`);
+        ctx.io.errline(`birdybeep hook ${harness}: ${detail}. Nothing was sent.`);
         return EXIT.ERROR;
       };
       if (read === null) {
@@ -438,7 +438,7 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
         const article = handler === "opencode" ? "an" : "a"; // the only vowel-initial harness id
         ctx.io.errline(
           `birdybeep hook ${harness}: ${describeDiscriminator(payload)} is not ${article} ` +
-            `${handler} hook event — nothing was sent. Check which tool is running this hook.`,
+            `${handler} hook event. Nothing was sent. Check which tool is running this hook.`,
         );
         return EXIT.ERROR;
       }
@@ -469,17 +469,16 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       // silence. The durable half of this signal is the notice file agent-core just wrote.
       if (result.outcome === "unpaired") {
         ctx.io.errline(
-          "birdybeep: this machine is not paired — the event was not sent and was not queued. " +
-            "Run `birdybeep pair` (or `birdybeep doctor` to see how many events this has cost).",
+          "birdybeep: this machine is not paired. The event was not sent or queued. " +
+            "Run `birdybeep pair`, or run `birdybeep doctor` to see how many events were missed.",
         );
       }
       // 9u0: a retryable send is still lost when the queue cannot write it. Hooks remain exit 0
       // (BirdyBeep must not break the harness), but stderr and --json must not promise a retry.
       if (result.outcome === "failed") {
         ctx.io.errline(
-          "birdybeep: the event could not be sent, and the local queue could not save it — it " +
-            "will not retry. Check that BirdyBeep can write to its user data directory; run " +
-            "`birdybeep doctor` for details.",
+          "birdybeep: the event could not be sent or saved locally. It will not retry. Check " +
+            "that BirdyBeep can write to its user data directory, then run `birdybeep doctor`.",
         );
       }
       // birdybeep-agent-gcgp.23: the same line for a store that would not ANSWER would be a
@@ -490,9 +489,8 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
         result.outcome === "queued" ? result.send?.tokenStoreUnavailable : undefined;
       if (unavailable !== undefined) {
         ctx.io.errline(
-          `birdybeep: could not read the machine token (${unavailable.reason}) — the event was ` +
-            "QUEUED, not sent. It will deliver once the token store is readable (unlock your " +
-            "keychain); `birdybeep doctor` drains the queue.",
+          `birdybeep: the machine token is unreadable (${unavailable.reason}). The event is ` +
+            "queued. Restore token-store access; `birdybeep doctor` drains the queue.",
         );
       }
       // A recognized event we deliberately don't map stays quiet at exit 0, so normal

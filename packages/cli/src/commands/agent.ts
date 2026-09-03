@@ -116,14 +116,14 @@ async function installSelected(
   }
 
   if (outcomes.length === 0 || outcomes.every((o) => !o.detected)) {
-    ctx.io.line("No supported harnesses detected — nothing to install.");
+    ctx.io.line("No supported harnesses detected. Nothing was installed.");
   }
   for (const o of outcomes) {
     if (!o.detected) {
       // A skip used to be a dead end: no hint that installing the harness and re-running would
       // finish the job, and nothing recorded so a later run picks it up.
       ctx.io.line(
-        `–  ${o.displayName}: not detected (skipped) — install it, then run \`birdybeep agent install ${installTarget(o.harness)}\``,
+        `–  ${o.displayName}: not detected (skipped). Install it, then run \`birdybeep agent install ${installTarget(o.harness)}\`.`,
       );
       continue;
     }
@@ -133,8 +133,7 @@ async function installSelected(
   }
   if (!paired) {
     ctx.io.line(
-      "⚠  This machine is not paired, so nothing these hooks produce can reach you. " +
-        "Run `birdybeep setup` — it pairs, wires up every agent, and sends a test Beep.",
+      "⚠  This machine is not paired. Run `birdybeep setup` before expecting notifications.",
     );
   }
   return EXIT.OK;

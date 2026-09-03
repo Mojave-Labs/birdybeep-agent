@@ -1,30 +1,20 @@
-# Example — Claude Code
+# Claude Code configuration
 
-This is the **exact** config `birdybeep agent install claude` writes into your Claude Code user
-settings at `~/.claude/settings.json`. It is the same artifact the adapter's snapshot tests assert
-against — not a hand-written approximation — so what you see here is what the installer produces.
+`birdybeep agent install claude` adds the entries in [`settings.json`](./settings.json) to `~/.claude/settings.json`. Existing settings and hooks remain in place.
 
-[`settings.json`](./settings.json) shows the **from-scratch** case: a brand-new settings file with
-nothing in it but BirdyBeep's hooks. If you already have a `settings.json`, the installer merges
-these entries in and leaves everything else untouched (see "Non-destructive" below).
+## Installed entries
 
-## What BirdyBeep adds
+Each managed entry runs `birdybeep hook claude` with a 10-second timeout.
 
-BirdyBeep registers a `command` hook on the Claude Code lifecycle events it consumes. Each one runs
-`birdybeep hook claude`, which reads the event from Claude Code, normalizes and redacts it, and ships
-a notification to your phone:
-
-| Hook event          | Why BirdyBeep listens                             |
-| ------------------- | ------------------------------------------------- |
-| `SessionStart`      | a session began on this machine                   |
-| `Notification`      | Claude Code surfaced a notification/prompt        |
-| `PermissionRequest` | a tool/command is waiting on your approval        |
-| `Stop`              | the agent finished its turn                       |
-| `StopFailure`       | the turn ended in failure                         |
-| `SubagentStop`      | a subagent finished                               |
-| `SessionEnd`        | the session closed for good (settles it as ended) |
-
-Every entry is identical in shape:
+| Hook event          | Event                                |
+| ------------------- | ------------------------------------ |
+| `SessionStart`      | session started                      |
+| `Notification`      | notification or prompt               |
+| `PermissionRequest` | tool or command waiting for approval |
+| `Stop`              | turn finished                        |
+| `StopFailure`       | turn failed                          |
+| `SubagentStop`      | subagent finished                    |
+| `SessionEnd`        | session ended                        |
 
 ```json
 {
@@ -39,35 +29,14 @@ Every entry is identical in shape:
 }
 ```
 
-The `timeout: 10` (seconds) is a hard cap so a slow or offline send can never hang Claude Code — the
-hook always returns fast and queues locally if the network is down.
+## Existing configuration
 
-## What you keep
+The installer appends BirdyBeep's entries to the seven hook lists and preserves other settings and hooks. Before the first change, it writes `~/.claude/settings.json.birdybeep-backup`.
 
-Everything else. The installer only touches the `hooks` key, and within it only the seven events above.
-Any other settings — `theme`, `mcpServers`, `permissions`, your own `Stop` hook — are preserved
-exactly. If you already have a hook on one of these events, BirdyBeep's entry is **appended** to that
-event's list; your hook is never replaced. The original file is backed up once to
-`~/.claude/settings.json.birdybeep-backup` before the first change.
+## Activation
 
-## No token here
+Claude Code reads `settings.json` immediately. No restart or trust step is required.
 
-There is **no token in this file**, and there never will be. `birdybeep hook claude` reads your
-machine token from the OS keychain (or a strict-permission file) at event time. Tokens are never
-written into harness config or any repo file. See [`docs/security.md`](../../docs/security.md).
+## Removal
 
-## Reversible
-
-`birdybeep agent uninstall claude` removes exactly these BirdyBeep-managed entries and restores the
-original file. Installs are idempotent — running install twice produces this same result, with no
-duplicate hooks.
-
-## When it takes effect
-
-Immediately. Claude Code reads `settings.json` live, so there is no restart or trust step — the next
-event flows the moment install finishes.
-
-## Learn more
-
-- [`docs/install.md`](../../docs/install.md) — install / uninstall flow
-- [`docs/security.md`](../../docs/security.md) — token storage and exactly what data leaves the machine
+`birdybeep agent uninstall claude` removes BirdyBeep-owned entries and restores the original file where appropriate. Repeated installation does not add duplicate hooks.

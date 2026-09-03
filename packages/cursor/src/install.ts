@@ -245,7 +245,7 @@ export function installCursor(
       changed: false,
       changedFiles: [hooksPath],
       backupFiles,
-      requiredActions: ["dry run — re-run without dryRun to apply"],
+      requiredActions: ["Dry run. Re-run without dryRun to apply."],
       status: "installed",
     });
   }

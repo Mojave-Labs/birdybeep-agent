@@ -1,524 +1,195 @@
 # Troubleshooting
 
-This page maps real BirdyBeep symptoms to fixes. It is built around the output of `birdybeep doctor`,
-the self-service troubleshooter — so the fastest path is almost always:
+Run `birdybeep doctor` first. It checks pairing, detected adapters, the local queue, device reachability, quota, and backend reachability. Failed checks include a command or action to try.
 
 ```bash
 birdybeep doctor
+birdybeep doctor --json
 ```
 
-`doctor` is **read-only**: it never edits your harness config and never prints token material or
-notification contents. It checks your machine token, each detected harness, the local event queue, and
-backend reachability; prints a copy-pasteable fix under every failed check; and **drains the local queue**
-on its way through. It exits non-zero if any check fails, so it is safe to use in scripts and CI.
+Installation steps are in [`install.md`](install.md); data and token handling are in [`security.md`](security.md).
 
-A clean run ends with:
+## Diagnostic output
 
-```
-All checks passed.
-```
+| Marker | Meaning                         |
+| ------ | ------------------------------- |
+| `✓`    | check passed                    |
+| `✗`    | check failed                    |
+| `!`    | action or information available |
 
-A run with failures ends with:
+`doctor` exits with status 1 when a required check fails. `--json` returns the same checks without terminal formatting.
 
-```
-Some checks failed — see fixes above.
-```
+## Adapter status
 
-> Looking for install steps? See [`install.md`](install.md). Want the privacy/security rationale (what
-> leaves the machine, how tokens are stored)? See [`security.md`](security.md).
+### Integration reports `not_detected`
 
----
-
-## How to read `doctor` output
-
-Each line is a single check. A passing check starts with `✓`; a failing one starts with `✗` and is
-followed by an indented `→` fix:
-
-```
-✓  Machine token
-✓  Claude Code: Claude Code installed
-✗  Codex: Codex hooks trusted — BirdyBeep hooks are installed but Codex has not fired a trusted lifecycle hook yet. Until they are trusted, Codex silently skips them, so no beeps will arrive.
-     → Open Codex and run /hooks to trust the BirdyBeep hooks.
-✓  Local queue — 0 queued → 0 delivered, 0 remaining
-✓  Backend reachable
-
-Some checks failed — see fixes above.
-```
-
-Per-harness checks are prefixed with the harness name (`Claude Code:`, `Codex:`, `OpenCode:`,
-`Cursor:`, `GitHub Copilot CLI:`). For a shorter snapshot of just pairing + per-harness status +
-queue depth, use:
+The coding agent is not installed in a location BirdyBeep can detect. Install it, start it once if it creates configuration on first run, then run:
 
 ```bash
-birdybeep status
+birdybeep agent install <harness>
+birdybeep doctor
 ```
 
-`status` prints each integration's state (`installed`, `not_detected`, `needs_trust`, `needs_restart`,
-`unknown`, `error`, `revoked`) and also drains the queue opportunistically. It exits non-zero when
-you are not paired.
+Supported targets are `claude`, `codex`, `opencode`, `cursor`, and `copilot`.
 
-Want machine-readable output for either command? Add `--json` — every finding is mirrored there.
+### Codex reports `needs_trust`
 
----
+Open Codex and run `/hooks`. Status changes to `installed` after the next trusted lifecycle event reaches BirdyBeep.
 
-## Symptom → fix
+If status remains `needs_trust`, trigger a Codex lifecycle event and run `birdybeep doctor` again. A top-level `notify` event does not prove lifecycle-hook trust.
 
-### Integration shows `not_detected`
+### OpenCode reports `needs_restart`
 
-**Symptom** — `status` shows a harness as `not_detected`, or `doctor` prints:
+Restart every running OpenCode process, trigger an event, then run `birdybeep doctor` again. Status changes after the restarted plugin emits an event.
 
-```
-✗  Claude Code: Claude Code installed — Claude Code was not found on this machine.
-     → Install Claude Code, then re-run `birdybeep agent install claude`.
-```
+### Integration reports `unknown`
 
-The equivalent for the other harnesses:
+The harness is present but its BirdyBeep entries are missing. Run:
 
-```
-✗  Codex: Codex installed — Codex was not found on this machine.
-     → Install Codex, then re-run `birdybeep agent install codex`.
-
-✗  OpenCode: OpenCode installed — OpenCode was not found on this machine.
-     → Install OpenCode, then re-run `birdybeep agent install opencode`.
-
-✗  Cursor: Cursor installed — Cursor was not found on this machine.
-     → Install Cursor, then re-run `birdybeep agent install cursor`.
-
-✗  GitHub Copilot CLI: GitHub Copilot CLI installed — The `copilot` CLI and configuration directory were not found.
-     → Install GitHub Copilot CLI, then run `birdybeep agent install copilot`.
+```bash
+birdybeep agent install <harness>
 ```
 
-**Fix** — BirdyBeep could not detect the harness binary. Install (or fix the `PATH` for) the harness,
-then re-run the matching install command — or `birdybeep setup`, which wires up every harness it
-finds and skips pairing when the machine already has a token. Once the harness is detected, the
-rest of that harness's checks appear.
+Repeated installation does not add duplicate entries.
 
----
+### Integration reports `error`
 
-### Codex shows `needs_trust`
+The diagnostic detail identifies the configuration problem.
 
-**Symptom** — `status` shows `Codex: needs_trust`, or `doctor` prints:
+Malformed JSON or TOML:
 
-```
-✗  Codex: Codex hooks trusted — BirdyBeep hooks are installed but Codex has not sent an event yet.
-     → Open Codex and run /hooks to trust the BirdyBeep hooks.
-```
+1. Repair the file shown by `doctor`, or remove it if it contains nothing you need.
+2. If `doctor` reports a `.birdybeep-backup`, restore that file instead.
+3. Run `birdybeep agent install <harness>`.
 
-**Why** — writing the lifecycle hooks into `~/.codex/config.toml` is **not** enough to count as
-installed: Codex requires a **one-time trust** of those hooks. Until a trusted **lifecycle hook**
-actually fires, BirdyBeep reports `needs_trust` rather than `installed`. (A turn-complete beep
-arriving from a `notify` program does **not** count — `notify` runs without trust, so it is no proof
-the hooks are trusted.)
+BirdyBeep does not modify a configuration file it cannot parse.
 
-**Fix** — open Codex and run:
+Partial installation:
 
-```
-/hooks
+```bash
+birdybeep agent install <harness>
 ```
 
-Trust the BirdyBeep hooks. The status flips to `installed` after the **first trusted lifecycle hook**
-fires — it does not flip the moment you trust. Just keep working in Codex; the next lifecycle event (a
-session start, a tool call, an approval prompt, etc.) marks it trusted, and `doctor` will then show:
+The installer restores missing BirdyBeep-owned entries while preserving other configuration.
 
-```
-✓  Codex: Codex hooks trusted
-```
+Stale hook command:
 
----
-
-### OpenCode shows `needs_restart`
-
-**Symptom** — `status` shows `OpenCode: needs_restart`, or `doctor` prints:
-
-```
-✗  OpenCode: OpenCode plugin loaded — The BirdyBeep plugin is configured but OpenCode has not sent an event yet.
-     → Restart OpenCode so it loads the BirdyBeep plugin.
+```bash
+birdybeep agent install <harness>
 ```
 
-**Why** — OpenCode loads plugins **only at startup**. The `@birdybeep/opencode` entry is in your
-`opencode.json`, but the running OpenCode process started before it was added, so the plugin is not loaded
-yet. BirdyBeep reports `needs_restart` until the first event proves the plugin loaded.
+Run this after moving the CLI or changing Node versions. It replaces the managed hook command with the current executable path.
 
-**Fix** — fully restart OpenCode. After it restarts and the plugin emits its first event, the status flips
-to `installed`:
+Read-only configuration: change the file or directory permissions reported by `doctor`, then run the installation command again.
 
-```
-✓  OpenCode: OpenCode plugin loaded
-```
+## Pairing
 
----
+### Pairing cannot ask for confirmation
 
-### Integration shows `unknown` (harness present, BirdyBeep not installed)
+For CI or scripts, require the expected account:
 
-**Symptom** — `doctor` prints one of:
-
-```
-✗  Claude Code: BirdyBeep hooks installed — BirdyBeep hooks are not installed.
-     → Run `birdybeep agent install claude` to (re)install the hooks.
-
-✗  Codex: BirdyBeep hooks installed — BirdyBeep is not installed in Codex.
-     → Run `birdybeep agent install codex` to (re)install the hooks. It adds only BirdyBeep entries and leaves any other tool's Codex config alone.
-
-✗  OpenCode: BirdyBeep plugin configured — The `@birdybeep/opencode` plugin is not in opencode.json.
-     → Run `birdybeep agent install opencode` to add the plugin.
-
-✗  Cursor: BirdyBeep hooks installed — BirdyBeep hooks are not installed.
-     → Run `birdybeep agent install cursor` to (re)install the hooks.
-
-✗  GitHub Copilot CLI: BirdyBeep hooks installed — BirdyBeep's Copilot hook file is not installed.
-     → Run `birdybeep agent install copilot` to install the current hooks.
+```bash
+birdybeep pair --expect-email you@example.com
 ```
 
-**Fix** — the harness is detected, but BirdyBeep's managed entries are not present. Run the matching
-install command. Installs are idempotent, back up the original config once, and add only BirdyBeep-managed
-entries — re-running is always safe.
+Use `birdybeep pair --yes` only when accepting any approving account is intended.
 
----
+PowerShell, `cmd`, Windows Terminal, and the VS Code terminal provide a usable Windows terminal. In Git Bash, MSYS, or mintty, run:
 
-### Partial install / malformed config shows `error`
-
-A harness reports `error` when its config is corrupt or only half-configured. The common shapes:
-
-**Malformed config** — the config file is not valid:
-
-```
-✗  Claude Code: settings.json is valid JSON — ~/.claude/settings.json is not valid JSON.
-     → Fix the JSON in ~/.claude/settings.json (or delete it), then run `birdybeep agent install claude`.
-
-✗  Codex: config.toml is valid TOML — ~/.codex/config.toml is not valid TOML.
-     → Fix the TOML in ~/.codex/config.toml (or delete it), then run `birdybeep agent install codex`.
-
-✗  OpenCode: opencode.json is valid JSON — ~/.config/opencode/opencode.json is not valid JSON.
-     → Fix the JSON in ~/.config/opencode/opencode.json (or delete it), then run `birdybeep agent install opencode`.
-
-✗  Cursor: hooks.json is valid JSON — ~/.cursor/hooks.json is not valid JSON.
-     → Fix the JSON in ~/.cursor/hooks.json (or delete it), then run `birdybeep agent install cursor`.
-
-✗  GitHub Copilot CLI: BirdyBeep hook file valid JSON — ~/.copilot/hooks/birdybeep.json is not valid JSON.
-     → Repair or remove the file, then run `birdybeep agent install copilot`.
+```bash
+winpty birdybeep pair
 ```
 
-BirdyBeep will not write into a config file it cannot parse (that would risk destroying your settings).
-Fix the JSON/TOML by hand or remove the file, then re-run the install command.
+`--non-interactive` always requires `--expect-email` or `--yes`.
 
-If BirdyBeep had already installed successfully, it left a one-time copy of your original config next to
-it with a `.birdybeep-backup` suffix — and the `→ fix` line points straight at it instead:
-
-```
-✗  Cursor: hooks.json is valid JSON — ~/.cursor/hooks.json is not valid JSON.
-     → Restore the BirdyBeep backup at ~/.cursor/hooks.json.birdybeep-backup over ~/.cursor/hooks.json
-       (or delete the malformed file), then run `birdybeep agent install cursor`.
-```
-
-All five adapters print the same two shapes against their own config file
-(`~/.claude/settings.json`, `~/.codex/config.toml`, `~/.config/opencode/opencode.json`,
-`~/.cursor/hooks.json`, `~/.copilot/hooks/birdybeep.json`) — the backup line only appears when that
-`.birdybeep-backup` file actually exists, so you are never told to restore something you never had.
-
-**Partial install** — only some of the managed entries are present:
-
-```
-✗  Claude Code: BirdyBeep hooks installed — Only 2/6 BirdyBeep hooks are installed (partial).
-     → Run `birdybeep agent install claude` to (re)install the hooks.
-```
-
-Codex and Cursor report the same partial state across their managed lifecycle hooks. Copilot reports
-`error` if its dedicated managed file has drifted from the current exact format. Re-running the
-matching install repairs it while preserving the one-time backup.
-
-**Stale hook command** — the installed command points at a CLI (or a Node) that is no longer there:
-
-```
-✗  Cursor: Hook command resolves — The installed hook command points at
-   /Users/you/.nvm/versions/node/v20.11.0/bin/node, which no longer exists — Cursor fails these hooks
-   with exit 127.
-     → Run `birdybeep agent install cursor` to rewrite the hook command for the current CLI.
-```
-
-This is what you get after reinstalling the CLI somewhere else or switching Node versions. Nothing
-else looks wrong — the hooks are all still listed — but the harness cannot run them, so no Beeps
-arrive. The harness's own log shows it: Cursor writes `exit code: 127` to
-`~/Library/Application Support/Cursor/logs/**/cursor.hooks.*.log`. Re-running install rewrites the
-entry in place.
-
-**Read-only config** — BirdyBeep cannot write the file:
-
-```
-✗  Claude Code: settings.json writable — ~/.claude/settings.json is not writable.
-     → Fix file permissions so BirdyBeep can update Claude Code settings.
-```
-
-(Codex, OpenCode, Cursor, and Copilot print the analogous config-path writable checks.) Fix the
-file/directory permissions so BirdyBeep can update — and later cleanly uninstall — the config.
-
----
-
-### `pair` refuses with "no terminal to ask on" (Git Bash / CI)
-
-**Symptom** — `birdybeep pair` gets as far as the approval, then refuses:
-
-```
-Pairing needs confirmation (approved by you@example.com), but there is no terminal to ask on, so the
-machine token was NOT stored. Re-run with `--expect-email <addr>` to pin the approving account
-(recommended for CI), or `--yes` to accept whichever account approved it.
-```
-
-**Why** — before it trusts a freshly minted token, `pair` asks you to confirm the account that
-approved the machine. It reads that answer from stdin when stdin is a terminal, and on macOS/Linux
-otherwise from the controlling terminal (`/dev/tty`). When neither exists — a script, a CI job, a
-detached session — it fails closed rather than hang or silently trust. **Windows has no controlling-
-terminal fallback at all**: `CONIN$` opens even with no console attached and then blocks forever on
-read, so using it would hang instead of refusing.
-
-**Fix** — pick the one that matches where you are:
-
-- **CI / scripts:** `birdybeep pair --expect-email you@example.com` (still catches a wrong-account
-  approval), or `birdybeep pair --yes` to skip the check entirely.
-- **Windows Git Bash / MSYS / mintty:** these can hand programs pipe-backed stdio, and there is no
-  console fallback on Windows (see above), so run:
-
-  ```bash
-  winpty birdybeep pair
-  ```
-
-  which attaches a real console — stdin becomes a TTY and the prompt appears normally. PowerShell,
-  `cmd`, Windows Terminal, and the VS Code terminal all provide a real TTY and never hit this.
-
-- `--non-interactive` always takes this branch, whatever terminal is attached.
-
----
-
-### Missing or revoked machine token
-
-**Symptom** — `doctor` prints:
-
-```
-✗  Machine token — No machine token found.
-     → Run `birdybeep pair` to pair this machine.
-```
-
-You may also see a per-harness variant:
-
-```
-✗  Codex: Machine token present — No BirdyBeep machine token found.
-     → Run `birdybeep pair` to pair this machine.
-```
-
-And `status` shows:
-
-```
-Paired:  no — run `birdybeep pair`
-```
-
-**Fix** — pair the machine:
+### Machine is not paired
 
 ```bash
 birdybeep pair
 ```
 
-`pair` runs a device-flow pairing: it shows a QR and its complete link, then polls until you approve
-it from the mobile app. The displayed session code is identification only and cannot approve by
-itself. On success the CLI stores the machine token in the OS keychain (or, where there is no
-keychain, a strict-permission file in your user config directory). The token is **never** written
-into harness config or any repo file.
+Expired and previously used pairing links cannot be reused. Run the command again for a new QR and link.
 
-> The pairing endpoints are provisional and may change in a future release.
-
-**If your pairing session expired or was already used**, run `birdybeep pair` again to get a fresh
-QR/link — pairing proofs are short-lived and single-use.
-
-**If you revoked the machine from the mobile app**, the stored token stops working. Tokens are shown once
-and can be revoked at any time; the server only ever stores token _hashes_. Re-pair with `birdybeep pair`.
-To clear a stale local token first:
+If the machine was revoked in the app, its stored token no longer works. Pair again. To remove only the stale local token first:
 
 ```bash
-birdybeep logout   # removes the token from keychain + file fallback; safe to run anytime
+birdybeep logout
 ```
 
-**To remove a machine entirely** (so it stops showing in the app), run `birdybeep unpair` instead —
-it revokes the machine on the server _and_ clears the local token. `logout` only clears the local
-token; the machine stays paired on your account until you unpair it here or revoke it in the app.
+To revoke the server record and delete the local token together, use `birdybeep unpair`.
 
----
+### Pairing was approved by the wrong account
 
-### Token store unreadable (`Paired:  unknown`)
+The CLI stores no token when `--expect-email` does not match the approving account. Revoke the server-side machine in the app, then start a new pairing request.
 
-**Symptom** — `doctor` prints:
+## Token and delivery
 
-```
-✗  Machine token — Could not read the token store (OS keychain: User interaction is not allowed.), so whether this machine is paired is unknown. Events fired now are QUEUED, not lost, and send once it is readable.
-     → Unlock your login keychain (log in to the desktop session, or unlock the screen), then run `birdybeep doctor` again to drain the queue. If it stays unreadable, run `birdybeep pair`.
-```
+### Token storage is unreadable and pairing is `unknown`
 
-And `status` shows:
+Queued events remain local while token storage is unavailable. Restore access, then run `birdybeep doctor` to drain the queue.
 
-```
-Paired:  unknown — Could not read the token store (OS keychain: User interaction is not allowed.), so whether this machine is paired is unknown. Events fired now are QUEUED, not lost, and send once it is readable.
-```
+On macOS, unlock the login keychain by signing in to or unlocking the desktop session.
 
-This is a different state from `Paired:  no`. Nothing said this machine is unpaired — the store that
-holds the token would not answer. Common on macOS when the login keychain is locked (a locked screen,
-or a session that has not been unlocked since boot), and over SSH into a Mac whose keychain is locked.
-
-Events fired while the store is unreadable are **queued**, not discarded, and the hook prints:
-
-```text
-birdybeep: could not read the machine token (OS keychain: User interaction is not allowed.) — the
-event was QUEUED, not sent. It will deliver once the token store is readable (unlock your keychain);
-`birdybeep doctor` drains the queue.
-```
-
-**Fix** — unlock the keychain (log in at the desktop, or unlock the screen), then:
+On Linux, Windows, and headless systems, repair the fallback path reported by `doctor`:
 
 ```bash
-birdybeep doctor   # drains what queued while it was locked
+chmod 700 "$(dirname <path>)"
+chmod 600 <path>
+birdybeep doctor
 ```
 
-If it stays unreadable, re-store the token with `birdybeep pair`.
+If storage remains unreadable, run `birdybeep pair` to store a new token.
 
-**On Linux, Windows and headless installs** the reason names a `token file:` instead, and there is
-no keychain in play — the file fallback is the store. Repair the path `doctor` reports:
+### Backend is unreachable
+
+Check the connection, VPN, or proxy. Retryable events remain in the local queue. Run `birdybeep doctor` or `birdybeep status` after connectivity returns.
+
+### Events are queued
+
+Queued events remain local while delivery is unavailable. Restore network or token-store access, then run `birdybeep doctor` to drain the queue.
+
+The queue also drains on the next harness event or `birdybeep status`. Events expire after 24 hours. To delete all queued events without delivering them:
 
 ```bash
-chmod 700 "$(dirname <path>)"   # the directory has to be searchable
-chmod 600 <path>                # and the file readable by you
-birdybeep doctor                # drains what queued while it was unreachable
+birdybeep queue clear
 ```
 
-A file that exists but cannot be reached — an unreadable parent directory, a bad mode, a failing
-disk — reads as unreachable, never as "not paired", so those events queue rather than being
-discarded.
+### A test event was delivered but no notification arrived
 
----
-
-### Backend unreachable
-
-**Symptom** — `doctor` prints:
-
-```
-✗  Backend reachable — Could not reach https://api.birdybeep.dev.
-     → Check your network; queued events will retry automatically.
-```
-
-(The URL shown is whatever BirdyBeep is configured to use.)
-
-**Fix** — this is a network reachability check (a quick `HEAD` probe). Check your connection, VPN, or
-proxy. You do **not** lose events while offline: anything that failed to deliver is in the local queue and
-retries automatically the next time the queue drains (see below). Once connectivity returns, run
-`birdybeep doctor` (or `birdybeep status`) and the queue drains on the spot.
-
----
-
-### Events are queued / offline (delivery deferred)
-
-**Symptom** — `doctor` or `status` shows a non-zero queue, e.g.:
-
-```
-✓  Local queue — 3 queued → 3 delivered, 0 remaining
-```
-
-or, while still offline:
-
-```
-✓  Local queue — 3 queued → 0 delivered, 3 remaining
-```
-
-**Why this is normal** — there is **no background daemon**. When the harness fires an event and delivery
-fails (offline, backend down, token missing), the hook writes the event to a local, best-effort queue and
-**returns fast** — it never blocks or slows your coding harness. Queued events have **24-hour retention**
-and live in a strict-permission file.
-
-**How it drains** — the queue drains _opportunistically_ whenever BirdyBeep runs anyway: on the next
-`birdybeep hook` (i.e. your next harness event), or any time you run `birdybeep status` or
-`birdybeep doctor`. The `→ delivered, → remaining` numbers in those commands report exactly what drained.
-
-**Fix** — usually nothing: fix connectivity (or your token) and let the next event, `status`, or `doctor`
-flush the queue. To force a drain right now:
-
-```bash
-birdybeep doctor   # or: birdybeep status — both drain on the way through
-```
-
-**Stuck queue?** If something is wedged and you want to drop locally queued events (debugging only):
-
-```bash
-birdybeep queue clear   # drops ALL locally-queued events — they will not be delivered
-```
-
-This is destructive for whatever is queued, so use it only when you are fine losing those pending events.
-
----
-
-### Push notification not arriving (but `doctor` is all green)
-
-If `doctor` shows everything passing and the event delivered, but no push reached your phone, the event
-made it to the backend — the issue is downstream of this CLI. Check the **in-app push status / delivery
-log in the mobile app** for that event (delivery problems, notification permissions, or a muted machine
-are surfaced there). You can also confirm the end-to-end path from this machine with:
+Run:
 
 ```bash
 birdybeep test
 ```
 
-`test` sends a real test event through the actual sender path and reports whether it was **delivered** or
-**queued** — and, when queued, whether that was this machine being offline, the backend asking for a retry
-(throttled or erroring), or an unreadable token store.
+If the test reports delivery but no notification appears, check notification permission, machine and integration mutes, and the app's push status. The event reached the backend, so the remaining path is downstream of this CLI.
 
----
+### Cursor events arrive through Claude Code hooks
 
-### Cursor sends events even though you only installed the Claude Code hooks
+Cursor desktop may read `~/.claude/settings.json` and invoke `birdybeep hook claude` with a Cursor payload. BirdyBeep routes that payload to the Cursor adapter.
 
-Cursor desktop reads `~/.claude/settings.json` and runs the hook commands it finds there, so it fires
-`birdybeep hook claude` with a Cursor payload. Those events are handled by the Cursor adapter and arrive
-as `harness: "cursor"`. `birdybeep hook claude --json` reports them as:
+This bridge does not provide Cursor approval events. Install Cursor's hooks directly:
 
-```json
-{ "harness": "cursor", "routedFrom": "claude", "outcome": "delivered" }
+```bash
+birdybeep agent install cursor
 ```
 
-Cursor's bridge does not support `Notification` or `PermissionRequest`, so approval beeps never come
-through it. `doctor` flags that state, above the per-harness checks:
+Both integrations can remain installed. Duplicate events are collapsed.
 
-```
-✗  Approval beeps from Cursor — Cursor is running your agent through the Claude Code hooks — that is why
-   Cursor events arrive without a Cursor install. Its bridge drops Notification and PermissionRequest, so
-   approvals never reach you.
-     → Run `birdybeep agent install cursor` to get approval beeps from Cursor's own shell and MCP
-       permission prompts. Keeping both installed is safe — duplicate events are collapsed.
-```
+## Hook errors
 
-Events that arrive twice are collapsed by the dedup ledger, so running both is safe. The check is silent
-once `~/.cursor/hooks.json` carries the BirdyBeep entries.
+`birdybeep hook <harness>` exits non-zero when it cannot accept or preserve an event. The harness hook log contains the diagnostic.
 
----
+| Diagnostic                                                | Action                                         |
+| --------------------------------------------------------- | ---------------------------------------------- |
+| `… is not a <harness> hook event`                         | Check which tool invokes the configured hook.  |
+| `the payload was empty`                                   | Check whether the harness supplied stdin.      |
+| `the N-byte payload is not valid JSON`                    | Check the program writing to the hook's stdin. |
+| `timed out after 3000ms waiting for the payload on stdin` | Retry and run `birdybeep doctor`.              |
+| `second argument must be a Copilot hook event name`       | Run `birdybeep agent install copilot`.         |
 
-### A hook fire exits non-zero
+Supported but locally filtered event types exit successfully without sending anything.
 
-`birdybeep hook <harness>` exits non-zero only when the fire sent nothing AND that is worth telling
-you about. The stderr line says which case it was; your harness's hook log shows it.
+## Report an unresolved problem
 
-| stderr line                                               | What happened                                                                                                                                     |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `… is not a <harness> hook event`                         | The payload came from a different tool — usually a hook command copied into another harness's config file. Check which tool is invoking the hook. |
-| `the payload was empty`                                   | The harness ran the hook without writing a payload to stdin.                                                                                      |
-| `the N-byte payload is not valid JSON`                    | Something wrote non-JSON to stdin. The payload itself is never echoed.                                                                            |
-| `timed out after 3000ms waiting for the payload on stdin` | The payload never arrived within the read cap. Usually a very loaded machine; re-run and check `birdybeep doctor`.                                |
-| `second argument must be a Copilot hook event name`       | A `birdybeep hook copilot` entry was hand-edited. Re-run `birdybeep agent install copilot`.                                                       |
-
-Every other outcome exits 0 — including a real harness event BirdyBeep deliberately does not map,
-which is silent by design.
-
----
-
-## Still stuck?
-
-1. Run `birdybeep doctor --json` and capture the output (it contains no secrets — no tokens, no
-   notification contents).
-2. Confirm you are paired with `birdybeep status`.
-3. Re-run the relevant `birdybeep agent install <harness>` — it is idempotent and non-destructive.
-4. For Codex, remember it stays `needs_trust` until the **first event after** you run `/hooks`; for
-   OpenCode, `needs_restart` until the **first event after** a restart. Trigger one event in the harness
-   and re-check.
-5. Claude Code, Cursor, and GitHub Copilot CLI require no trust or restart step. If their config is present but
-   status is not `installed`, re-run the matching install command and inspect the reported config
-   path for malformed or manually edited managed entries.
+If `birdybeep doctor --json` does not identify the problem, attach its output to a GitHub issue. The output excludes machine tokens and notification contents.

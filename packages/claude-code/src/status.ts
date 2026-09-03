@@ -176,7 +176,7 @@ export async function claudeCodeDoctor(opts: StatusOptions = {}): Promise<Doctor
                 name: "Hook command resolves",
                 ok: false,
                 status: "error",
-                detail: `The installed hook command points at ${hooks.stalePaths.join(", ")}, which no longer exists — the harness fails these hooks with exit 127.`,
+                detail: `The installed hook command points at ${hooks.stalePaths.join(", ")}, which no longer exists. The harness fails these hooks with exit 127.`,
                 remedy:
                   "Run `birdybeep agent install claude` to rewrite the hook command for the current CLI.",
               },

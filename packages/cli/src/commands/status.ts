@@ -104,8 +104,8 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
           pairing.state === "paired"
             ? "Paired:  yes"
             : pairing.state === "unpaired"
-              ? "Paired:  no — run `birdybeep pair`"
-              : `Paired:  unknown — ${describeTokenStoreUnavailable(pairing)}`,
+              ? "Paired:  no. Run `birdybeep pair`."
+              : `Paired:  unknown. ${describeTokenStoreUnavailable(pairing)}`,
         );
         ctx.io.line("Integrations:");
         for (const i of integrations) {
@@ -113,7 +113,7 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
           const group = surfaces.find((g) => g.harness === i.harness);
           for (const state of group?.surfaces ?? []) {
             const mark = state.coverage === "active" ? "✓" : state.coverage === "wired" ? "·" : "✗";
-            ctx.io.line(`    ${mark} ${describeSurface(state)} — ${state.coverage}`);
+            ctx.io.line(`    ${mark} ${describeSurface(state)}: ${state.coverage}`);
           }
         }
         ctx.io.line(

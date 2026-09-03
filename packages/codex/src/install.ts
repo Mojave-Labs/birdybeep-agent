@@ -78,8 +78,7 @@ export const BACKUP_SUFFIX = ".birdybeep-backup";
 /** The one-time trust instructions printed after install (§9.6). */
 export const TRUST_INSTRUCTIONS: readonly string[] = [
   "Codex hooks installed.",
-  "Codex may require one-time hook trust. Open Codex and run /hooks.",
-  "After trust is granted, Codex sessions on this machine will be tracked automatically.",
+  "Open Codex and run /hooks. Status changes from needs_trust after a lifecycle hook fires.",
 ];
 
 export function backupPathFor(configPath: string): string {
@@ -373,9 +372,8 @@ export function codexTurnCompleteIsDark(opts: CodexMigrationOptions = {}): boole
 
 /** The unmissable warning install leads with, and `doctor` repeats, while turn-complete is dark. */
 export const MIGRATION_WARNING: readonly string[] = [
-  "!! ACTION REQUIRED — Codex turn-complete beeps are OFF right now.",
-  "BirdyBeep updated the Codex hooks, and Codex trusts hooks by content: the updated entries are untrusted until you approve them, and Codex skips untrusted hooks silently.",
-  "Open Codex and run /hooks to trust them. Until you do, you will get NO 'agent finished' beeps from Codex.",
+  "Codex hooks changed and must be trusted again.",
+  "Open Codex, run /hooks, and approve the BirdyBeep entries. Codex completion notifications are disabled until then.",
 ];
 
 /** Parse the canonical backup, or undefined when it is absent, empty, or unparseable. */

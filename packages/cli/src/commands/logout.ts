@@ -39,7 +39,7 @@ export function createLogoutCommand(deps: LogoutCommandDeps = {}): Command {
     usage: "birdybeep logout",
     run: async (ctx) => {
       await clearToken(deps.tokenOptions ?? {});
-      ctx.io.emit("Logged out — the machine token was removed.", { loggedOut: true });
+      ctx.io.emit("Logged out. The machine token was removed.", { loggedOut: true });
       return EXIT.OK;
     },
   };
@@ -82,7 +82,7 @@ export function createUnpairCommand(deps: UnpairCommandDeps = {}): Command {
   const timeoutMs = deps.timeoutMs ?? 10_000;
   return {
     name: "unpair",
-    summary: "Unpair this machine — revoke it server-side and remove the local token",
+    summary: "Revoke this machine and remove its local token",
     usage: "birdybeep unpair",
     run: async (ctx) => {
       const token = await getToken(deps.tokenOptions ?? {});
@@ -97,12 +97,12 @@ export function createUnpairCommand(deps: UnpairCommandDeps = {}): Command {
       const serverRevoked = outcome === "revoked";
       const human =
         outcome === "revoked"
-          ? "Unpaired — the machine was revoked and removed from your account."
+          ? "Unpaired. The machine was revoked and removed from your account."
           : outcome === "no_token"
-            ? "Already unpaired — there was no local token to remove."
+            ? "Already unpaired. There was no local token to remove."
             : outcome === "unreachable"
-              ? "Unpaired locally, but the server was unreachable — the machine may still show in the app. Open BirdyBeep and revoke it there to fully remove it."
-              : "Unpaired locally, but the server didn't confirm removal — if the machine still shows in the app, revoke it there.";
+              ? "Unpaired locally, but the server was unreachable. The machine may still appear in the app. Open BirdyBeep and revoke it there."
+              : "Unpaired locally, but the server did not confirm removal. If the machine still appears in the app, revoke it there.";
       ctx.io.emit(human, { unpaired: true, serverRevoked });
       return EXIT.OK;
     },

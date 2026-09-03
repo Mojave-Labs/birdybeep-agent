@@ -450,7 +450,7 @@ describe("hook command dispatch (full CLI path)", () => {
     expect(code).toBe(EXIT.ERROR); // was EXIT.OK — a timed-out read dropped the event in silence
     expect(JSON.parse(out.text())).toMatchObject({ outcome: "skipped", reason: "stdin-timeout" });
     expect(err.text()).toContain("timed out after 50ms");
-    expect(err.text()).toContain("nothing was sent");
+    expect(err.text()).toContain("Nothing was sent");
   });
 
   // UPDATED for birdybeep-agent-gcgp.14. Previously "garbled payload → skipped + exit 0 (never

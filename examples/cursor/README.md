@@ -1,38 +1,23 @@
-# Example — Cursor
+# Cursor configuration
 
-This is the **exact** config `birdybeep agent install cursor` writes into your Cursor hooks file at
-`~/.cursor/hooks.json`. It is the same artifact the adapter's snapshot tests assert against — and a
-drift guard re-runs the real installer in CI and compares it to this file byte for byte — so what you
-see here is what the installer produces.
+`birdybeep agent install cursor` adds the entries in [`hooks.json`](./hooks.json) to `~/.cursor/hooks.json`. Existing settings and hooks remain in place.
 
-[`hooks.json`](./hooks.json) shows the **from-scratch** case: a brand-new hooks file with nothing in
-it but BirdyBeep's entries. If you already have a `hooks.json`, the installer merges these entries in
-and leaves everything else untouched (see "Non-destructive" below).
+## Installed entries
 
-## What BirdyBeep adds
+| Hook event             | Event                                    |
+| ---------------------- | ---------------------------------------- |
+| `sessionStart`         | session started                          |
+| `sessionEnd`           | agent finished or session ended          |
+| `beforeShellExecution` | shell command waiting for approval       |
+| `beforeMCPExecution`   | MCP tool call waiting for approval       |
+| `preToolUse`           | tool started                             |
+| `postToolUse`          | tool finished                            |
+| `postToolUseFailure`   | tool failed unless the user cancelled it |
+| `stop`                 | turn finished                            |
+| `subagentStart`        | subagent started                         |
+| `subagentStop`         | subagent finished                        |
 
-Cursor's hooks file is `{ "version": 1, "hooks": { "<event>": [ { command, timeout } ] } }`, and each
-hook command receives the event payload as JSON on **stdin**. BirdyBeep registers one managed entry
-per event it can consume:
-
-| Hook event             | Beep it produces                                                        |
-| ---------------------- | ----------------------------------------------------------------------- |
-| `sessionStart`         | a session began on this machine                                         |
-| `sessionEnd`           | the agent finished (`final_status: "completed"`), else the session ends |
-| `beforeShellExecution` | a shell command is waiting on your approval                             |
-| `beforeMCPExecution`   | an MCP tool call is waiting on your approval                            |
-| `preToolUse`           | a tool started                                                          |
-| `postToolUse`          | a tool finished                                                         |
-| `postToolUseFailure`   | a tool failed (not when you cancelled it yourself)                      |
-| `stop`                 | the agent finished its turn (IDE)                                       |
-| `subagentStart`        | a subagent started                                                      |
-| `subagentStop`         | a subagent finished                                                     |
-
-Cursor defines further hook events that BirdyBeep does not register, because they produce no Beep:
-running a hook for one spends a process per fire for nothing. Installing also removes BirdyBeep's own
-entries for `beforeSubmitPrompt` and `afterAgentResponse`, which earlier versions registered.
-
-Every entry is identical in shape:
+Each managed entry has this shape:
 
 ```json
 {
@@ -41,13 +26,7 @@ Every entry is identical in shape:
 }
 ```
 
-The `timeout: 30` (seconds) is a hard cap so a slow or offline send can never hang Cursor — the hook
-always returns fast and queues locally if the network is down.
-
-## The command the installer writes
-
-The example above shows the portable form. On your machine the installer writes the absolute paths
-of the Node and the `birdybeep` entry point it is running under, e.g.
+On the installed machine, the command contains absolute paths to Node and the `birdybeep` entry point so hooks launched by the desktop app do not depend on the shell's `PATH`.
 
 ```json
 {
@@ -56,57 +35,24 @@ of the Node and the `birdybeep` entry point it is running under, e.g.
 }
 ```
 
-Cursor runs hooks from its own process, whose `PATH` is the one the OS gave the app — not the one
-your shell has — so a bare `birdybeep` (and a bare `node` for the CLI's `#!/usr/bin/env node`
-shebang) is not found there and the hook exits 127. Set `BIRDYBEEP_HOOK_COMMAND` before installing
-to write something else (a wrapper, or a version-manager invocation):
+Set `BIRDYBEEP_HOOK_COMMAND` before installation to use another launcher:
 
 ```bash
 BIRDYBEEP_HOOK_COMMAND="mise exec -- birdybeep" birdybeep agent install cursor
 ```
 
-If you later move the CLI or switch Node versions, that path stops resolving. `birdybeep doctor`
-reports it, and `birdybeep agent install cursor` rewrites the entry in place.
+If Node or the CLI moves, `birdybeep doctor` reports the stale path. Run `birdybeep agent install cursor` to replace it.
 
-> **CLI vs. IDE.** Headless `cursor-agent -p` fires only `sessionStart` and `sessionEnd`, so for CLI
-> users a completed `sessionEnd` is the "your agent finished" Beep. In the IDE you additionally get
-> `stop`, tool events, and the shell-approval gate.
+## Existing configuration
 
-## What you keep
+The installer adds the `"version": 1` scaffold only when that key is absent. It appends BirdyBeep's entries to existing event lists and preserves other hooks. Before the first change, it writes `~/.cursor/hooks.json.birdybeep-backup`.
 
-Everything else. The installer touches exactly two things: the `hooks` key (and within it only
-the events above), and the top-level `"version": 1` scaffold Cursor requires — added ONLY when
-the key is absent, so an existing value of your own is preserved byte-for-byte. If you already have a
-hook on one of these events, BirdyBeep's entry is **appended** to that event's list; your hook is
-never replaced. A BirdyBeep entry from an earlier install is rewritten in place rather than
-duplicated. The original file is backed up once to `~/.cursor/hooks.json.birdybeep-backup`
-before the first change.
+Cursor payloads include `user_email` and `transcript_path`; BirdyBeep excludes both. It hashes `workspace_roots[0]` before sending the event.
 
-## No token here
+## Activation
 
-There is **no token in this file**. `birdybeep hook cursor` reads your machine token from the OS
-keychain (or a strict-permission file) at event time. Tokens are never
-written into harness config or any repo file. See [`docs/security.md`](../../docs/security.md).
+Cursor reads `hooks.json` immediately. No restart or trust step is required. Headless `cursor-agent -p` currently emits only `sessionStart` and `sessionEnd`; the IDE also emits turn, tool, and approval events.
 
-## Privacy note specific to Cursor
+## Removal
 
-Cursor's hook payloads carry two things BirdyBeep drops: `user_email` (your account address) and
-`transcript_path` (a local filesystem path). Neither is ever copied into the event —
-not the title, body, metadata, session id, or workspace. The only path touched is
-`workspace_roots[0]`, which is **hashed** like every other path.
-
-## Reversible
-
-`birdybeep agent uninstall cursor` removes exactly these BirdyBeep-managed entries and restores the
-original file. Installs are idempotent — running install twice produces this same result, with no
-duplicate hooks.
-
-## When it takes effect
-
-Immediately. Cursor reads `hooks.json` live, so there is no restart or trust step — unlike Codex
-(`needs_trust`) and OpenCode (`needs_restart`), Cursor reports `installed` right away.
-
-## Learn more
-
-- [`docs/install.md`](../../docs/install.md) — install / uninstall flow
-- [`docs/security.md`](../../docs/security.md) — token storage and exactly what data leaves the machine
+`birdybeep agent uninstall cursor` removes BirdyBeep-owned entries and restores the original file where appropriate. Repeated installation updates the managed entry rather than adding a duplicate.

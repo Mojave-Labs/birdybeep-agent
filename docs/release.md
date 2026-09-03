@@ -20,7 +20,7 @@ together:
 it is never published. Everything else is public (`access: public`), because the CLI depends on
 the six other `@birdybeep/*` packages at runtime, so they must resolve on npm.
 
-## Day-to-day: record intent with a changeset
+## Record release intent with a changeset
 
 Every PR that changes a publishable package must include a changeset. CI enforces this
 (`changeset status` job) — a PR without one fails.
@@ -32,14 +32,14 @@ pnpm changeset      # pick patch/minor/major, write a short user-facing summary
 Commit the generated `.changeset/*.md` file with your PR. (The bump you pick applies to the
 whole fixed group.)
 
-## Cutting a release (automated)
+## Automated release
 
-1. Merge feature PRs to `main` as usual — each carries its changeset. Nothing publishes yet.
+1. Merge feature PRs to `main`; each carries its changeset. Nothing publishes yet.
 2. `.github/workflows/release.yml` runs on push to `main` and opens/updates a **"Version
    Packages"** PR that consumes the pending changesets: bumps versions, cascades internal
    dependency ranges, and writes each `CHANGELOG.md`.
-3. **Merge the Version PR when you want to ship.** That is the deliberate release trigger. The
-   workflow then runs `pnpm release:ci` (build → `check-pack` packaging guard → `changeset
+3. Merge the Version PR to publish. The workflow runs `pnpm release:ci` (build → `check-pack`
+   packaging guard → `changeset
 publish`), which publishes the fixed group to npm in dependency order and pushes git tags.
 
 When a newly added package has not been published before, the release that creates it needs the
@@ -55,17 +55,12 @@ workflow runs `changeset version` and pushes the `changeset-release/main` branch
 final "create pull request" step with `GitHub Actions is not permitted to create ... pull
 requests` (you can still open that PR by hand from the pushed branch as a fallback).
 
-## npm auth: bootstrap token once, then tokenless Trusted Publishing (OIDC)
+## npm authentication
 
-npm caps token lifetimes at 90 days, so a long-lived `NPM_TOKEN` secret is not an option — and
-doesn't need to be. The steady state is **npm Trusted Publishing**: npmjs.com is told that this
-repo's `release.yml` workflow may publish each package, and every publish authenticates via
-GitHub's OIDC identity (the workflow's `id-token: write` permission). **No token exists** to
-expire, rotate, or leak, and provenance attestations come with it. `release.yml` supports both
-modes automatically: it uses `NPM_TOKEN` if the secret exists, otherwise OIDC.
-
-The only catch: a package must already exist on npm before a trusted publisher can be
-configured for it — so the very first publish uses a throwaway token.
+The first publish of a package uses a short-lived npm token. Afterward, configure npm Trusted
+Publishing for that package and remove `NPM_TOKEN`. Trusted Publishing authenticates the
+`release.yml` workflow through GitHub OIDC. The workflow uses `NPM_TOKEN` when it exists and OIDC
+otherwise.
 
 ### HUMAN-REQUIRED before the first publish of a package (`A-HUMAN-NPM`)
 
@@ -99,7 +94,7 @@ Notes:
 Until you're ready to ship publicly, just don't merge the Version PR — test the built CLI
 locally first (see below).
 
-## Testing the package locally (before any real publish)
+## Local release tests
 
 Fastest → most realistic:
 
@@ -108,8 +103,8 @@ pnpm release   # dry-run: build + packaging guard + `npm pack --dry-run` plan, Z
 pnpm smoke     # packs all 7, installs @birdybeep/cli from tarballs into a clean temp project, runs the bin
 ```
 
-For a true `npm install -g` dress rehearsal, publish to a local registry (Verdaccio) — no
-credentials, nothing touches real npm. **`scripts/verdaccio-rehearsal.sh` does the whole thing**
+For a local `npm install -g` test, publish to a Verdaccio registry. This requires no npm
+credentials. `scripts/verdaccio-rehearsal.sh`
 (starts Verdaccio, publishes all seven with pnpm, global-installs the CLI into an isolated prefix,
 runs it, and tears down on exit):
 
@@ -117,7 +112,7 @@ runs it, and tears down on exit):
 ./scripts/verdaccio-rehearsal.sh          # PORT=4874 ./scripts/... if 4873 is busy
 ```
 
-Or by hand, if you want to see the moving parts:
+Individual commands:
 
 ```bash
 npx verdaccio &                                   # local registry on http://localhost:4873
@@ -142,8 +137,7 @@ rm -rf ~/.local/share/verdaccio/storage ~/.config/verdaccio/storage
 # restart verdaccio, then re-run the `pnpm -r publish` above.
 ```
 
-## Manual escape hatch
+## Manual release command
 
-`scripts/release.mjs` (`pnpm release`) is the human dry-run/manual path — dry-run by default; a
-real local publish needs `--publish` **and** `RELEASE_CONFIRM=1` **and** npm auth. In normal
-operation you never need it; the GitHub Actions flow above is the supported path.
+`scripts/release.mjs` (`pnpm release`) is a dry-run by default. A local publish requires `--publish`,
+`RELEASE_CONFIRM=1`, and npm authentication. The GitHub Actions flow above is the standard path.

@@ -83,7 +83,7 @@ describe("describeReachability", () => {
       data: body({ active_device_count: 0, most_recent_registration_at: null }),
     });
     expect(out?.ok).toBe(false);
-    expect(out?.detail).toContain("No device can receive a beep");
+    expect(out?.detail).toContain("No active device can receive a Beep");
     expect(out?.remedy).toContain("Open the BirdyBeep app");
   });
 
@@ -187,11 +187,10 @@ describe("describeCheckIn (2x9s)", () => {
       CHECK_IN_NOW,
     );
     expect(out?.ok).toBe(true);
-    expect(out?.detail).toContain("50 days");
     expect(out?.detail).toContain("2026-07-05");
     // …and the guidance lives in the DETAIL, because the renderer prints a remedy only for
     // failures (same reason as the near-limit quota row).
-    expect(out?.detail).toContain("Open BirdyBeep on your phone");
+    expect(out?.detail).toContain("Open BirdyBeep on a registered phone");
   });
 
   it("does NOT claim beeps are still being delivered — it has read nothing that says so", () => {
@@ -205,11 +204,9 @@ describe("describeCheckIn (2x9s)", () => {
     );
     expect(out?.detail).not.toContain("still being sent");
     expect(out?.detail).not.toMatch(/beeps are still/i);
-    // It says what it does know (nobody opened the app), what that does not mean, and who does
-    // answer the delivery question.
-    expect(out?.detail).toContain("nobody has opened the app");
-    expect(out?.detail).toContain("does not say a beep cannot arrive");
-    expect(out?.detail).toContain("the rows above measure");
+    expect(out?.detail).toBe(
+      "No device has checked in since 2026-07-05. Open BirdyBeep on a registered phone.",
+    );
   });
 
   it("draws the warning line at 14 days and not a day earlier", () => {
@@ -227,7 +224,7 @@ describe("describeCheckIn (2x9s)", () => {
       )?.detail ?? "";
     expect(at(13)).toContain("last checked in 13 days ago");
     expect(at(13)).not.toContain("Open BirdyBeep on your phone");
-    expect(at(14)).toContain("has checked in for 14 days");
+    expect(at(14)).toContain("No device has checked in since");
   });
 
   it("NEVER claims staleness when no device has ever checked in — that is an app version, not a phone", () => {
@@ -239,16 +236,15 @@ describe("describeCheckIn (2x9s)", () => {
       CHECK_IN_NOW,
     );
     expect(out?.ok).toBe(true);
-    expect(out?.detail).toContain("has checked in yet");
+    expect(out?.detail).toContain("No device check-in has been recorded");
     expect(out?.detail).toContain("newer version of the BirdyBeep app");
-    expect(out?.detail).toContain("not a sign that anything is wrong");
   });
 
   it("names a server that does not report check-ins at all, instead of staying silent", () => {
     // Absent ≠ null. A silent row would read as "checked in fine" to anyone scanning the board.
     const out = describeCheckIn({ state: "ok", data: body() }, CHECK_IN_NOW);
     expect(out?.ok).toBe(true);
-    expect(out?.detail).toContain("does not report device check-ins yet");
+    expect(out?.detail).toContain("Device check-ins are unavailable from this server");
   });
 
   it("NAMES a future timestamp as clock skew, instead of clamping it to '0 days ago'", () => {
@@ -260,8 +256,8 @@ describe("describeCheckIn (2x9s)", () => {
       CHECK_IN_NOW,
     );
     expect(out?.ok).toBe(true);
-    expect(out?.detail).toContain("is in the future");
-    expect(out?.detail).toContain("clock skew between this machine and the server");
+    expect(out?.detail).toContain("is ahead of this machine's clock");
+    expect(out?.detail).toContain("Check the system time");
     expect(out?.detail).toContain("2026-09-01T00:00:00.000Z");
     expect(out?.detail).not.toContain("days ago");
     // …and it is not smuggled in as staleness either: no warning, no remedy-in-detail.
@@ -281,7 +277,7 @@ describe("describeCheckIn (2x9s)", () => {
       CHECK_IN_NOW,
     );
     expect(out?.ok).toBe(true);
-    expect(out?.detail).toContain("is in the future");
+    expect(out?.detail).toContain("is ahead of this machine's clock");
     expect(out?.detail).not.toContain("0 days ago");
   });
 

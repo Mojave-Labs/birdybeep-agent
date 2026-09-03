@@ -195,8 +195,8 @@ describe("gcgp.23: a locked token store is not an unpaired machine", () => {
     // (2) …and the gcgp.4 sentinel was NOT written: nothing here was lost while unpaired.
     expect(readUnpairedNotice()).toBeNull();
     // (3) The hot path said what actually happened, and did NOT say "not paired".
-    expect(err.text()).toContain("could not read the machine token");
-    expect(err.text()).toContain("QUEUED");
+    expect(err.text()).toContain("machine token is unreadable");
+    expect(err.text()).toContain("The event is queued");
     expect(err.text()).not.toContain("not paired");
 
     // (4) `status` reports the third state rather than a confident, wrong "no".
@@ -252,9 +252,9 @@ describe("gcgp.23: a locked token store is not an unpaired machine", () => {
       stderr: testOut.writer,
       ensureConfig: false,
     });
-    expect(testOut.text()).toContain("Could not read the machine token");
+    expect(testOut.text()).toContain("machine token is unreadable");
     expect(testOut.text()).not.toContain("Offline");
-    expect(testOut.text()).not.toContain("NOT PAIRED");
+    expect(testOut.text()).not.toContain("not paired");
 
     // (7) The payoff: unlock, and everything queued while locked is delivered. This is the whole
     // difference from a drop — the events were parked, and they arrive.
@@ -307,7 +307,7 @@ describe("gcgp.23: a locked token store is not an unpaired machine", () => {
     expect(sink.received()).toHaveLength(0);
     expect(readUnpairedNotice()?.count).toBeGreaterThanOrEqual(2);
     expect(err.text()).toContain("not paired");
-    expect(err.text()).not.toContain("could not read the machine token");
+    expect(err.text()).not.toContain("machine token is unreadable");
 
     const statusOut = capture();
     await runCli(["status"], {
@@ -322,7 +322,7 @@ describe("gcgp.23: a locked token store is not an unpaired machine", () => {
       stderr: statusOut.writer,
       ensureConfig: false,
     });
-    expect(statusOut.text()).toContain("Paired:  no — run `birdybeep pair`");
+    expect(statusOut.text()).toContain("Paired:  no. Run `birdybeep pair`.");
     expect(statusOut.text()).not.toContain("token store");
   });
 
@@ -357,7 +357,7 @@ describe("gcgp.23: a locked token store is not an unpaired machine", () => {
     expect(code).toBe(EXIT.OK); // never throws into the harness
     expect(new LocalEventQueue().size()).toBe(1);
     expect(readUnpairedNotice()).toBeNull();
-    expect(err.text()).toContain("could not read the machine token");
+    expect(err.text()).toContain("machine token is unreadable");
   });
 });
 

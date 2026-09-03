@@ -214,7 +214,7 @@ export async function codexDoctor(opts: CodexStatusOptions = {}): Promise<Doctor
                 name: "Hook command resolves",
                 ok: false,
                 status: "error",
-                detail: `The installed hook command points at ${config.stalePaths.join(", ")}, which no longer exists — Codex fails these hooks with exit 127.`,
+                detail: `The installed hook command points at ${config.stalePaths.join(", ")}, which no longer exists. Codex fails these hooks with exit 127.`,
                 remedy:
                   "Run `birdybeep agent install codex` to rewrite the hook command for the current CLI.",
               },

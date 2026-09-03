@@ -303,7 +303,7 @@ describe("one command sets the whole machine up", () => {
     expect(delivered[0]?.path).toBe("/v1/agent-events");
     expect(deliveredBearerToken(delivered[0]!)).toBe(MACHINE_TOKEN);
     expect((delivered[0]?.body as { event_type?: string }).event_type).toBe("test");
-    expect(text).toContain("check your phone for a test Beep");
+    expect(text).toContain("Check your phone for a test Beep");
 
     // The whole point of one command: no second one is named as required.
     expect(text).not.toMatch(/Run `birdybeep agent install/);
@@ -331,7 +331,7 @@ describe("one command sets the whole machine up", () => {
     expect(existsSync(codexConfigFile({ home }))).toBe(false);
     // Pairing still finished, so the Beep still proves the machine can reach BirdyBeep.
     expect(sink?.received()).toHaveLength(1);
-    expect(text).toContain("check your phone for a test Beep");
+    expect(text).toContain("Check your phone for a test Beep");
   });
 
   it("`pair` runs the same chain — the verb people already know is not a shorter path", async () => {
@@ -377,7 +377,7 @@ describe("one command sets the whole machine up", () => {
     });
     expect(code).toBe(EXIT.OK);
     expect(await getToken(FILE_ONLY)).toBe(MACHINE_TOKEN);
-    expect(text).toContain("Run `birdybeep setup` to wire up your coding agents.");
+    expect(text).toContain("Run `birdybeep setup` to install coding-agent hooks.");
     expect(text).not.toContain("coverage");
     expect(existsSync(claudeSettingsPath(home))).toBe(false);
     expect(sink?.received()).toHaveLength(0);

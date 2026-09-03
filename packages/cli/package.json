@@ -1,7 +1,7 @@
 {
   "name": "@birdybeep/cli",
   "version": "0.8.0",
-  "description": "The BirdyBeep CLI — pair your machine, install agent adapters, and stream coding-agent lifecycle events to BirdyBeep.",
+  "description": "CLI for connecting a machine to BirdyBeep and installing coding-agent hooks.",
   "license": "MIT",
   "repository": {
     "type": "git",

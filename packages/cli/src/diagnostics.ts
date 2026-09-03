@@ -216,7 +216,7 @@ export function describeFilteredActivity(activity: FilteredActivity): string {
     .map(([type, n]) => `${type} ×${n}`)
     .join(", ");
   const since = new Date(activity.firstAt).toISOString();
-  return `${activity.count} local-only event(s) since ${since}${types ? ` (${types})` : ""} — hooks are firing; these types never beep, so they are not sent.`;
+  return `${activity.count} local-only event(s) since ${since}${types ? ` (${types})` : ""}. Hooks are firing; these types never produce notifications, so they are not sent.`;
 }
 
 /** Machine label + OS (the event `machine` identity). */
@@ -424,20 +424,20 @@ export function describeSurface(state: SurfaceState): string {
 export function describeSurfaceCoverage(state: SurfaceState, group: HarnessSurfaces): string {
   if (state.coverage === "active") {
     const last = state.lastAt !== undefined ? `, last ${new Date(state.lastAt).toISOString()}` : "";
-    return `covered — ${state.events} event(s) from this build${last}`;
+    return `covered: ${state.events} event(s) from this build${last}`;
   }
   if (state.coverage === "wired") {
     return state.surface.shadowed === true
-      ? `${group.displayName}'s hooks are installed and this build shares them, but another install comes first on PATH — it only runs if that order changes`
+      ? `${group.displayName}'s hooks are installed and this build shares them, but another install comes first on PATH. This build runs only if that order changes.`
       : `${group.displayName}'s hooks are installed and this build shares them; nothing has fired from it yet`;
   }
   if (!CONFIGURED_STATUSES.has(group.status)) {
-    return `not covered — ${group.displayName} carries no BirdyBeep hooks, so this build cannot beep`;
+    return `not covered: ${group.displayName} carries no BirdyBeep hooks, so this build cannot produce notifications`;
   }
   const active = group.surfaces.filter((s) => s.coverage === "active").map(describeSurface);
   const delivering = active.join(", ");
   const verb = active.length === 1 ? "is" : "are";
-  return `not covered — nothing has ever fired from this build, while ${delivering} ${verb} delivering through the same config`;
+  return `not covered: nothing has fired from this build, while ${delivering} ${verb} delivering through the same config`;
 }
 
 /** CLI install target for an adapter id (the CLI says `claude`, the adapter id is `claude_code`). */
@@ -458,7 +458,7 @@ export function surfaceRemedy(state: SurfaceState, group: HarnessSurfaces): stri
     ? `Run a turn in ${state.surface.label}. If it stays uncovered, that build cannot run the hook ` +
         `command: a desktop app spawns its engine with your LOGIN shell's PATH, not an interactive ` +
         `shell's, so a bare command is invisible to it. Re-run ${install} from a shell where ` +
-        `\`birdybeep\` resolves — it rewrites the entry with absolute paths that need no PATH at all.`
+        `\`birdybeep\` resolves. This rewrites the entry with absolute paths that do not depend on PATH.`
     : `Run a turn in ${state.surface.label}. If it stays uncovered, re-run ${install} from a shell ` +
         `where \`birdybeep\` resolves, then check that ${state.surface.enginePath} is the build you ` +
         `are actually running.`;

@@ -1,17 +1,10 @@
 # Adapter development
 
-This is the contributor guide for adding support for a **new coding harness** to BirdyBeep. You
-implement one interface — `AgentAdapter` — and the `@birdybeep/cli` detects, installs, uninstalls,
-checks, diagnoses, and ships events for your harness with no special-casing. Nothing in the CLI
-changes when a new harness plugs in.
+To add a harness, implement `AgentAdapter` and register it with the CLI. The adapter must preserve
+existing configuration and exclude raw session content and readable absolute paths from events.
+Before release, test it end to end with a current harness payload.
 
-Adapters edit real config files in users' home directories and hook into real agents, so the bar is
-high: installs are reversible and non-destructive, no raw secrets or absolute paths ever leave the
-machine, and **every adapter is proven end-to-end against a real harness payload before it ships.**
-
-Throughout, the **Codex adapter** (`packages/codex`) is the worked example. It is the most
-interesting one because it carries a one-time hook-trust caveat — a good template for any harness
-with a gating step.
+Examples in this guide use the Codex adapter.
 
 ---
 
@@ -42,8 +35,8 @@ export interface AgentAdapter {
 }
 ```
 
-A finished adapter is just an object literal that wires named functions to each member. Here is the
-whole Codex adapter ([`packages/codex/src/adapter.ts`](../packages/codex/src/adapter.ts)):
+An adapter exports an object implementing `AgentAdapter`. The Codex adapter is defined in
+[`packages/codex/src/adapter.ts`](../packages/codex/src/adapter.ts):
 
 ```ts
 import type { AgentAdapter } from "@birdybeep/agent-core";
@@ -60,9 +53,8 @@ export const codexAdapter: AgentAdapter = {
 };
 ```
 
-Keep each method in its own file (`detect.ts`, `install.ts`, `uninstall.ts`, `status.ts`,
-`normalize.ts`) so the adapter stays easy to patch — harness APIs change, and you want a small blast
-radius when they do.
+Keep detection, installation, removal, status, and normalization in separate files so
+harness-specific changes remain isolated.
 
 ### `id` and `displayName`
 
@@ -280,19 +272,18 @@ same shape for a stdin-JSON harness keyed by `hook_event_name`:
 | `subagentStart` / `subagentStop`             | `subagent_started` / `subagent_completed`                    | `running`              |
 | `beforeSubmitPrompt`, `afterAgentResponse`   | _(throws `CursorMappingError` → the hook returns `skipped`)_ | —                      |
 
-Two Cursor-specific lessons worth copying:
+Cursor-specific constraints:
 
-- **A harness may fire only a SUBSET of its documented events.** Headless `cursor-agent -p`
+- Headless `cursor-agent -p`
   (verified `2026.07.09`) fires only `sessionStart` + `sessionEnd`; the IDE fires the rest. That is
-  why a _completed_ `sessionEnd` maps to `agent_completed` — for CLI users it is the only completion
+  why a completed `sessionEnd` maps to `agent_completed`: for CLI users it is the only completion
   signal that exists.
-- **Register only what you map.** A registered event with no mapping spends a hook process per fire
+- A registered event with no mapping spends a hook process per fire
   to produce `skipped`. Cursor's `beforeSubmitPrompt` and `afterAgentResponse` shipped that way and
   were de-registered; install now removes them from configs an earlier release patched.
-- **A failure signal is worth mapping; a cancellation is not.** `postToolUseFailure` carries
-  `is_interrupt`, which is true when the user pressed stop — the person who would receive the Beep
-  is the person who just cancelled the tool, so that shape is skipped.
-- **Payloads carry PII you must drop.** Cursor sends `user_email` and `transcript_path`. Neither is
+- `postToolUseFailure` carries `is_interrupt`. A user-cancelled tool is skipped; another failure is
+  mapped.
+- Cursor sends `user_email` and `transcript_path`. Neither is
   copied anywhere into the event; only `workspace_roots[0]` is passed as `cwd` so the shared
   normalizer hashes it. Enumerate a new harness's payload fields and decide, field by field, what
   never leaves the machine.
@@ -411,18 +402,16 @@ machine regardless.
 
 ## Non-destructive install patterns
 
-Every install path obeys the same shape. Using Codex
-([`install.ts`](../packages/codex/src/install.ts)) as the model:
+Use the following sequence. The Codex implementation is in
+[`install.ts`](../packages/codex/src/install.ts).
 
-**1. Resolve the config path `HOME`-relative.** Honor any harness override env var (Codex uses
-`$CODEX_HOME`) and fall back to the conventional dir. Never hard-code an absolute home path — the
-E2E harness runs installs against an isolated temporary `HOME`, and real users have non-standard
-homes too.
+1. Resolve and parse the user-level configuration. Honor the harness's home-directory override.
+2. Merge only BirdyBeep-owned entries; return without writing when nothing changes.
+3. In dry-run mode, report the planned changes.
+4. Before writing, preserve the current bytes in the appropriate backup.
+5. Return changed files, backups, required actions, and resulting status.
 
-**2. Read + parse what's already there** (empty if absent). Keep a record of every user key.
-
-**3. Merge in only BirdyBeep-managed entries.** Append, never overwrite a user's own hook. Codex
-identifies its own entries by the managed command string, so a re-merge is a no-op:
+The merge appends BirdyBeep's hook without replacing an existing hook:
 
 ```ts
 export function mergeCodexConfig(config: Record<string, unknown>) {
@@ -432,7 +421,7 @@ export function mergeCodexConfig(config: Record<string, unknown>) {
   for (const event of BIRDYBEEP_HOOK_EVENTS) {
     const current = Array.isArray(nextHooks[event]) ? [...nextHooks[event]] : [];
     if (!current.some(isBirdyBeepHookEntry)) {
-      current.push(birdyBeepHookEntry()); // append — never clobber a user hook
+      current.push(birdyBeepHookEntry()); // preserve user hooks
       changed = true;
     }
     nextHooks[event] = current;
@@ -442,34 +431,22 @@ export function mergeCodexConfig(config: Record<string, unknown>) {
 }
 ```
 
-> **Only merge into keys that hold more than one value.** A single-valued key has exactly one
-> owner, so writing it deletes whatever tool was there. Prefer a list the harness lets you append
-> to. If a signal is reachable only through a single-valued key, leave the key alone and print what
-> is in it — never claim it silently. Codex's `notify` is the worked example; see
-> [`docs/SPEC.md`](./SPEC.md) §6.
+Only merge into keys that hold more than one value. A single-valued key has exactly one owner, so
+writing it deletes whatever tool was there. Prefer a list the harness lets you append to. If a
+signal is reachable only through a single-valued key, leave the key alone and print what is in it.
+Codex's `notify` is the worked example; see [`docs/SPEC.md`](./SPEC.md) §6.
 
-**4. If nothing changed, return early** with `changed: false` — that is the idempotency guarantee
-(`birdybeep agent install` twice is identical to once).
-
-**5. On `dryRun`, report the would-change files without writing.**
-
-**6. Back up before every write, then write.** Copy the existing file to a backup (Codex uses a
-`.birdybeep-backup` suffix). The canonical backup keeps the pre-BirdyBeep original; a later write
-whose current bytes differ from that backup gets an additional timestamped copy beside it, so no
-overwrite is unrecoverable.
-
-**7. Return `changedFiles`, `backupFiles`, `requiredActions`, and the resulting `status`.**
-
-The CLI prints `requiredActions` to the user — this is how a one-time trust or restart instruction
-reaches them.
+Codex uses a `.birdybeep-backup` suffix. If a later write differs from that backup, it writes an
+additional timestamped copy before changing the configuration. The CLI prints `requiredActions`
+after installation.
 
 ### The token is never embedded
 
-The installed config invokes a bare command — `birdybeep hook codex` — with **no token in it**. The
+The installed config invokes `birdybeep hook codex` with no token. The
 hook reads the machine token from secure storage at event time. Tokens live in the OS keychain when
 available, else a strict-permission (`0600`) file in the user config dir
 ([`token-store.ts`](../packages/agent-core/src/token-store.ts)); they are **never** written into
-harness config or any repo file, and the server only ever stores token _hashes_. The snapshot tests
+harness config or any repo file, and the server stores token hashes. Snapshot tests
 assert the generated config contains no `bbm_`/`Bearer`/`token=` material.
 
 ### Generated config example
@@ -492,33 +469,18 @@ timeout = 10
 
 ## The `needs_trust` / `needs_restart` pattern
 
-Some harnesses don't activate the moment you write their config. Two cases ship today:
+Codex returns `needs_trust` until the user trusts its lifecycle hooks through `/hooks`. OpenCode
+returns `needs_restart` until the restarted plugin emits an event.
 
-- **Codex** requires a one-time hook **trust**: it skips untrusted `[[hooks.X]]` entries until the
-  user reviews and trusts them via `/hooks`. Writing config is therefore **not** "installed".
-- **OpenCode** loads plugins only at startup, so the user must **restart** OpenCode after install.
+Only events that pass through a gated surface prove activation. For Codex, a `notify` event does
+not prove lifecycle-hook trust. Keep the status at `needs_trust` until a lifecycle hook fires.
 
-For these, `install()` returns `needs_trust` / `needs_restart` and surfaces the instruction in
-`requiredActions`. `status()` keeps returning that value **until an event that could only have come
-through the gated path proves the gate was cleared** — an untrusted hook never fires, and an
-unloaded plugin never fires, so such an event is the only honest proof.
+| Surface                       | Gated                           | Proves activation |
+| ----------------------------- | ------------------------------- | ----------------- |
+| `notify = [...]` program      | no                              | no                |
+| `[[hooks.X]]` lifecycle hooks | yes, until approved in `/hooks` | yes               |
 
-> **Only count events that actually traverse the gate.** This is the subtle part, and getting it
-> wrong produces a _false_ "installed" — the worst possible failure for a trust signal, because the
-> user is told approval beeps work when they silently do not. Codex is the cautionary example: it
-> exposes **two** surfaces, and only one is gated.
->
-> | Surface                       | Trust-gated?                         | Proof of trust? |
-> | ----------------------------- | ------------------------------------ | --------------- |
-> | `notify = [...]` program      | **No** — runs on every turn-complete | **No**          |
-> | `[[hooks.X]]` lifecycle hooks | Yes — only after `/hooks`            | Yes             |
->
-> Counting _any_ event (including `notify`) flipped Codex to `installed` on the first turn-complete
-> while the security-relevant `PermissionRequest` → `approval_required` hook was still untrusted and
-> dropped (birdybeep-agent-qyf). Identify the gated payload shape explicitly.
-
-Codex implements this with a small **trust marker** file in the BirdyBeep data dir (strict perms,
-never repo-local), carrying a timestamp only — never notification content
+Codex records a timestamp in a restricted trust-marker file in the BirdyBeep data directory
 ([`trust.ts`](../packages/codex/src/trust.ts)):
 
 ```ts
@@ -527,8 +489,7 @@ const TRUST_PROVING_OUTCOMES = new Set<HookOutcome>(["delivered", "queued", "unp
 
 export async function runCodexHook(rawInput, options): Promise<HookResult> {
   const result = await runAgentHook(codexAdapter, rawInput, options);
-  // BOTH halves matter: a trust-gated payload AND a clean end-to-end fire.
-  // A notify fire satisfies the second but never the first, so it never grants trust.
+  // Only a lifecycle-hook payload can prove trust.
   if (isCodexLifecycleHookPayload(rawInput) && TRUST_PROVING_OUTCOMES.has(result.outcome)) {
     recordCodexEventSeen(options);
   }
@@ -536,12 +497,8 @@ export async function runCodexHook(rawInput, options): Promise<HookResult> {
 }
 ```
 
-`status()` then reads the marker: config fully written **and** a trust-gated hook seen →
-`installed`; config written but no such hook yet → `needs_trust`. `uninstall()` clears the marker.
-If your harness has any gating step (trust prompt, restart, an enable toggle), follow this shape:
-write config, hold the gated status, and flip to `installed` only on an observed event that
-**could not have arrived without the gate being cleared**. When in doubt, under-claim: a lingering
-`needs_trust` is a nudge, a false `installed` is a broken promise.
+`status()` returns `installed` only when configuration is complete and a gated hook has been seen.
+`uninstall()` clears the marker. Apply the same rule to any trust, restart, or enablement gate.
 
 ---
 
@@ -606,10 +563,13 @@ first delivery — Codex's `runCodexHook` wraps it solely to write the trust mar
 
 ## Testing expectations
 
-An adapter is not done until it is **proven end-to-end against a real harness payload**. "The code
-looks right" is not a completion claim in this repo. Three layers, all required:
+Required tests:
 
-### 1. Snapshot tests (config generation + non-destructive patching)
+- snapshot and non-destructive configuration tests;
+- installation in a temporary `HOME` followed by a current harness payload;
+- induced `doctor()` failures for every reported remedy.
+
+### Snapshot and configuration tests
 
 Lock the exact config your installer generates, and prove non-destructive patching against realistic
 pre-existing configs (unrelated keys, different key order, a user's own hook, a single-valued field
@@ -625,10 +585,10 @@ It asserts:
 Snapshots are deterministic (no machine paths, timestamps, or tokens in generated config), so they
 are stable across machines. Regenerate them **intentionally**, never blindly.
 
-### 2. Real-hook E2E through the stub sink
+### Adapter E2E
 
-The mandatory gate. Install the **real** adapter into a **hermetic temporary `HOME`**, fire the
-**actual** payloads the harness emits, and assert the normalized event is produced and **delivered**
+Install the adapter into a temporary `HOME`, fire current harness payloads, and assert the
+normalized event is produced and delivered
 to a stub event sink. See [`packages/codex/src/e2e.test.ts`](../packages/codex/src/e2e.test.ts),
 which uses `createSandbox`, `StubEventSink`, and the privacy assertions from
 `@birdybeep/test-harness`. It proves:
@@ -646,8 +606,7 @@ which uses `createSandbox`, `StubEventSink`, and the privacy assertions from
   `unpaired` and is counted in the unpaired-activity notice;
 - the hook **returns fast** (never blocks the harness).
 
-A unit test of the mapper is necessary but **not sufficient** — the E2E is the bar. (The stub-sink
-E2E is the in-repo gate.)
+A mapper unit test does not replace the adapter E2E.
 
 When what you changed only MEANS something to the backend — a metadata field the server reads, a
 new wire value — the stub sink cannot prove it, because a stub accepts anything. Those changes get a
@@ -657,13 +616,13 @@ Code hooks and asserts the push title the worker composes from `metadata.session
 sibling product checkout (`BIRDYBEEP_REPO`, default `../birdybeep`) with real `.dev.vars`, so it
 exits 2 (skip) rather than failing when they are absent — that is why CI cannot run it and you must.
 
-### 3. `doctor()` actually diagnoses
+### Diagnostic tests
 
 Induce each failure mode your `doctor()` claims to catch (missing token, untrusted/needs-restart,
 malformed config, unwritable config) and assert it reports the failure with the right `remedy`. See
 [`packages/codex/src/status.test.ts`](../packages/codex/src/status.test.ts).
 
-### Running the suite
+### Commands
 
 ```bash
 pnpm install
@@ -671,9 +630,8 @@ pnpm turbo lint typecheck test   # includes adapter snapshot tests
 pnpm test:e2e                    # real install into a temp HOME + fire harness events
 ```
 
-The **pre-push hook** re-runs lint + typecheck + unit + snapshot + adapter smoke and **blocks the
-push** on failure; **CI** re-runs the full matrix on macOS, Linux, and Windows. Never bypass them,
-never weaken a test to pass, and never merge on red.
+The pre-push hook runs lint, typecheck, unit, snapshot, and adapter smoke tests. CI runs the full
+matrix on macOS, Linux, and Windows.
 
 ### Cross-platform notes
 
@@ -682,21 +640,8 @@ resolve paths with `node:path`, read `HOME` through the shared helpers, and rely
 token store (OS keychain with a strict-perm file fallback) — and test the fallback path, since CI
 exercises it.
 
----
+### Cross-repository schema changes
 
-## Checklist for a new adapter
-
-- [ ] `id` added to `HARNESS_IDS` (lockstep change flagged on the ticket).
-- [ ] All seven members implemented: `id`, `displayName`, `detect`, `install`, `uninstall`,
-      `status`, `doctor`, `normalizeEvent`.
-- [ ] `detect()` is side-effect-free, `HOME`-relative, never throws.
-- [ ] `install()` is idempotent, backs up once, adds only managed entries, writes no token, honors
-      `dryRun`.
-- [ ] `uninstall()` restores byte-for-byte when untouched; preserves user edits otherwise.
-- [ ] `status()` / `doctor()` are read-only; a gated harness holds `needs_trust`/`needs_restart`
-      until the first real event.
-- [ ] `normalizeEvent()` maps to a `BirdyBeepEventType`, carries only safe discriminators, drops raw
-      content, and defers all redaction/hashing/truncation to the shared normalizer.
-- [ ] Snapshot tests, real-hook E2E through the stub sink, and `doctor()` failure-mode tests all
-      green.
-- [ ] A generated `examples/<harness>/` config committed.
+When pairing or integration-status payloads change, update the shared schemas and cross-repository
+tests together. Redaction patterns reduce accidental exposure but do not replace field-by-field
+review of adapter payloads.

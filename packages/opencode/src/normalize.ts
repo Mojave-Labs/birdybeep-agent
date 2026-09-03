@@ -147,7 +147,7 @@ function mapOpenCodeEvent(type: string, props: Record<string, unknown>): MappedE
         eventType: "agent_idle",
         status: "idle",
         title: "OpenCode is waiting",
-        body: "Turn complete — awaiting input",
+        body: "Awaiting input",
         metadata: {},
       };
     case "session.error": {

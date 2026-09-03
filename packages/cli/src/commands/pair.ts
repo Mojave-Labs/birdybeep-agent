@@ -504,7 +504,7 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
       },
       {
         flag: "--no-install",
-        summary: "Stop after pairing — don't detect or wire up any coding agent",
+        summary: "Stop after pairing; do not install coding-agent hooks",
       },
       {
         flag: "--no-test",
@@ -531,7 +531,7 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
       if (verb.skipWhenPaired && (await getToken(deps.tokenOptions ?? {})) !== null) {
         ctx.io.line(
           chain !== undefined
-            ? "✓ Already paired — checking which coding agents are wired up."
+            ? "✓ Already paired. Checking installed coding-agent hooks."
             : "✓ Already paired. Nothing else to do with --no-install.",
         );
         // `undefined` here means the chain was never RUN (--no-install) — the only remaining
@@ -584,7 +584,7 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
         ctx.io.line(
           `   Session code (display only; cannot approve by itself):  ${start.user_code}`,
         );
-        ctx.io.line("Waiting for you to approve this machine in the app…");
+        ctx.io.line("Waiting for approval in the BirdyBeep app.");
       }
 
       // Poll /pair/token until approved (201), a TERMINAL error, or the window expires.
@@ -620,8 +620,8 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
         if (!ctx.flags.json && nowMs - lastBeat >= HEARTBEAT_MS) {
           ctx.io.line(
             poll.status === "error"
-              ? `   still trying — the server is busy (${poll.message}). approve in the app when you can…`
-              : "   still waiting — approve this machine in the BirdyBeep app…",
+              ? `   Backend unavailable (${poll.message}); retrying.`
+              : "   Waiting for approval in the BirdyBeep app.",
           );
           lastBeat = nowMs;
         }
@@ -679,7 +679,7 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
       ) {
         ctx.io.result({ paired: false, reason: "declined" });
         ctx.io.errline(
-          "Pairing declined — the machine token was NOT stored, and this machine will send no " +
+          "Pairing declined. The machine token was NOT stored, and this machine will send no " +
             "events. The machine may still appear in the BirdyBeep app; revoke it there if you " +
             "did not intend to pair it.",
         );
@@ -705,14 +705,14 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
       const humanSuffix = approvedBy !== undefined ? ` to ${approvedBy}` : "";
       const discardedSuffix =
         discarded > 0
-          ? ` Discarded ${discarded} event(s) queued before pairing — you won't be beeped about them.`
+          ? ` Discarded ${discarded} event(s) queued before pairing. They will not produce notifications.`
           : "";
       // gcgp.5: pairing is the WHOLE of setup, so the token is not the end of the run — the
       // harness half follows and the line above it just says what happened. The old copy pointed
       // at `birdybeep test`, which is why a user could pair, get a Beep, and stop with nothing
       // wired up. It only points anywhere now when the chain has been turned off.
       const nextStep =
-        chain === undefined ? " Run `birdybeep setup` to wire up your coding agents." : "";
+        chain === undefined ? " Run `birdybeep setup` to install coding-agent hooks." : "";
       ctx.io.line(`✓ Paired${humanSuffix}.${nextStep}${discardedSuffix}`);
 
       const report =
@@ -740,7 +740,7 @@ export function createPairCommand(deps: PairCommandDeps = {}): Command {
   return createPairingCommand(
     {
       name: "pair",
-      summary: "Pair this machine and wire up every coding agent on it",
+      summary: "Pair this machine and install detected coding-agent hooks",
       usage: "birdybeep pair [--yes] [--expect-email <addr>] [--no-install] [--no-test] [--json]",
       skipWhenPaired: false,
     },
@@ -758,10 +758,9 @@ export function createSetupCommand(deps: PairCommandDeps = {}): Command {
   return createPairingCommand(
     {
       name: "setup",
-      summary: "Set up BirdyBeep here: pair, wire up every coding agent, test",
+      summary: "Set up BirdyBeep on this machine",
       usage: "birdybeep setup [--yes] [--expect-email <addr>] [--no-install] [--no-test] [--json]",
-      gettingStarted:
-        "Pair this machine, wire up every coding agent it finds, and send a test Beep.",
+      gettingStarted: "Connect this machine and install hooks for detected coding agents.",
       skipWhenPaired: true,
     },
     deps,

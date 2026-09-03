@@ -157,7 +157,7 @@ function mapCopilotEvent(
       return {
         eventType: "agent_failed",
         status: "failed",
-        title: "Copilot encountered an error",
+        title: "Copilot failed",
         body: "Agent execution failed",
         metadata: {
           error_name: str(error["name"]),

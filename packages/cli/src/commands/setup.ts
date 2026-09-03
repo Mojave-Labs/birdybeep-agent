@@ -272,7 +272,7 @@ export function buildHarnessReports(
             const remedy =
               surfaceRemedy(state, group) ??
               (graded === "not covered"
-                ? `${adapter.displayName} carries no BirdyBeep hooks — re-run \`birdybeep agent install ${installTarget(adapter.id)}\` from a shell where \`birdybeep\` resolves.`
+                ? `${adapter.displayName} carries no BirdyBeep hooks. Re-run \`birdybeep agent install ${installTarget(adapter.id)}\` from a shell where \`birdybeep\` resolves.`
                 : undefined);
             return {
               harness: adapter.id,
@@ -332,12 +332,12 @@ export function describeMissing(reports: SetupHarnessReport[]): string[] {
   const names = missing.map((r) => r.displayName);
   if (missing.length === reports.length) {
     return [
-      "No supported coding agent is installed on this machine, so there was nothing to wire up.",
-      `Install one of ${names.join(", ")}, then run \`birdybeep setup\` again — pairing is already done, so it picks up from here.`,
+      "No supported coding agent is installed on this machine.",
+      `Install one of ${names.join(", ")}, then run \`birdybeep setup\` again.`,
     ];
   }
   return [
-    `Not installed: ${names.join(", ")}. Install any of them, then run \`birdybeep setup\` again to wire it up.`,
+    `Not installed: ${names.join(", ")}. Install any of them, then run \`birdybeep setup\` again.`,
   ];
 }
 

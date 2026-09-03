@@ -249,7 +249,7 @@ describe("birdybeep status per-surface coverage", () => {
     });
 
     expect(code).toBe(EXIT.OK);
-    expect(out.text()).toContain("✓ terminal CLI 2.1.227 — active");
-    expect(out.text()).toContain("✗ Claude desktop app 2.1.229 — uncovered");
+    expect(out.text()).toContain("✓ terminal CLI 2.1.227: active");
+    expect(out.text()).toContain("✗ Claude desktop app 2.1.229: uncovered");
   });
 });

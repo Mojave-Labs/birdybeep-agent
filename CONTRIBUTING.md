@@ -52,6 +52,6 @@ work” is not verification.
 
 ## Review expectations
 
-Keep patches focused, preserve unrelated work, and explain contract changes explicitly. CODEOWNERS
-review is required for the CLI, adapters, credential/wire code, release workflows, and security
-policy. Be kind, concrete, and evidence-led in every review.
+Keep patches focused and preserve unrelated work. CODEOWNERS review is required for the CLI,
+adapters, credential and wire code, release workflows, and security policy. Reviews should identify
+the affected contract, the evidence used to verify it, and any compatibility or privacy risk.

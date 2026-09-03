@@ -189,14 +189,14 @@ export async function opencodeDoctor(opts: OpenCodeStatusOptions = {}): Promise<
           checks.push({
             name: "Plugin launcher resolves",
             ok: true,
-            detail: `No launcher is recorded at ${opencodeLauncherPath(opts)}, so the plugin finds \`birdybeep\` on PATH — which is working here. Re-run \`birdybeep agent install opencode\` to pin it, so a launch with a stripped PATH cannot silently drop events.`,
+            detail: `No launcher is recorded at ${opencodeLauncherPath(opts)}, so the plugin finds \`birdybeep\` on PATH. It is working here. Re-run \`birdybeep agent install opencode\` to pin it for launches with a stripped PATH.`,
           });
         } else {
           checks.push({
             name: "Plugin launcher resolves",
             ok: false,
             status: "error",
-            detail: `No launcher is recorded at ${opencodeLauncherPath(opts)}, so the plugin falls back to finding \`birdybeep\` on PATH — which OpenCode may not have, and a failed lookup there drops the event with no error anywhere.`,
+            detail: `No launcher is recorded at ${opencodeLauncherPath(opts)}, so the plugin falls back to finding \`birdybeep\` on PATH. OpenCode may not have that PATH, and a failed lookup drops the event.`,
             remedy:
               "Run `birdybeep agent install opencode` to record the launcher for the current CLI.",
           });
