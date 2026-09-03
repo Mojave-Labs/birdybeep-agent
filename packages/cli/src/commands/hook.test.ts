@@ -9,6 +9,8 @@
  * recognize — says so on stderr and exits non-zero (gcgp.1 + gcgp.14).
  */
 import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   createSender,
@@ -213,6 +215,7 @@ describe("hook command dispatch (full CLI path)", () => {
         return Promise.resolve(JSON.stringify(PAYLOADS[0]!.payload));
       },
       now: () => clock,
+      configuredHookTimeoutSeconds: () => undefined,
     });
     const out = capture();
 
@@ -226,6 +229,52 @@ describe("hook command dispatch (full CLI path)", () => {
     expect(code).toBe(EXIT.OK);
     expect(receivedBudget).toBe(LEGACY_HOOK_RUNTIME_BUDGET_MS - 2500);
     expect(JSON.parse(out.text())).toMatchObject({ harness: "claude", outcome: "delivered" });
+  });
+
+  it("shrinks the sender budget inside a preserved custom hook deadline", async () => {
+    sandbox = createSandbox();
+    const claudeDir = join(sandbox.home, ".claude");
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(
+      join(claudeDir, "settings.json"),
+      JSON.stringify({
+        hooks: {
+          PermissionRequest: [
+            {
+              matcher: "",
+              hooks: [{ type: "command", command: "birdybeep hook claude", timeout: 7 }],
+            },
+          ],
+        },
+      }),
+    );
+    let clock = 0;
+    let receivedBudget: number | undefined;
+    const sender: Sender = {
+      send: () => Promise.resolve({ outcome: "delivered", status: 202 }),
+      drainNow: () => Promise.resolve({ delivered: 0, dropped: 0, kept: 0, pruned: 0 }),
+    };
+    const cmd = createHookCommand({
+      createSender: (_baseUrl, budgetMs) => {
+        receivedBudget = budgetMs;
+        return sender;
+      },
+      readStdin: () => {
+        clock = 2500;
+        return Promise.resolve(JSON.stringify(PAYLOADS[0]!.payload));
+      },
+      now: () => clock,
+    });
+
+    const code = await runCli(["hook", "claude"], {
+      commands: [cmd],
+      stdout: capture().writer,
+      stderr: capture().writer,
+      ensureConfig: false,
+    });
+
+    expect(code).toBe(EXIT.OK);
+    expect(receivedBudget).toBe(3500);
   });
 
   it("delivers via stdin payload and emits the outcome under --json", async () => {

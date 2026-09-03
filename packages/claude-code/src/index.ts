@@ -37,6 +37,7 @@ export {
   claudeCodeDoctor,
   claudeCodeStatus,
   claudeCodeStatusReport,
+  configuredClaudeHookTimeoutSeconds,
   type StatusReport,
 } from "./status";
 export { removeBirdyBeepHooks, uninstallClaudeCode } from "./uninstall";

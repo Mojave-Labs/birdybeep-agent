@@ -17,6 +17,7 @@ import {
   claudeCodeDoctor,
   claudeCodeStatus,
   claudeCodeStatusReport,
+  configuredClaudeHookTimeoutSeconds,
 } from "./status";
 
 let sandbox: Sandbox | undefined;
@@ -39,6 +40,24 @@ const POSIX = process.platform !== "win32";
 const ROOT = POSIX && typeof process.getuid === "function" && process.getuid() === 0;
 
 describe("status()", () => {
+  it("reads the smallest configured BirdyBeep hook deadline", () => {
+    sandbox = createSandbox();
+    writeFileSync(
+      seedDir(sandbox),
+      JSON.stringify({
+        hooks: {
+          Stop: [
+            {
+              matcher: "",
+              hooks: [{ type: "command", command: "birdybeep hook claude", timeout: 7 }],
+            },
+          ],
+        },
+      }),
+    );
+    expect(configuredClaudeHookTimeoutSeconds(sandbox.home)).toBe(7);
+  });
+
   it("is `installed` when Claude Code is present and all hooks are registered", async () => {
     sandbox = createSandbox();
     await installClaudeCode({}, sandbox.home);

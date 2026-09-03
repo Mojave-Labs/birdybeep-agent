@@ -33,8 +33,16 @@ import {
   resolveOnPath,
   type Sender,
 } from "@birdybeep/agent-core";
-import { isClaudeCodeHookPayload, runClaudeHook } from "@birdybeep/claude-code";
-import { isCodexHookPayload, runCodexHook } from "@birdybeep/codex";
+import {
+  configuredClaudeHookTimeoutSeconds,
+  isClaudeCodeHookPayload,
+  runClaudeHook,
+} from "@birdybeep/claude-code";
+import {
+  configuredCodexHookTimeoutSeconds,
+  isCodexHookPayload,
+  runCodexHook,
+} from "@birdybeep/codex";
 import {
   type CopilotHookEventName,
   isCopilotHookEventName,
@@ -86,6 +94,25 @@ export const STDIN_READ_TIMEOUT_MS = 3000;
  * process before its timeout path can persist the event.
  */
 export const LEGACY_HOOK_RUNTIME_BUDGET_MS = 9000;
+
+/** Convert a discovered outer hook deadline into the safe total runtime available to us. */
+export function hookRuntimeBudgetMs(configuredTimeoutSeconds: number | undefined): number {
+  if (
+    configuredTimeoutSeconds === undefined ||
+    !Number.isFinite(configuredTimeoutSeconds) ||
+    configuredTimeoutSeconds <= 0
+  ) {
+    return LEGACY_HOOK_RUNTIME_BUDGET_MS;
+  }
+  const configuredBudgetMs = Math.max(1, Math.floor(configuredTimeoutSeconds * 1000) - 1000);
+  return Math.min(LEGACY_HOOK_RUNTIME_BUDGET_MS, configuredBudgetMs);
+}
+
+function configuredHookTimeoutSeconds(harness: HarnessName): number | undefined {
+  if (harness === "claude") return configuredClaudeHookTimeoutSeconds();
+  if (harness === "codex") return configuredCodexHookTimeoutSeconds();
+  return undefined;
+}
 
 /** Resolve to `fallback` if `promise` does not settle within `ms` (the timer is unref'd). */
 function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
@@ -318,6 +345,8 @@ export interface HookCommandDeps {
   stdinTimeoutMs?: number;
   /** Injectable monotonic clock for the legacy-hook budget tests. */
   now?: () => number;
+  /** Read the harness's configured outer deadline; tests inject custom preserved values. */
+  configuredHookTimeoutSeconds?: (harness: HarnessName) => number | undefined;
   /**
    * Detach the Codex notify send into a process that survives `codex exec` reaping its group
    * (birdybeep-agent-fuf). Default {@link detachCodexNotifyWorker}; returns whether the
@@ -340,6 +369,8 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
   const readStdin = deps.readStdin ?? readStdinDefault;
   const stdinTimeoutMs = deps.stdinTimeoutMs ?? STDIN_READ_TIMEOUT_MS;
   const now = deps.now ?? (() => performance.now());
+  const readConfiguredHookTimeoutSeconds =
+    deps.configuredHookTimeoutSeconds ?? configuredHookTimeoutSeconds;
   const detachCodexNotify = deps.detachCodexNotify ?? detachCodexNotifyWorker;
 
   return {
@@ -467,16 +498,14 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
         return EXIT.ERROR;
       }
 
-      // Package-only upgrades leave the already-installed hook's old 10s deadline untouched.
-      // Account for time already spent reading and validating stdin, then give the sender only
-      // the smaller of its normal 8s allowance and the legacy-safe remainder. The sender also
-      // counts secure-store lookup against this budget, so it can queue before the harness kills
-      // the process rather than losing the event between an 8s request and a 10s outer timeout.
+      // Package-only upgrades leave the already-installed hook's deadline untouched, including
+      // user-customized values below the old 10s default. Account for time already spent reading
+      // and validating stdin, then give the sender only the smaller of its normal 8s allowance
+      // and the configured-safe remainder. The sender counts secure-store lookup against this
+      // budget too, so it can queue before the harness kills the process.
+      const runtimeBudgetMs = hookRuntimeBudgetMs(readConfiguredHookTimeoutSeconds(harness));
       const elapsedMs = Math.max(0, now() - hookStartedAt);
-      const budgetMs = Math.max(
-        1,
-        Math.min(DEFAULT_TOTAL_BUDGET_MS, LEGACY_HOOK_RUNTIME_BUDGET_MS - elapsedMs),
-      );
+      const budgetMs = Math.max(1, Math.min(DEFAULT_TOTAL_BUDGET_MS, runtimeBudgetMs - elapsedMs));
       const sender = makeSender(resolveApiUrl(), budgetMs);
       const result = await runHookCommand(harness, payload, sender, copilotEventName);
       // Hot path: human mode is silent; --json emits the outcome for scripts/debugging.

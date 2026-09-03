@@ -48,6 +48,7 @@ export {
   codexStatus,
   type CodexStatusOptions,
   codexStatusReport,
+  configuredCodexHookTimeoutSeconds,
   type StatusReport,
 } from "./status";
 export {

@@ -26,7 +26,7 @@ import {
   recordCodexMigration,
 } from "./install";
 import { codexConfigFile } from "./paths";
-import { codexDoctor, codexStatus } from "./status";
+import { codexDoctor, codexStatus, configuredCodexHookTimeoutSeconds } from "./status";
 import { recordCodexEventSeen } from "./trust";
 
 const FILE_ONLY = { backend: unavailableKeychainBackend };
@@ -52,6 +52,15 @@ function seedConfig(home: string, body: string): void {
 }
 
 describe("codexStatus — §8.8 enum per fixture state", () => {
+  it("reads the smallest configured BirdyBeep hook deadline", () => {
+    sandbox = createSandbox();
+    seedConfig(
+      sandbox.home,
+      '[[hooks.Stop]]\nmatcher = ""\n[[hooks.Stop.hooks]]\ntype = "command"\ncommand = "birdybeep hook codex"\ntimeout = 7\n',
+    );
+    expect(configuredCodexHookTimeoutSeconds(sandbox.home)).toBe(7);
+  });
+
   it("absent Codex → not_detected", async () => {
     sandbox = createSandbox();
     expect(await codexStatus({ home: sandbox.home, detect: ABSENT })).toBe("not_detected");

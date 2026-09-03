@@ -21,6 +21,7 @@ import {
   BIRDYBEEP_HOOK_EVENTS,
   installedBirdyBeepCommands,
   isBirdyBeepEntry,
+  isBirdyBeepHook,
 } from "./install";
 import { claudeConfigDir, claudeSettingsPath } from "./paths";
 
@@ -78,6 +79,37 @@ function inspectHooks(home: string): HookState {
     ),
   ];
   return { exists: true, parseable: true, present, total, stalePaths };
+}
+
+/** Smallest user-configured deadline on a BirdyBeep Claude hook, if readable. */
+export function configuredClaudeHookTimeoutSeconds(home: string = homedir()): number | undefined {
+  try {
+    const parsed = asRecord(JSON.parse(readFileSync(claudeSettingsPath(home), "utf8")));
+    const hooks = asRecord(parsed["hooks"]);
+    const timeouts: number[] = [];
+    for (const entries of Object.values(hooks)) {
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        const innerHooks = asRecord(entry)["hooks"];
+        if (!Array.isArray(innerHooks)) continue;
+        for (const hook of innerHooks) {
+          const record = asRecord(hook);
+          const timeout = record["timeout"];
+          if (
+            isBirdyBeepHook(hook) &&
+            typeof timeout === "number" &&
+            Number.isFinite(timeout) &&
+            timeout > 0
+          ) {
+            timeouts.push(timeout);
+          }
+        }
+      }
+    }
+    return timeouts.length > 0 ? Math.min(...timeouts) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function resolveDetect(opts: StatusOptions): Promise<DetectionResult> {
