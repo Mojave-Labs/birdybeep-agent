@@ -152,6 +152,49 @@ describe("transient failures queue and return fast", () => {
     expect(elapsed).toBeLessThan(1000); // 50ms timeout → fast return
   });
 
+  it("counts secure-store lookup against the total timeout budget", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    sandbox = createSandbox();
+    const queue = new LocalEventQueue({ dir: sandbox.path("data", "q") });
+    const backend: KeychainBackend = {
+      available: true,
+      get: () => {
+        // A slow-but-successful token lookup used 1.5s of the outer 8s budget.
+        vi.setSystemTime(1500);
+        return Promise.resolve(TOKEN);
+      },
+      set: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+    };
+    const fetchImpl = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    ) as unknown as typeof fetch;
+    const sender = createSender({
+      baseUrl: "http://api.test",
+      queue,
+      fetchImpl,
+      tokenOptions: { backend, filePath: sandbox.path("data", "token") },
+      timeoutMs: 8000,
+      totalBudgetMs: 8000,
+    });
+
+    const pending = sender.send(event());
+    await vi.advanceTimersByTimeAsync(6500);
+    const result = await pending;
+
+    // The request received only the 6.5s that remained, rather than a fresh 8s after lookup.
+    expect(Date.now()).toBe(8000);
+    expect(result).toMatchObject({ outcome: "queued", queueCause: "transport" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(queue.size()).toBe(1);
+  });
+
   it("a 5xx and a 429 rate_limited both queue", async () => {
     const five = setup(() => Promise.resolve(jsonResponse(500, errorBody("internal_error"))));
     expect((await five.sender.send(event())).outcome).toBe("queued");

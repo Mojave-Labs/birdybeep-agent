@@ -34,6 +34,7 @@ import {
   type HarnessName,
   HOOK_HARNESSES,
   isHarnessName,
+  LEGACY_HOOK_RUNTIME_BUDGET_MS,
   readHookPayload,
   runHookCommand,
 } from "./hook";
@@ -194,6 +195,39 @@ describe("offline → queue → drain (CLI-OFFLINE-QUEUE-E2E core)", () => {
 });
 
 describe("hook command dispatch (full CLI path)", () => {
+  it("shrinks the sender budget to finish inside legacy 10s hook deadlines", async () => {
+    sandbox = createSandbox();
+    let clock = 0;
+    let receivedBudget: number | undefined;
+    const sender: Sender = {
+      send: () => Promise.resolve({ outcome: "delivered", status: 202 }),
+      drainNow: () => Promise.resolve({ delivered: 0, dropped: 0, kept: 0, pruned: 0 }),
+    };
+    const cmd = createHookCommand({
+      createSender: (_baseUrl, budgetMs) => {
+        receivedBudget = budgetMs;
+        return sender;
+      },
+      readStdin: () => {
+        clock = 2500;
+        return Promise.resolve(JSON.stringify(PAYLOADS[0]!.payload));
+      },
+      now: () => clock,
+    });
+    const out = capture();
+
+    const code = await runCli(["hook", "claude", "--json"], {
+      commands: [cmd],
+      stdout: out.writer,
+      stderr: out.writer,
+      ensureConfig: false,
+    });
+
+    expect(code).toBe(EXIT.OK);
+    expect(receivedBudget).toBe(LEGACY_HOOK_RUNTIME_BUDGET_MS - 2500);
+    expect(JSON.parse(out.text())).toMatchObject({ harness: "claude", outcome: "delivered" });
+  });
+
   it("delivers via stdin payload and emits the outcome under --json", async () => {
     sink = await StubEventSink.start();
     sandbox = createSandbox();

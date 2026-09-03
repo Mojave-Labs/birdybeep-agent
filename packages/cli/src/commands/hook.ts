@@ -23,9 +23,12 @@ import { randomBytes } from "node:crypto";
 import { closeSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { performance } from "node:perf_hooks";
 
 import {
   createSender as defaultCreateSender,
+  DEFAULT_SEND_TIMEOUT_MS,
+  DEFAULT_TOTAL_BUDGET_MS,
   type HookResult,
   resolveOnPath,
   type Sender,
@@ -66,13 +69,23 @@ export const HOOK_HARNESSES: readonly HarnessName[] = [
 /**
  * Hard cap on reading the payload — a misbehaving harness must never hang the hook.
  * 3s (was 2s, erm): a loaded machine can be slow to flush a pipe, and a timeout here
- * silently DROPS the event ("skipped"). BUDGET MATH: this cap and the sender's
- * DEFAULT_TOTAL_BUDGET_MS (8s) run SEQUENTIALLY and must sum comfortably under the 15s
- * hook timeout the tightest adapters register, leaving headroom for Node startup —
- * 3s + 8s + ~1s startup < 15s. A live healthy production ingest took 5.8s, so the former
- * 5s sender budget made the client abort and falsely queue already-accepted events.
+ * silently DROPS the event ("skipped"). A live healthy production ingest took 5.8s, so the
+ * former 5s sender budget made the client abort and falsely queue already-accepted events.
+ * {@link LEGACY_HOOK_RUNTIME_BUDGET_MS} clamps the later send so this read and the 8s sender
+ * allowance never overrun a 10s hook left behind by a package-only upgrade.
  */
 export const STDIN_READ_TIMEOUT_MS = 3000;
+
+/**
+ * Runtime available after the hook process starts, before returning control to the harness.
+ *
+ * Managed installs now use 15s, but an npm-only upgrade does not rewrite an existing 10s hook.
+ * Keep every invocation inside that legacy deadline and reserve one second for Node startup,
+ * queue persistence, output, and harness scheduling. Fast stdin still gets the full 8s sender
+ * allowance; a slow stdin read reduces the send budget instead of letting the harness kill the
+ * process before its timeout path can persist the event.
+ */
+export const LEGACY_HOOK_RUNTIME_BUDGET_MS = 9000;
 
 /** Resolve to `fallback` if `promise` does not settle within `ms` (the timer is unref'd). */
 function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
@@ -297,12 +310,14 @@ export function detachCodexNotifyWorker(payload: string): boolean {
 }
 
 export interface HookCommandDeps {
-  /** Build the sender (default: agent-core `createSender` with the resolved API URL). */
-  createSender?: (baseUrl: string) => Sender;
+  /** Build the sender with the wall-clock budget left for this invocation. */
+  createSender?: (baseUrl: string, budgetMs: number) => Sender;
   /** Read the raw payload from stdin (default: real process.stdin). */
   readStdin?: () => Promise<string>;
   /** Hard cap on the payload read (default {@link STDIN_READ_TIMEOUT_MS}); tests shrink it. */
   stdinTimeoutMs?: number;
+  /** Injectable monotonic clock for the legacy-hook budget tests. */
+  now?: () => number;
   /**
    * Detach the Codex notify send into a process that survives `codex exec` reaping its group
    * (birdybeep-agent-fuf). Default {@link detachCodexNotifyWorker}; returns whether the
@@ -314,9 +329,17 @@ export interface HookCommandDeps {
 
 /** Build the `hook` command. Pure stubs aside, this is the live event path. */
 export function createHookCommand(deps: HookCommandDeps = {}): Command {
-  const makeSender = deps.createSender ?? ((baseUrl) => defaultCreateSender({ baseUrl }));
+  const makeSender =
+    deps.createSender ??
+    ((baseUrl: string, budgetMs: number) =>
+      defaultCreateSender({
+        baseUrl,
+        timeoutMs: Math.min(DEFAULT_SEND_TIMEOUT_MS, budgetMs),
+        totalBudgetMs: budgetMs,
+      }));
   const readStdin = deps.readStdin ?? readStdinDefault;
   const stdinTimeoutMs = deps.stdinTimeoutMs ?? STDIN_READ_TIMEOUT_MS;
+  const now = deps.now ?? (() => performance.now());
   const detachCodexNotify = deps.detachCodexNotify ?? detachCodexNotifyWorker;
 
   return {
@@ -324,6 +347,7 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
     summary: "Internal: normalize + send an event fired by a harness hook",
     usage: "birdybeep hook <claude|codex|opencode|cursor|copilot> [copilot-event]",
     run: async (ctx) => {
+      const hookStartedAt = now();
       const harness = ctx.args[0];
       if (!isHarnessName(harness)) {
         ctx.io.errline(`birdybeep hook: expected one of ${HOOK_HARNESSES.join("|")}`);
@@ -443,7 +467,17 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
         return EXIT.ERROR;
       }
 
-      const sender = makeSender(resolveApiUrl());
+      // Package-only upgrades leave the already-installed hook's old 10s deadline untouched.
+      // Account for time already spent reading and validating stdin, then give the sender only
+      // the smaller of its normal 8s allowance and the legacy-safe remainder. The sender also
+      // counts secure-store lookup against this budget, so it can queue before the harness kills
+      // the process rather than losing the event between an 8s request and a 10s outer timeout.
+      const elapsedMs = Math.max(0, now() - hookStartedAt);
+      const budgetMs = Math.max(
+        1,
+        Math.min(DEFAULT_TOTAL_BUDGET_MS, LEGACY_HOOK_RUNTIME_BUDGET_MS - elapsedMs),
+      );
+      const sender = makeSender(resolveApiUrl(), budgetMs);
       const result = await runHookCommand(harness, payload, sender, copilotEventName);
       // Hot path: human mode is silent; --json emits the outcome for scripts/debugging.
       // Surface the backend's 202 decision (notified/suppressed/deduped) + HTTP status when

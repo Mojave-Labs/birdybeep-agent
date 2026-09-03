@@ -29,10 +29,11 @@ import { recordUnpairedEvent, type UnpairedNotice } from "./unpaired-notice";
  */
 export const DEFAULT_SEND_TIMEOUT_MS = 8000;
 /**
- * Total wall-clock budget for one send() (first attempt + opportunistic drain).
+ * Total wall-clock budget for one send() (token lookup + first attempt + opportunistic drain).
  * Equal to the primary deadline so a fully-spent request is queued and returned rather than
  * immediately retried with a tiny leftover allowance. Managed Claude/Codex/Copilot hooks allow
- * 15s (Cursor 30s; OpenCode is in-process), leaving room for the 3s stdin cap + process startup.
+ * 15s (Cursor 30s; OpenCode is in-process); the CLI also clamps this budget dynamically so an
+ * npm-only upgrade remains inside the previous managed 10s hook deadline.
  */
 export const DEFAULT_TOTAL_BUDGET_MS = 8000;
 /** Stop draining when less than this remains — a send that can't finish shouldn't start. */
@@ -96,9 +97,9 @@ export interface SendResult {
 export interface SenderConfig {
   /** API base URL, e.g. `https://api.birdybeep.com` (or a `wrangler dev` URL). */
   baseUrl: string;
-  /** Hard per-request timeout (default 3s) — the harness must not wait longer. */
+  /** Hard per-request timeout (default 8s) — the harness must not wait longer. */
   timeoutMs?: number;
-  /** Total budget for one send()+drain (default 5s) — see module doc (erm). */
+  /** Total budget for token lookup + one send()+drain (default 8s) — see module doc (erm). */
   totalBudgetMs?: number;
   /** Queue instance (default a LocalEventQueue at the user data dir). */
   queue?: LocalEventQueue;
@@ -274,7 +275,16 @@ export function createSender(config: SenderConfig): Sender {
         };
       }
       const token = lookup.token;
-      const first = await attempt(event, token, Math.min(timeoutMs, totalBudgetMs));
+      // The deadline starts BEFORE secure-store lookup. That lookup is normally quick, but it is
+      // still part of the harness's wall-clock deadline; granting the HTTP attempt a fresh full
+      // budget afterward can overrun an already-installed 10s hook. If too little time remains
+      // to make a useful request, queue immediately. Otherwise clamp the request to the actual
+      // remainder so lookup + request stay inside the advertised total budget.
+      const remainingAfterTokenLookup = deadline - clock();
+      const first: Attempt =
+        remainingAfterTokenLookup < MIN_DRAIN_ATTEMPT_MS
+          ? { result: "retry", retryCause: "transport" }
+          : await attempt(event, token, Math.min(timeoutMs, remainingAfterTokenLookup));
       let outcome: SendOutcome;
       let parked = false;
       if (first.result === "delivered") {
