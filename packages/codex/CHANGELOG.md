@@ -1,5 +1,16 @@
 # @birdybeep/codex
 
+## 0.8.1
+
+### Patch Changes
+
+- d96031e: Shorten setup, pairing, diagnostic, and notification messages across the CLI and adapters. Documentation now states installation, security, and recovery behavior directly.
+- 3aad1cb: Suppress ChatGPT desktop task-title and ambient-suggestion helper results so their structured JSON never becomes a completion Beep.
+- Updated dependencies [d96031e]
+- Updated dependencies [039cfa9]
+- Updated dependencies [45322f3]
+  - @birdybeep/agent-core@0.8.1
+
 ## 0.8.0
 
 ### Patch Changes

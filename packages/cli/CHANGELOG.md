@@ -1,5 +1,23 @@
 # @birdybeep/cli
 
+## 0.8.1
+
+### Patch Changes
+
+- d96031e: Shorten setup, pairing, diagnostic, and notification messages across the CLI and adapters. Documentation now states installation, security, and recovery behavior directly.
+- 039cfa9: Warn when a quota window has stalled, expose hook queue causes, and stop promising retries when the local event queue cannot persist an event.
+- 45322f3: Parse the nullable beep limit used for unlimited Plus accounts and render it as unlimited in `birdybeep doctor`.
+- Updated dependencies [d96031e]
+- Updated dependencies [3aad1cb]
+- Updated dependencies [039cfa9]
+- Updated dependencies [45322f3]
+  - @birdybeep/agent-core@0.8.1
+  - @birdybeep/claude-code@0.8.1
+  - @birdybeep/codex@0.8.1
+  - @birdybeep/copilot@0.8.1
+  - @birdybeep/cursor@0.8.1
+  - @birdybeep/opencode@0.8.1
+
 ## 0.8.0
 
 ### Minor Changes
