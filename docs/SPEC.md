@@ -173,8 +173,7 @@ Expected post-install message:
 
 ```text
 Codex hooks installed.
-Codex may require one-time hook trust. Open Codex and run /hooks.
-Status changes from `needs_trust` after a lifecycle hook fires.
+Open Codex and run /hooks. Status changes from needs_trust after a lifecycle hook fires.
 ```
 
 Do **not** mark Codex fully installed until a trusted **lifecycle hook** fires; surface the state as `needs_trust` until then. A turn-complete beep arriving via a `notify` program is **not** proof of trust and must not flip the state (see birdybeep-agent-qyf).

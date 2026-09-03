@@ -128,7 +128,8 @@ The CLI stores no token when `--expect-email` does not match the approving accou
 
 Queued events remain local while token storage is unavailable. Restore access, then run `birdybeep doctor` to drain the queue.
 
-On macOS, unlock the login keychain by signing in to or unlocking the desktop session.
+On macOS, unlock the login keychain by signing in to or unlocking the desktop session. If the
+keychain remains unreadable, run `birdybeep pair`.
 
 On Linux, Windows, and headless systems, repair the fallback path reported by `doctor`:
 
@@ -138,7 +139,8 @@ chmod 600 <path>
 birdybeep doctor
 ```
 
-If storage remains unreadable, run `birdybeep pair` to store a new token.
+If access still fails, repair or replace the reported token path. Re-pairing uses the same path and
+will not bypass the error.
 
 ### Backend is unreachable
 

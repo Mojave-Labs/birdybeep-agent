@@ -27,9 +27,15 @@ timeout = 10
 
 ## Existing configuration
 
-The installer appends BirdyBeep's entries and preserves other keys, hooks, and the top-level `notify` program. Before the first change, it writes `~/.codex/config.toml.birdybeep-backup`. If a later install must replace content that differs from that backup, it writes an additional timestamped backup.
+The installer appends BirdyBeep's entries and preserves other keys and hooks. It leaves a foreign
+top-level `notify` program in place. A legacy BirdyBeep `notify` value is migrated as specified in
+[Codex mapping](../../docs/SPEC.md#6-codex-mapping). Before the first change, the installer writes
+`~/.codex/config.toml.birdybeep-backup`. If a later install must replace content that differs from
+that backup, it writes an additional timestamped backup.
 
-BirdyBeep does not install the top-level `notify` program. If one already forwards `agent-turn-complete` payloads to `birdybeep hook codex`, it continues to work. Duplicate completion events are collapsed.
+BirdyBeep does not install the top-level `notify` program. A foreign program that forwards
+`agent-turn-complete` payloads to `birdybeep hook codex` continues to work. Duplicate completion
+events are collapsed.
 
 ## Activation
 
