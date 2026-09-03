@@ -1,6 +1,6 @@
 {
   "name": "@birdybeep/agent-core",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Shared event validation, redaction, delivery, queueing, token storage, and adapter types for BirdyBeep.",
   "license": "MIT",
   "repository": {

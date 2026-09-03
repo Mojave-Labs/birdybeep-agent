@@ -1,6 +1,6 @@
 {
   "name": "@birdybeep/cli",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "CLI for connecting a machine to BirdyBeep and installing coding-agent hooks.",
   "license": "MIT",
   "repository": {
