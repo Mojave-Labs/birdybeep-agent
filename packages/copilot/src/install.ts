@@ -34,6 +34,8 @@ import {
 import { copilotHooksPath, type CopilotPathOptions } from "./paths";
 
 export const COPILOT_HOOKS_VERSION = 1;
+/** Previous managed value; retained only for upgrade/uninstall ownership detection. */
+export const LEGACY_COPILOT_HOOK_TIMEOUT_SECONDS = 10;
 /** Per-hook timeout: 3s stdin + 8s bounded send + startup headroom. */
 export const COPILOT_HOOK_TIMEOUT_SECONDS = 15;
 export const COPILOT_HOOK_EVENTS = [
@@ -120,10 +122,14 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 /** Is this entry the BirdyBeep-managed hook for `event`, in ANY launcher shape we have written? */
-function isBirdyBeepEntry(entry: unknown, event: CopilotHookEventName): boolean {
+function isBirdyBeepEntry(
+  entry: unknown,
+  event: CopilotHookEventName,
+  timeoutSeconds: number,
+): boolean {
   const record = asRecord(entry);
   if (record["type"] !== "command") return false;
-  if (record["timeoutSec"] !== COPILOT_HOOK_TIMEOUT_SECONDS) return false;
+  if (record["timeoutSec"] !== timeoutSeconds) return false;
   // BOTH shells must name our command for this event: a half-rewritten file is drift, not ours.
   return (
     isBirdyBeepHookCommand(record["bash"], "copilot", [event]) &&
@@ -142,15 +148,44 @@ function isBirdyBeepEntry(entry: unknown, event: CopilotHookEventName): boolean 
  * Everything else stays strict: the version, the exact event set, one entry per event, and the
  * managed timeout — any other drift is still partial/error.
  */
-export function isCurrentCopilotHooks(input: unknown): boolean {
+function isCopilotHooksWithTimeout(input: unknown, timeoutSeconds: number): boolean {
   const record = asRecord(input);
   if (record["version"] !== COPILOT_HOOKS_VERSION) return false;
   const hooks = asRecord(record["hooks"]);
   if (Object.keys(hooks).length !== COPILOT_HOOK_EVENTS.length) return false;
   return COPILOT_HOOK_EVENTS.every((event) => {
     const entries = hooks[event];
-    return Array.isArray(entries) && entries.length === 1 && isBirdyBeepEntry(entries[0], event);
+    return (
+      Array.isArray(entries) &&
+      entries.length === 1 &&
+      isBirdyBeepEntry(entries[0], event, timeoutSeconds)
+    );
   });
+}
+
+export function isCurrentCopilotHooks(input: unknown): boolean {
+  return isCopilotHooksWithTimeout(input, COPILOT_HOOK_TIMEOUT_SECONDS);
+}
+
+/**
+ * Is this an exact BirdyBeep-owned file from either the current package or the previous managed
+ * 10-second format? Ownership is intentionally broader than current-format validation so an npm
+ * upgrade or uninstall never backs up/restores/refuses to remove a hook file we wrote ourselves.
+ */
+export function isManagedCopilotHooks(input: unknown): boolean {
+  return (
+    isCurrentCopilotHooks(input) ||
+    isCopilotHooksWithTimeout(input, LEGACY_COPILOT_HOOK_TIMEOUT_SECONDS)
+  );
+}
+
+function isManagedCopilotHooksText(input: string | undefined): boolean {
+  if (input === undefined) return false;
+  try {
+    return isManagedCopilotHooks(JSON.parse(input));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -191,6 +226,7 @@ export function installCopilot(options: CopilotInstallOptions = {}): Promise<Ins
   const expected = generatedCopilotHooksText(launcher);
   const existed = existsSync(hooksPath);
   const current = existed ? readFileSync(hooksPath, "utf8") : undefined;
+  const currentIsManaged = isManagedCopilotHooksText(current);
   const backupFiles = existsSync(backupPath) ? [backupPath] : [];
 
   if (current === expected) {
@@ -214,13 +250,17 @@ export function installCopilot(options: CopilotInstallOptions = {}): Promise<Ins
   }
 
   mkdirSync(dirname(hooksPath), { recursive: true });
-  if (existed && !existsSync(backupPath)) copyFileSync(hooksPath, backupPath);
+  // A legacy managed file is an in-place package migration, not pre-existing user content. Do not
+  // create a backup that uninstall would later restore as a dead 10-second BirdyBeep hook.
+  if (existed && !existsSync(backupPath) && !currentIsManaged) {
+    copyFileSync(hooksPath, backupPath);
+  }
   writeFileSync(hooksPath, expected, { mode: 0o600 });
 
   return Promise.resolve({
     changed: true,
     changedFiles: [hooksPath],
-    backupFiles: existed ? [backupPath] : [],
+    backupFiles: existsSync(backupPath) ? [backupPath] : [],
     requiredActions: [],
     status: "installed",
   });

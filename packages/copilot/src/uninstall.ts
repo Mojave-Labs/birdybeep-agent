@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 
 import type { UninstallOptions, UninstallResult } from "@birdybeep/agent-core";
 
-import { copilotBackupPath, isCurrentCopilotHooks } from "./install";
+import { copilotBackupPath, isManagedCopilotHooks } from "./install";
 import { copilotHooksPath, type CopilotPathOptions } from "./paths";
 
 export interface CopilotUninstallOptions extends UninstallOptions, CopilotPathOptions {}
@@ -17,7 +17,7 @@ export interface CopilotUninstallOptions extends UninstallOptions, CopilotPathOp
  */
 function isBirdyBeepHooksFile(path: string): boolean {
   try {
-    return isCurrentCopilotHooks(JSON.parse(readFileSync(path, "utf8")));
+    return isManagedCopilotHooks(JSON.parse(readFileSync(path, "utf8")));
   } catch {
     return false;
   }
@@ -34,14 +34,30 @@ export function uninstallCopilot(options: CopilotUninstallOptions = {}): Promise
   }
 
   if (options.dryRun) {
+    const managedBackup = hasBackup && isBirdyBeepHooksFile(backupPath);
     return Promise.resolve({
       changed: false,
-      removedFiles: hasBackup ? [] : [hooksPath],
-      restoredFiles: hasBackup ? [hooksPath] : [],
+      removedFiles: managedBackup
+        ? [backupPath, ...(hasHooks && isBirdyBeepHooksFile(hooksPath) ? [hooksPath] : [])]
+        : hasBackup
+          ? []
+          : [hooksPath],
+      restoredFiles: hasBackup && !managedBackup ? [hooksPath] : [],
     });
   }
 
   if (hasBackup) {
+    // 0.8.2 briefly backed up the previous managed 10s file while upgrading it. That backup is
+    // ours, not user content: restoring it would leave Copilot invoking BirdyBeep after uninstall.
+    if (isBirdyBeepHooksFile(backupPath)) {
+      const removedFiles = [backupPath];
+      rmSync(backupPath, { force: true });
+      if (hasHooks && isBirdyBeepHooksFile(hooksPath)) {
+        rmSync(hooksPath, { force: true });
+        removedFiles.push(hooksPath);
+      }
+      return Promise.resolve({ changed: true, removedFiles, restoredFiles: [] });
+    }
     copyFileSync(backupPath, hooksPath);
     rmSync(backupPath, { force: true });
     return Promise.resolve({ changed: true, removedFiles: [], restoredFiles: [hooksPath] });
