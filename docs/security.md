@@ -1,240 +1,133 @@
-# Security & privacy
+# Security and privacy
 
-What leaves your machine, what is hashed/redacted/truncated before it does, and where your token
-lives. Every claim below cites the file that enforces it.
+BirdyBeep sends a bounded event record. It excludes prompts, assistant replies, tool input and output, file contents, and readable absolute paths. This page lists the accepted fields and explains how events and tokens are stored.
 
-If you find a gap between this page and the code, the code wins — please open an issue.
+## Event payload
 
-## TL;DR
-
-- We send a **small, fixed-shape event** — event type, status, a short generated title/body, machine
-  label, hashed working directory, and a little metadata. We do **not** send your prompts, the
-  assistant's replies, tool inputs/outputs, file contents, or raw file paths.
-- Before anything is sent the hook **hashes absolute paths**, **redacts secret-shaped strings**, and
-  **truncates** every field, under a hard **16 KB** total cap.
-- Your machine token lives in the **OS keychain** (or a strict-permission `0600` file fallback) — never
-  in a repo file or harness config. The server only ever stores a **hash** of it.
-- The backend does **not** persist the notification title/body by default — only metadata, hashes,
-  delivery status, and session status.
-
-## What leaves your machine
-
-Every adapter normalizes its harness's events into one canonical payload before sending. The shape is
-defined in [`packages/agent-core/src/event.ts`](../packages/agent-core/src/event.ts) and is the only
-thing the sender transmits (to `POST /v1/agent-events`). These are the exact fields:
+Every adapter produces the payload defined in [`packages/agent-core/src/event.ts`](../packages/agent-core/src/event.ts). The sender posts this payload to `POST /v1/agent-events`:
 
 ```jsonc
 {
-  "event_id": "evt_local_…", // generated locally if the harness gives none
-  "event_type": "agent_completed", // enum (session_started, approval_required, tool_finished, …)
-  "occurred_at": "2026-06-14T…Z", // ISO timestamp
-  "harness": "claude_code", // claude_code | codex | opencode | cursor | copilot
-  "harness_version": "…", // optional
-  "source_session_id": "…", // harness session id (paths scrubbed); else a hash
+  "event_id": "evt_local_…",
+  "event_type": "agent_completed",
+  "occurred_at": "2026-06-14T…Z",
+  "harness": "claude_code",
+  "harness_version": "…",
+  "source_session_id": "…",
   "machine": {
-    "label": "…", // your machine label (truncated)
-    "os": "…", // free-form OS string the adapter reports
+    "label": "…",
+    "os": "…",
   },
   "workspace": {
-    "cwd": "h_1a2b3c4d5e6f7890", // ALWAYS hashed — the raw path never leaves
-    "repo_name": "birdybeep-agent", // optional, kept if available (cleaned)
-    "branch": "main", // optional, kept if available (cleaned)
+    "cwd": "h_1a2b3c4d5e6f7890",
+    "repo_name": "birdybeep-agent",
+    "branch": "main",
   },
-  "status": "completed", // session status enum
-  "title": "Claude Code finished", // short, generated label (truncated to 200 chars)
-  "body": "Turn complete", // short, generated body (truncated to 2000 chars)
+  "status": "completed",
+  "title": "Claude Code finished",
+  "body": "Turn complete",
   "metadata": { "tool": "Bash", "session_name": "billing refactor" },
-  // ^ optional: safe discriminators + the session name YOU set, if any (see below)
 }
 ```
 
-That is the complete list. There is no field for prompt text, assistant output, tool arguments, file
-contents, diffs, or absolute paths.
+Only the fields shown above are accepted by the event schema. `harness_version`, `repo_name`, `branch`, and `metadata` are optional.
 
-### Events that are not sent at all
+Per-tool events (`tool_started` and `tool_finished`) remain on the machine. They contribute to local status and diagnostic counts but are not sent to the backend. The filter is defined in [`notify-matrix.ts`](../packages/agent-core/src/notify-matrix.ts).
 
-Per-tool-call events (`tool_started`, `tool_finished`) stay on your machine. They are counted for
-`birdybeep status` and `birdybeep doctor` and nothing is transmitted — on a measured 18.45h Codex
-session that is 88.5% of the events the hooks produced. The list lives in
-[`packages/agent-core/src/notify-matrix.ts`](../packages/agent-core/src/notify-matrix.ts).
+### Adapter-generated notification text
 
-### The titles and bodies are generated, not captured
+Adapters generate notification titles and bodies from lifecycle state. They do not use prompts or assistant replies as notification text.
 
-The `title` and `body` you see above are written by the adapter, not lifted from your session. For
-example, every "finished" event sends the literal string `Turn complete`; an approval event sends
-`Approval requested` or `Approve <tool>?`. The adapters
-([claude-code](../packages/claude-code/src/normalize.ts),
-[codex](../packages/codex/src/normalize.ts), [opencode](../packages/opencode/src/normalize.ts),
-[cursor](../packages/cursor/src/normalize.ts), [copilot](../packages/copilot/src/normalize.ts))
-do **not** copy raw user/assistant content into the event:
+- Codex excludes `input-messages`, `last-assistant-message`, and `tool_input`.
+- OpenCode excludes tool arguments, permission titles, and error messages.
+- Claude Code may include its notification `message` and a user-assigned session name after normalization.
+- Cursor excludes `prompt`, `user_email`, `transcript_path`, tool input and output, and shell-command text.
+- GitHub Copilot CLI excludes prompts, tool arguments and results, transcript paths, subagent responses, and error messages and stacks.
 
-- **Codex** drops `input-messages`, `last-assistant-message`, and `tool_input`. Only safe identifiers
-  (tool name, turn id, client, model, source) flow as metadata.
-- **OpenCode** drops tool args, permission titles, and error messages. Only safe discriminators (tool
-  name, permission type, error class name, status) flow.
-- **Claude Code** carries only the harness-provided notification `message` (already redacted and
-  truncated by the shared normalizer) plus safe discriminators (notification type, tool name, error
-  type, source, model) — and, when you have NAMED the session, that name.
-- **Cursor** drops `prompt`, `user_email`, `transcript_path`, tool input/output, and shell command
-  text. Only lifecycle discriminators such as tool name and status flow.
-- **GitHub Copilot CLI** drops `initialPrompt`, `prompt`, `toolArgs`,
-  `toolResult.textResultForLlm`, `transcriptPath`, subagent responses, and error messages/stacks.
-  Only the event name supplied by the managed hook command and safe lifecycle metadata flow.
+Safe lifecycle identifiers such as tool name, model, source, event name, status, and turn id may appear in metadata when the harness supplies them.
 
-### The one free-text field you control: your session name
+### Claude Code session names
 
-If your Claude Code session is named **at session start** (`claude --name "…"`, or a `/rename` you
-did in an earlier session), that name is sent twice over: it leads the event `title`, and it is also
-reported as `metadata.session_name` so the app can offer "lead my push titles with the session name"
-as a preference (the phone, not the adapter, decides the title format). A `/rename` performed
-**mid-session does not propagate** — Claude Code hands the name to hooks only on `SessionStart` and
-never replays it — so it applies from your next session.
+A Claude Code session name set at session start may appear in the notification title and `metadata.session_name`. A name changed during the session takes effect with the next session because Claude Code supplies it through `SessionStart`.
 
-It is the name **you typed**, never a session id and never anything derived from a path. Before it
-can leave the machine it goes through the full clean pipeline below — secrets are **redacted first,
-then** the name is capped at 120 characters (that order matters: a cut runs before the outbound
-redaction pass could match, so the cap must never come first), and any absolute path in it is
-hashed. Sessions you have not named send no such field at all. Nothing else about the session
-(prompt, transcript, or file names) rides along with it.
+Session names pass through path hashing, secret redaction, and truncation. They are limited to 120 characters. Sessions without a user-assigned name send no session-name field.
 
-Where a harness _does_ hand the adapter a free-text string (e.g. Claude Code's notification message),
-it still passes through the full clean pipeline below before it can leave the machine.
+## Local normalization
 
-## Hashing, redaction, truncation, and the size cap
+[`normalize.ts`](../packages/agent-core/src/normalize.ts) processes event strings before the sender is called:
 
-All of this runs in [`packages/agent-core/src/normalize.ts`](../packages/agent-core/src/normalize.ts)
-on the local machine, before the sender is called. Every string field goes through the pipeline
-**scrub paths → redact secrets → truncate**, and the whole event is then forced under the 16 KB cap.
+1. Replace absolute paths with hashes.
+2. Replace recognized credential patterns with `[redacted]`.
+3. Truncate bounded fields.
+4. Reduce the event if necessary to remain within the 16 KB serialized limit.
 
-### Absolute paths are hashed
+### Path hashing
 
-Any absolute path inside a string is replaced with a stable, irreversible token `h_<16 hex>` — the
-first 16 hex chars of its SHA-256. POSIX (`/a/b/…`) and Windows (`C:\a\…`) paths are both matched.
+Absolute POSIX and Windows paths are replaced with `h_<16 hex>`, using the first 16 hexadecimal characters of a SHA-256 hash. `workspace.cwd` is always hashed. Absolute paths embedded in `source_session_id` are replaced before the id is used.
 
-- `workspace.cwd` is treated as an absolute path and is **always hashed** — the raw cwd never leaves
-  the machine.
-- `source_session_id` has any embedded absolute path scrubbed before it is used as a key.
+The same path produces the same hash. The original path is not sent.
 
-The hash is stable (same path → same token across runs), so the backend can correlate events from the
-same workspace without ever seeing the path. It is not reversible.
+### Secret redaction
 
-### Secret-shaped strings are redacted
+The current patterns cover:
 
-Before truncation, substrings that look like credentials are replaced wholesale with `[redacted]`. The
-patterns (best-effort; truncation is the backstop) cover:
+- AWS access key ids beginning with `AKIA`;
+- GitHub tokens beginning with `ghp_`, `gho_`, `ghu_`, `ghs_`, or `ghr_`;
+- OpenAI-style keys beginning with `sk-`;
+- Slack tokens beginning with `xoxb-`, `xoxa-`, `xoxp-`, `xoxr-`, or `xoxs-`;
+- JWT-shaped values;
+- `bearer`, `token`, `secret`, `password`, `passwd`, `api_key`, or `api-key` assignments.
 
-- AWS access key ids (`AKIA…`)
-- GitHub tokens (`ghp_…`, `gho_…`, `ghu_…`, `ghs_…`, `ghr_…`)
-- OpenAI-style keys (`sk-…`)
-- Slack tokens (`xoxb-…`, `xoxa-…`, `xoxp-…`, `xoxr-…`, `xoxs-…`)
-- JWTs (`eyJ….….…`)
-- `key=value` secrets — `bearer`, `token`, `secret`, `password`, `passwd`, `api_key` / `api-key`
-  followed by `:` or `=` and a value
+### Field limits
 
-### Strings are truncated
+| Field          | Maximum characters |
+| -------------- | ------------------ |
+| `title`        | 200                |
+| `body`         | 2,000              |
+| metadata value | 500                |
+| label or key   | 120                |
 
-Per-field caps (from `normalize.ts`):
+Metadata accepts at most 64 keys per object and four levels of nesting. Functions and symbols are dropped.
 
-| Field          | Max chars |
-| -------------- | --------- |
-| `title`        | 200       |
-| `body`         | 2000      |
-| metadata value | 500       |
-| `label` / keys | 120       |
-
-Metadata is also bounded structurally: at most 64 keys per object, max depth 4, and non-data values
-(functions, symbols) are dropped.
-
-### Hard 16 KB cap
-
-The serialized event must fit under **16 KB** (`MAX_AGENT_EVENT_BYTES`, mirrored from the product
-repo). If it doesn't, the normalizer deterministically shrinks it — drop `metadata`, then harden
-`body` to 256 chars, then harden `title` to 120 chars — and throws rather than ever sending an
-oversized or partially-valid event.
+If the serialized event exceeds 16 KB, normalization removes metadata, then reduces the body to 256 characters and the title to 120 characters. It rejects an event that still exceeds the limit.
 
 ## Tokens
 
-Token storage lives in
-[`packages/agent-core/src/token-store.ts`](../packages/agent-core/src/token-store.ts).
+Token handling is implemented in [`token-store.ts`](../packages/agent-core/src/token-store.ts).
 
-- **Where it lives.** The machine token is stored in the **OS keychain** when one is available (on
-  macOS, the built-in `security` keychain). On machines without a usable keychain (e.g. headless
-  Linux, Windows today) it falls back to a **strict-permission file**: a `0600` file inside a `0700`
-  directory under your user data dir (never repo-local). A too-permissive token file is repaired to
-  `0600` on read.
-- **Never in your repo or harness config.** Installers write **no token** into harness config or any
-  repo file. `birdybeep agent install` only adds BirdyBeep-managed config entries; the token is
-  resolved at send time from the secure store.
-- **The server stores only a hash.** Machine tokens are shown once at pairing and the backend stores
-  only the token **hash**. The complete pairing QR/link carries a short-lived approval secret, never
-  a durable token; the displayed session code cannot approve by itself.
-- **Revoke & rotate.** Tokens can be revoked and rotated from the mobile app. Locally, `birdybeep
-logout` clears the token from **both** the keychain and the file fallback (idempotent).
-- **Minting ≠ trusting (the pairing confirm gate).** A freshly minted token is held in memory until
-  the account that approved the pairing is confirmed. `birdybeep pair` prints
-  `Pair this machine to <email>? [y/N]` — the identity the backend reports as having approved it —
-  and stores nothing (not even the non-secret API URL) unless you accept. This is the human-layer
-  defense against a pairing link opened under the wrong account: an unnoticed wrong approval never
-  becomes a working machine. Headless runs pin the identity with `--expect-email <addr>` (mismatch and
-  unverifiable both hard-fail) or bypass with `--yes`; a non-interactive run with neither **fails
-  closed**. Details in [Pairing](./pairing.md#confirming-the-approving-account).
+| Concern               | Behavior                                                               |
+| --------------------- | ---------------------------------------------------------------------- |
+| Local storage         | OS keychain or a `0600` fallback file inside a `0700` directory        |
+| Harness configuration | Contains no machine token                                              |
+| Pairing link          | Contains a short-lived approval secret, not the machine token          |
+| Server storage        | Stores the token hash                                                  |
+| Account confirmation  | Runs before the CLI stores a newly minted token                        |
+| Removal               | `logout` deletes local copies; `unpair` also revokes the server record |
 
-## What the backend stores
+`--expect-email <addr>` requires an exact approving-account match for unattended pairing. `--yes` accepts whichever account approved the request. See [Pairing](./pairing.md).
 
-Per [SPEC §11](./SPEC.md):
+## Hook execution, backend storage, and retries
 
-- The backend does **not** persist notification `title`/`body` content **by default**. It stores
-  metadata, hashes, delivery status, and session status.
-- The push provider receives the title/body only because it is required to render and deliver the
-  notification to your device.
-- The server stores only token **hashes**, never the raw token.
+When a harness event occurs, the local hook reads the token, normalizes the event, hashes paths, redacts matching secrets, truncates bounded fields, and sends with a short timeout. Retryable failures are queued locally. No daemon runs between events.
 
-## Local machine storage (the queue)
+The backend stores event metadata, hashes, delivery status, and session status. Notification title and body are not persisted by default. The push provider receives the title and body to deliver the notification.
 
-If a send fails (offline, backend down), the event is written to a best-effort local retry queue
-([`packages/agent-core/src/queue.ts`](../packages/agent-core/src/queue.ts)): **≤ 24h** retention,
-**≤ 500 entries** (oldest dropped first, and the drop count is reported by `status` / `doctor`),
-strict file permissions, drained opportunistically on the next `hook` / `status` / `doctor`. It never
-blocks or slows the harness. It is a retry buffer, not a durable audit log. Clear it any time with:
+The local queue is implemented in [`queue.ts`](../packages/agent-core/src/queue.ts). It retains events for up to 24 hours, stores at most 500 entries, uses restricted file permissions, and drops the oldest entries first. It drains during later hook execution and when `status` or `doctor` runs.
 
 ```bash
 birdybeep queue clear
 ```
 
-If the machine is **not paired**, nothing is queued: the event is discarded and only a count, a
-first/last timestamp, and the harness ids are recorded in `unpaired-events.json` in the same data
-directory. `birdybeep status` and `birdybeep doctor` read it back; `birdybeep pair` deletes it and
-discards anything already queued from before pairing, so a first pairing never replays old events.
+This command deletes all queued events.
 
-If the token store itself cannot be read (a locked OS keychain, an unreadable fallback file), the
-event **is** queued and `unpaired-events.json` is not touched — the store said nothing about whether
-this machine is paired. `status` and `doctor` report it as `Paired:  unknown`.
+When the machine has no token, events are not queued. The CLI records only the count, first and last timestamps, and harness ids in `unpaired-events.json`. Pairing deletes that record and discards any queue left from before pairing.
 
-## How the hook path runs
+When token storage cannot be read, events are queued because the pairing state is unknown. `status` and `doctor` report `Paired: unknown`.
 
-The local pattern is: harness hook → `birdybeep hook <harness>` → read token → normalize → redact /
-truncate / hash → send with a short timeout → queue on failure → return fast. There is **no background
-daemon**. The `birdybeep hook <harness>` command is internal — it is invoked by the installed harness
-config, reads the payload (stdin, or a trailing payload for Codex `notify`; Copilot passes its event
-name as a separate argument), runs everything above, and always returns fast and exits 0 so it can
-never hang your session.
+## Inspect the implementation
 
-## Verify it yourself
-
-- Read [`normalize.ts`](../packages/agent-core/src/normalize.ts) for the exact regexes, caps, and the
-  16 KB shrink logic.
-- Read [`event.ts`](../packages/agent-core/src/event.ts) for the only fields that can ever be sent.
-- Read each adapter's `normalize.ts` to see precisely which harness fields are dropped.
-- Run `birdybeep test --json` to send a single test event through the real sender and watch exactly
-  what is delivered or queued, and `birdybeep doctor` to inspect token storage, adapter status, queue
-  depth, and backend reachability.
-
-## Changing surfaces
-
-- The `pair` device-flow pairing endpoints (`POST /v1/pair/start`, `POST /v1/pair/token`) and the
-  batched integration-status endpoint (`POST /v1/integrations/status`) are cross-repo contracts; the
-  request/response schemas are mirrored field-for-field in `agent-core` (kept in lockstep with the
-  product's `packages/schemas`). The live pass against the product backend is a deferred follow-up.
-- The redaction patterns are best-effort. Truncation and the structural metadata bounds are the
-  backstop, but if you handle especially sensitive material, treat the redaction list as a helpful
-  default rather than a guarantee and review what your adapter emits.
+- [`event.ts`](../packages/agent-core/src/event.ts) defines accepted fields.
+- [`normalize.ts`](../packages/agent-core/src/normalize.ts) defines redaction, hashing, and limits.
+- Each adapter's `normalize.ts` shows which harness fields are excluded.
+- `birdybeep test --json` reports whether a test event was delivered, queued, or rejected.
+- `birdybeep doctor` reports pairing, adapter, queue, device, quota, and backend status.

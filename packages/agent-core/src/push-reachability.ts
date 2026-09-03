@@ -104,8 +104,8 @@ export function describeReachability(
       ok: false,
       detail:
         stale > 0
-          ? `No device can receive a beep — ${String(stale)} registered device(s) have a dead push token.`
-          : "No device can receive a beep — this account has no active device registered.",
+          ? `No device can receive a Beep: ${String(stale)} registered device(s) have a dead push token.`
+          : "No active device can receive a Beep: this account has no registered device.",
       remedy:
         "Open the BirdyBeep app on your phone and sign in to register it. If it says the device " +
         "limit is full, free a slot in Settings › devices.",
@@ -180,9 +180,7 @@ export function describeCheckIn(
     // a silent row as "checked in fine".
     return {
       ok: true,
-      detail:
-        "This BirdyBeep server does not report device check-ins yet, so an abandoned " +
-        "registration would not show up here.",
+      detail: "Device check-ins are unavailable from this server.",
     };
   }
 
@@ -193,9 +191,8 @@ export function describeCheckIn(
     return {
       ok: true,
       detail:
-        "No device on this account has checked in yet, so how recently your phone was used is " +
-        "unknown — check-ins arrive with a newer version of the BirdyBeep app. This is not a " +
-        "sign that anything is wrong.",
+        "No device check-in has been recorded. Check-ins may require a newer version of the " +
+        "BirdyBeep app.",
     };
   }
 
@@ -223,9 +220,8 @@ export function describeCheckIn(
     return {
       ok: true,
       detail:
-        `The most recent check-in (${new Date(at).toISOString()}) is in the future — most likely ` +
-        "clock skew between this machine and the server, not anything wrong with your phone. How " +
-        "long ago a device was last used cannot be measured from here until the clocks agree.",
+        `The latest check-in, ${new Date(at).toISOString()}, is ahead of this machine's clock. ` +
+        "Check the system time on this machine and the server.",
     };
   }
 
@@ -239,12 +235,7 @@ export function describeCheckIn(
   // quota may be exhausted or the token dead, and those are exactly what the rows ABOVE judge.
   return {
     ok: true,
-    detail:
-      `No device on this account has checked in for ${daysAgoText(days)} (last: ${day}). That ` +
-      "means nobody has opened the app in that time — an uninstalled or long-unopened app still " +
-      "takes pushes without showing them. It does not say a beep cannot arrive; whether beeps " +
-      "can still arrive is what the rows above measure. Open BirdyBeep on your phone to clear " +
-      "this.",
+    detail: `No device has checked in since ${day}. Open BirdyBeep on a registered phone.`,
   };
 }
 

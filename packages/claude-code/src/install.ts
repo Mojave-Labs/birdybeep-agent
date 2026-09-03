@@ -216,7 +216,7 @@ export function installClaudeCode(
       changed: false,
       changedFiles: [settingsPath],
       backupFiles,
-      requiredActions: ["dry run — re-run without dryRun to apply"],
+      requiredActions: ["Dry run. Re-run without dryRun to apply."],
       status: "installed",
     });
   }

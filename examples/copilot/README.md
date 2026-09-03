@@ -1,24 +1,21 @@
-# Example — GitHub Copilot CLI
+# GitHub Copilot CLI configuration
 
-[`birdybeep.json`](./birdybeep.json) is the exact config written by
-`birdybeep agent install copilot` to `~/.copilot/hooks/birdybeep.json` (or
-`$COPILOT_HOME/hooks/birdybeep.json`).
+`birdybeep agent install copilot` writes [`birdybeep.json`](./birdybeep.json) to `$COPILOT_HOME/hooks/birdybeep.json` or `~/.copilot/hooks/birdybeep.json` with `0600` permissions. Existing hook files remain unchanged.
 
-Copilot combines every JSON file in its hooks directory, so BirdyBeep owns a dedicated file and
-never rewrites a user's other hook files. Each hook command includes its event name because Copilot
-CLI's camelCase payload does not repeat that discriminator in the JSON sent on stdin. Both `bash`
-and `powershell` commands are present for cross-platform installs.
+## Installed entries
 
-Managed events: `sessionStart`, `userPromptSubmitted`, `preToolUse`, `postToolUse`, `agentStop`,
-`subagentStop`, `errorOccurred`, and `sessionEnd`.
+The integration registers `sessionStart`, `userPromptSubmitted`, `preToolUse`, `postToolUse`, `agentStop`, `subagentStop`, `errorOccurred`, and `sessionEnd`. Each entry includes `bash` and `powershell` commands with the event name because the JSON payload does not include it.
 
-The integration reports `installed` immediately with no trust or restart step. The eight-event set,
-payload shapes, and tokenless BYOK execution were verified against GitHub Copilot CLI `1.0.70` on
-2026-08-06. Compatibility was additionally live-verified against GitHub-hosted Copilot CLI `1.0.78`
-using macOS Keychain-backed OAuth on 2026-08-07. BirdyBeep drops the raw initial prompt, subsequent
-prompts, tool arguments and results, transcript paths, subagent responses, and error details; only
-safe lifecycle metadata is delivered.
+## Existing configuration
 
-Install is idempotent, writes the managed file with `0600` permissions, writes no token, preserves
-all foreign hook files, and backs up a pre-existing `birdybeep.json` before replacing it. Uninstall
-restores that backup or removes only BirdyBeep's from-scratch file.
+Copilot combines files in its hooks directory. BirdyBeep owns only `birdybeep.json`. If that file already exists, installation writes a backup before replacing it.
+
+BirdyBeep excludes prompts, tool arguments and results, transcript paths, subagent responses, and error details from transmitted events. The integration has been verified with GitHub Copilot CLI 1.0.70 and 1.0.78.
+
+## Activation
+
+No restart or trust step is required.
+
+## Removal
+
+`birdybeep agent uninstall copilot` restores the backup or removes BirdyBeep's file. Other hook files remain unchanged.

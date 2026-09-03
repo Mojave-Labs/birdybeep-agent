@@ -1,14 +1,14 @@
-# BirdyBeep — Agent Integration Spec
+# BirdyBeep agent integration spec
 
-> **Scope.** The integration contract: strategy, CLI surface, per-harness event mappings, the normalized event model, and what data leaves the machine and how tokens are stored. This file is the normative reference for building and auditing `birdybeep-agent`. The canonical wire schema is the runnable source of truth: `packages/schemas` in the product repo, mirrored here by `agent-core`'s `CORE-SCHEMA`.
+This document defines CLI behavior, adapter mappings, the normalized event schema, and security requirements. Runtime schemas in `agent-core` are authoritative in this repository and mirror the product schemas.
 
-BirdyBeep is a mobile notification layer for AI coding agents: when Claude Code, Codex, OpenCode, Cursor, or GitHub Copilot CLI needs you (approval, input, finished, idle, failed), it sends a push to your phone. Install once per machine, and supported agent sessions surface automatically as they emit lifecycle events.
+BirdyBeep sends phone notifications for supported coding-agent lifecycle events.
 
 ---
 
-## 1. Integration strategy (PRD §9.1)
+## 1. Architecture
 
-BirdyBeep does not depend on a cross-agent hook standard — each harness exposes different config formats, event names, trust models, and plugin systems. So it ships **one** shared event schema, CLI auth/token layer, local event queue, and sender, plus **bespoke adapters** for Claude Code, Codex, OpenCode, Cursor, and GitHub Copilot CLI.
+Each harness exposes different configuration, events, and activation requirements. BirdyBeep uses a shared event schema, token layer, local queue, and sender with separate adapters for Claude Code, Codex, OpenCode, Cursor, and GitHub Copilot CLI.
 
 Every adapter implements the same interface:
 
@@ -26,7 +26,7 @@ interface AgentAdapter {
 }
 ```
 
-## 2. Local command hook pattern (PRD §9.2)
+## 2. Hook execution
 
 Prefer this pattern for every harness — avoid embedding durable tokens directly in harness config files:
 
@@ -43,7 +43,7 @@ Harness hook/plugin
 
 Benefits: tokens stay in one place; config files contain no long-lived secrets; local privacy rules run before delivery; offline events queue briefly; the backend API can evolve without changing every harness config format.
 
-## 3. No background daemon (PRD §9.3)
+## 3. Runtime model
 
 There is **no** local background daemon in MVP. Local delivery behavior:
 
@@ -52,7 +52,7 @@ There is **no** local background daemon in MVP. Local delivery behavior:
 - The queue drains opportunistically on subsequent hook invocations and relevant CLI commands (`birdybeep test`, `birdybeep status`, `birdybeep doctor`).
 - The hook command must return quickly and must not noticeably slow the coding harness.
 
-## 4. CLI commands (PRD §9.4)
+## 4. CLI
 
 ```bash
 birdybeep setup
@@ -85,7 +85,7 @@ birdybeep hook copilot <event-name>
 
 Install behavior is **idempotent**, backs up existing config, adds only BirdyBeep-managed entries, prints changed files + any required user action, and installs at the **user/global** level (project-level is not MVP). Uninstall removes only BirdyBeep-managed entries.
 
-## 5. Claude Code integration (PRD §9.5)
+## 5. Claude Code mapping
 
 Highest-priority MVP integration. Install user-level hook config using the command hook `birdybeep hook claude`; add only BirdyBeep-managed entries; preserve + back up existing settings.
 
@@ -119,7 +119,7 @@ Highest-priority MVP integration. Install user-level hook config using the comma
 > from some other tool exits non-zero. Adding an event name here without adding it there
 > turns that event into a per-fire error — a test fails if the two drift.
 
-## 6. Codex integration (PRD §9.6, §21.2)
+## 6. Codex mapping
 
 Launch integration with an expected **one-time hook trust** caveat. Install user-level lifecycle hooks; add only BirdyBeep-managed entries; back up existing config; print trust instructions.
 
@@ -173,13 +173,12 @@ Expected post-install message:
 
 ```text
 Codex hooks installed.
-Codex may require one-time hook trust. Open Codex and run /hooks.
-After trust is granted, Codex sessions on this machine will be tracked automatically.
+Open Codex and run /hooks. Status changes from needs_trust after a lifecycle hook fires.
 ```
 
 Do **not** mark Codex fully installed until a trusted **lifecycle hook** fires; surface the state as `needs_trust` until then. A turn-complete beep arriving via a `notify` program is **not** proof of trust and must not flip the state (see birdybeep-agent-qyf).
 
-## 7. OpenCode integration (PRD §9.7)
+## 7. OpenCode mapping
 
 Launch integration. Prefer an OpenCode **plugin package**; configure user-level/global plugin loading; preserve + back up config; print restart instructions if required (surface `needs_restart`).
 
@@ -216,7 +215,7 @@ Launch integration. Prefer an OpenCode **plugin package**; configure user-level/
 > - OpenCode loads plugins only at startup (no hot-reload) → install surfaces
 >   `needs_restart` until the next launch.
 
-## 7.1. Cursor integration
+## 7.1. Cursor mapping
 
 Cursor is not in the original PRD §9.x lineup; it was added after the Big Five harness survey and
 ships from `packages/cursor`. Install patches `~/.cursor/hooks.json` — `{ "version": 1, "hooks": {
@@ -260,7 +259,7 @@ no restart: Cursor reads the file live, so install reports `installed` immediate
 >   workspace. The only path touched is `workspace_roots[0]`, handed to the normalizer as `cwd` so
 >   it is hashed. Prompts, commands, and tool data are not copied either.
 
-## 7.2. GitHub Copilot CLI integration
+## 7.2. GitHub Copilot CLI mapping
 
 Install the dedicated `~/.copilot/hooks/birdybeep.json` file (honoring `COPILOT_HOME`). Copilot
 combines hook files, so foreign files are never merged or rewritten. The payload itself has no event
@@ -284,7 +283,7 @@ installed hooks were live-verified again on 2026-08-07 against GitHub-hosted Cop
 using an OAuth credential held only in the macOS Keychain. Raw prompts, tool arguments/results,
 transcript paths, subagent responses, and error details are dropped.
 
-## 8. Normalized event model (PRD §10.1)
+## 8. Normalized event types
 
 ```ts
 type BirdyBeepEventType =
@@ -297,7 +296,7 @@ type BirdyBeepEventType =
   | "test"; // `birdybeep test` diagnostic — notify-by-default, metered like any other event (9fh)
 ```
 
-## 9. Canonical agent event payload (PRD §10.2)
+## 9. Event payload
 
 ```json
 {
@@ -332,7 +331,7 @@ type BirdyBeepEventType =
 
 The event is sent to the BirdyBeep API (`POST /v1/agent-events`), authenticated by the machine installation token. The endpoint validates the schema, enforces a max payload size, and returns quickly. Title/body are used only for delivering the push notification — they are **not** persisted server-side by default.
 
-## 10. Session identity (PRD §10.3) & statuses (PRD §10.4)
+## 10. Session identity and status
 
 Session identity is keyed by:
 
@@ -348,7 +347,7 @@ type AgentSessionStatus =
   | "idle" | "completed" | "failed" | "unknown";
 ```
 
-## 11. Security, privacy & what's sent (PRD §15.1–15.3)
+## 11. Security requirements
 
 **Pairing protocol (device-code flow; schemas mirrored from the product `packages/schemas`):**
 `birdybeep pair` POSTs `/v1/pair/start` (`{ machine_label, os?, cli_version?, requested_scopes? }`)
@@ -380,6 +379,6 @@ backend is the deferred cross-repo follow-up.
 **Local machine storage:**
 - A short retry queue (≤ 24h), best-effort, with strict file permissions — not a guaranteed durable audit log. Clearable via `birdybeep doctor` / debug tooling.
 
-## 12. Public repo requirements (PRD §16.3–16.4)
+## 12. Package and documentation requirements
 
 This repo (MIT) must provide: clear install + uninstall docs; security notes; an explanation of exactly what data is sent and how tokens are stored; examples of generated config; a `doctor` command; and tests for non-destructive config patching. Keep adapter code isolated and easy to patch/release — harness APIs change; version the docs against harness versions.

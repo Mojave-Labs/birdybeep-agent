@@ -254,7 +254,7 @@ describe("agent install <harness> + edge cases", () => {
       ensureConfig: false,
     });
     expect(out.text()).toContain("not detected (skipped)");
-    expect(out.text()).toContain("install it, then run `birdybeep agent install codex`");
+    expect(out.text()).toContain("Install it, then run `birdybeep agent install codex`");
   });
 
   it("says the machine is not paired, so wired-up hooks reach nobody", async () => {

@@ -276,7 +276,7 @@ describe("isClaudeCodeHookPayload (gcgp.1)", () => {
 describe("CLAUDE_CODE_HOOK_EVENTS stays in sync with docs/SPEC.md §5", () => {
   function specSection5(): string {
     const spec = readFileSync(new URL("../../../docs/SPEC.md", import.meta.url), "utf8");
-    const start = spec.indexOf("## 5. Claude Code integration");
+    const start = spec.indexOf("## 5. Claude Code mapping");
     const end = spec.indexOf("## 6.", start);
     expect(start, "SPEC.md §5 heading not found").toBeGreaterThan(-1);
     expect(end, "SPEC.md §6 heading not found").toBeGreaterThan(start);

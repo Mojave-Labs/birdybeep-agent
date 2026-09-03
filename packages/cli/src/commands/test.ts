@@ -46,8 +46,8 @@ export function buildTestEvent(opts: NormalizeOptions = {}): BirdyBeepAgentEvent
       source_session_id: `birdybeep-cli-test-${randomUUID()}`,
       machine: { label: machine.label, os: machine.os },
       workspace: { cwd: process.cwd() },
-      title: "BirdyBeep test event",
-      body: "If you can see this, your machine is wired up correctly.",
+      title: "BirdyBeep test",
+      body: "Notifications from this machine are working.",
       metadata: { test: true },
     },
     opts,
@@ -109,33 +109,28 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
           });
           if (reach.state === "ok" && reach.data.active_device_count === 0) {
             ctx.io.line(
-              "⚠ The backend accepted the test event, but NO device on this account can receive " +
-                "it — nothing will arrive. Open the BirdyBeep app on your phone to register it " +
-                "(if it says the device limit is full, free a slot in Settings › devices).",
+              "⚠ No active device can receive a Beep. Open BirdyBeep on your phone and sign in " +
+                "to register it. If the device limit is full, free a slot in Settings › devices.",
             );
           } else if (reach.state === "ok") {
             ctx.io.line(
-              `✓ Test event accepted and queued for ${String(reach.data.active_device_count)} ` +
-                "registered device(s) — check your phone for a test Beep.",
+              `✓ Test event accepted for ${String(reach.data.active_device_count)} registered ` +
+                "device(s). Check your phone for a test Beep.",
             );
           } else {
             // Could not ask. Do not upgrade that into a promise.
-            ctx.io.line("✓ Test event accepted by the backend — check your phone for a test Beep.");
+            ctx.io.line("✓ Test event accepted by the backend. Check your phone for a test Beep.");
           }
         } else if (result.decision === "suppressed") {
           ctx.io.line(
-            "⚠ The backend accepted the test event but suppressed the push — this machine " +
-              "or integration is probably muted. Check mutes in the app, or run `birdybeep doctor`.",
+            "⚠ Test event accepted; push suppressed. Check machine and integration mutes in the app.",
           );
         } else if (result.decision === "deduped") {
-          ctx.io.line(
-            "⚠ The backend accepted the test event but folded it into a recent duplicate — " +
-              "wait ~30s and run `birdybeep test` again.",
-          );
+          ctx.io.line("⚠ Test event matched a recent duplicate. Retry in 30 seconds.");
         } else {
           ctx.io.line(
-            `⚠ The backend accepted the test event but decided "${result.decision}" — no push ` +
-              "was sent. Run `birdybeep doctor`.",
+            `⚠ Test event accepted; push decision was "${result.decision}". ` +
+              "Run `birdybeep doctor`.",
           );
         }
       } else if (result.outcome === "unpaired") {
@@ -143,39 +138,30 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
         // merely unpaired, and exited 0. `test` is the one command whose entire job is to tell
         // you why beeps aren't arriving; naming the wrong cause is worse than saying nothing.
         ctx.io.line(
-          "✗ NOT PAIRED — this machine has no BirdyBeep machine token, so nothing was sent " +
-            "(and nothing was queued). Run `birdybeep pair`.",
+          "✗ This machine is not paired. Run `birdybeep pair`. No event was sent or queued.",
         );
       } else if (result.outcome === "failed") {
         // 9u0: a retryable send plus an unwritable queue is loss, not "queued". Say so before
         // token-store handling, because that path can also fail to persist its event.
         ctx.io.line(
-          "✗ Could not send the test event, and BirdyBeep could not save it to the local queue — " +
-            "it was not queued and will not retry. Check that BirdyBeep can write to its user " +
-            "data directory, then run `birdybeep test` again.",
+          "✗ The test event could not be sent or saved locally. Check BirdyBeep's data-directory " +
+            "permissions, then retry.",
         );
       } else if (result.tokenStoreUnavailable !== undefined) {
         // gcgp.23: the machine is online and may well be paired — the token store just would
         // not answer, so neither "Offline" nor "NOT PAIRED" names the real cause.
         ctx.io.line(
-          `• Could not read the machine token (${result.tokenStoreUnavailable.reason}) — the ` +
-            "test event was queued and delivers once the token store is readable. If your " +
-            "keychain is locked, unlock it and run `birdybeep test` again.",
+          `• The machine token is unreadable (${result.tokenStoreUnavailable.reason}). The test ` +
+            "event is queued. Restore token-store access, then retry.",
         );
       } else if (result.outcome === "queued" && result.queueCause === "backend") {
         // 0yk: rate_limited / internal_error / any 5xx also queue, and this branch used to send
         // the user off to debug a network that had just carried the request to the backend and
         // back. Name what answered, and say the retry is automatic.
-        const status = result.status !== undefined ? ` (HTTP ${String(result.status)})` : "";
-        ctx.io.line(
-          result.code === "rate_limited" || result.status === 429
-            ? `• Throttled by the backend${status} — test event queued; it retries on its own. ` +
-                "Not your network: the request got through."
-            : `• The backend is having trouble${status} — test event queued; it retries on its ` +
-                "own. Not your network: the request got through.",
-        );
+        const status = result.status !== undefined ? ` HTTP ${String(result.status)}` : " an error";
+        ctx.io.line(`• Backend returned${status}. The test event is queued for retry.`);
       } else if (result.outcome === "queued") {
-        ctx.io.line("• Offline — test event queued; it will deliver when you reconnect.");
+        ctx.io.line("• Could not reach the backend. The test event is queued.");
       } else if (result.code === "quota_exceeded") {
         // 58l: "rejected by the backend" named nothing. The error envelope says WHICH rejection
         // this is, and the reachability read carries the account's meter — so name the cause and
@@ -194,17 +180,17 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
             : undefined;
         ctx.io.line(
           quota?.beeps_limit === null
-            ? "✗ Test event REJECTED — the backend rejected this event for quota, but this " +
+            ? "✗ Test event rejected. The backend rejected this event for quota, but this " +
                 "account now reports unlimited beeps on Plus. The plan changed between those " +
                 "requests; run `birdybeep test` again. If it repeats, run `birdybeep doctor`."
             : quota && exhausted
-              ? `✗ Test event REJECTED — this account's monthly beep quota is used up ` +
+              ? `✗ Test event rejected. This account's monthly beep quota is used up ` +
                 `(${String(quota.beeps_accepted)}/${String(quota.beeps_limit)} beeps on the ` +
                 `${quota.plan} plan, period ${exhausted.window}). Every notifiable event is ` +
                 `being rejected. ${exhausted.remedy}`
               : // An older backend reports no quota, so there is no period and no reset date to
                 // give — and `doctor` cannot supply them either, since it reads this same response.
-                "✗ Test event REJECTED — this account's monthly beep quota is used up, so no beep " +
+                "✗ Test event rejected. This account's monthly beep quota is used up, so no Beep " +
                 "can be sent. This server does not report the period or the reset date; check " +
                 "your usage in the BirdyBeep app.",
         );

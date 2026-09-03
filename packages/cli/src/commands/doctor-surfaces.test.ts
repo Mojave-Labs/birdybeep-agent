@@ -145,11 +145,11 @@ describe("doctor per-surface coverage", () => {
 
     const terminal = rows["Claude Code: terminal CLI 2.1.227"];
     expect(terminal?.ok).toBe(true);
-    expect(terminal?.detail).toMatch(/covered — 2 event\(s\) from this build/);
+    expect(terminal?.detail).toMatch(/covered: 2 event\(s\) from this build/);
 
     const desktop = rows["Claude Code: Claude desktop app 2.1.229"];
     expect(desktop?.ok).toBe(false);
-    expect(desktop?.detail).toMatch(/nothing has ever fired from this build/);
+    expect(desktop?.detail).toMatch(/nothing has fired from this build/);
     expect(desktop?.detail).toContain("terminal CLI 2.1.227");
     // The remedy names the real failure mode: a desktop app spawns its engine with the LOGIN
     // shell's PATH, so a bare `birdybeep` in the hook entry is invisible to it.
@@ -172,7 +172,7 @@ describe("doctor per-surface coverage", () => {
     const { json } = await runDoctor(claudeWith("installed", [bundled]), path);
     const row = byName(json)["Claude Code: ChatGPT desktop app 0.148.0-alpha.9"];
     expect(row?.ok).toBe(true);
-    expect(row?.detail).toMatch(/covered — 1 event\(s\)/);
+    expect(row?.detail).toMatch(/covered: 1 event\(s\)/);
   });
 
   it("marks every build uncovered when the harness carries no BirdyBeep hooks, without a duplicate fix", async () => {

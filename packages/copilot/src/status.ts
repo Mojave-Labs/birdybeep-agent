@@ -133,7 +133,7 @@ export async function copilotDoctor(options: CopilotStatusOptions = {}): Promise
               name: "Hook command resolves",
               ok: false,
               status: "error",
-              detail: `The installed hook command points at ${state.stalePaths.join(", ")}, which no longer exists — Copilot fails these hooks with exit 127.`,
+              detail: `The installed hook command points at ${state.stalePaths.join(", ")}, which no longer exists. Copilot fails these hooks with exit 127.`,
               remedy:
                 "Run `birdybeep agent install copilot` to rewrite the hook command for the current CLI.",
             },

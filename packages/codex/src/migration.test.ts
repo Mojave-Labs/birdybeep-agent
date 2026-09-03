@@ -124,7 +124,7 @@ describe("gcgp.15: upgrading a previously-configured Codex user", () => {
       ...MIGRATION_WARNING,
     ]);
     const text = result.requiredActions.join("\n");
-    expect(text).toMatch(/turn-complete beeps are OFF/i);
+    expect(text).toMatch(/completion notifications are disabled/i);
     expect(text).toMatch(/\/hooks/);
     expect(result.status).toBe("needs_trust");
   });
@@ -261,7 +261,7 @@ describe("gcgp.15: the legacy `notify` is still removed (the decision, pinned)",
 
     expect(readConfig(sb.home)["notify"]).toEqual(["user-notifier", "--flag"]);
     expect(result.requiredActions.join("\n")).toMatch(/Restored the Codex `notify` program/);
-    expect(result.requiredActions.join("\n")).toMatch(/beeps are OFF/i); // still a migration
+    expect(result.requiredActions.join("\n")).toMatch(/completion notifications are disabled/i); // still a migration
   });
 });
 

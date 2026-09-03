@@ -41,8 +41,7 @@ export const BACKUP_SUFFIX = ".birdybeep-backup";
 /** The one-time restart instructions printed after install (§9.7). */
 export const RESTART_INSTRUCTIONS: readonly string[] = [
   "BirdyBeep plugin added to OpenCode.",
-  "Restart OpenCode for the plugin to load.",
-  "After restart, OpenCode sessions on this machine will be tracked automatically.",
+  "Restart OpenCode. Status changes from needs_restart after the plugin emits an event.",
 ];
 
 export function backupPathFor(configPath: string): string {

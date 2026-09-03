@@ -51,7 +51,7 @@ describe("buildTestEvent", () => {
     // "test" (not "custom"): the §10.5 matrix suppresses custom unconditionally, so a
     // custom-typed test could never produce the push it promises (9fh).
     expect(event.event_type).toBe("test");
-    expect(event.title).toBe("BirdyBeep test event");
+    expect(event.title).toBe("BirdyBeep test");
     expect(event.metadata?.["test"]).toBe(true);
     expect(event.workspace.cwd).toMatch(/^h_[0-9a-f]{16}$/); // absolute cwd hashed
     expect(JSON.stringify(event)).not.toContain(process.cwd()); // no raw path
@@ -87,7 +87,7 @@ describe("birdybeep test", () => {
     expect(sink.received()).toHaveLength(1);
     const body = sink.received()[0]!.body as { event_type: string; title: string };
     expect(body.event_type).toBe("test");
-    expect(body.title).toBe("BirdyBeep test event");
+    expect(body.title).toBe("BirdyBeep test");
   });
 
   // birdybeep-agent-oi3 — "delivered" means the BACKEND accepted the event and enqueued a push.
@@ -117,7 +117,8 @@ describe("birdybeep test", () => {
       stderr: out.writer,
       ensureConfig: false,
     });
-    expect(out.text()).toContain("NO device on this account can receive it");
+    expect(out.text()).toContain("No active device can receive a Beep");
+    expect(out.text()).toContain("sign in to register it");
     expect(out.text()).not.toContain("check your phone for a test Beep");
   });
 
@@ -144,7 +145,7 @@ describe("birdybeep test", () => {
       stderr: out.writer,
       ensureConfig: false,
     });
-    expect(out.text()).toContain("queued for 2 registered device(s)");
+    expect(out.text()).toContain("accepted for 2 registered device(s)");
   });
 
   it("queues + returns fast when offline, reporting queued", async () => {
@@ -199,7 +200,7 @@ describe("birdybeep test", () => {
     });
 
     expect(code).toBe(EXIT.ERROR);
-    expect(out.text()).toContain("was not queued and will not retry");
+    expect(out.text()).toContain("could not be sent or saved locally");
     expect(out.text()).not.toContain("it will deliver");
     expect(out.text()).not.toContain("retries on its own");
     expect(queue.size()).toBe(0);
@@ -211,7 +212,7 @@ describe("birdybeep test", () => {
    * Both halves were false — the machine was online, and nothing would ever deliver. `test` is
    * the ONE command whose whole job is diagnosis, so it has to name the real cause.
    */
-  it("says NOT PAIRED — not 'Offline' — on an unpaired but ONLINE machine", async () => {
+  it("says the machine is not paired instead of calling it offline", async () => {
     sink = await StubEventSink.start(); // the backend IS reachable
     sandbox = createSandbox();
     const sinkUrl = sink.url;
@@ -228,7 +229,7 @@ describe("birdybeep test", () => {
       ensureConfig: false,
     });
 
-    expect(out.text()).toContain("NOT PAIRED");
+    expect(out.text()).toContain("This machine is not paired");
     expect(out.text()).toContain("birdybeep pair");
     expect(out.text()).not.toContain("Offline");
     expect(out.text()).not.toContain("test event queued"); // the exact false claim it used to make
@@ -295,9 +296,8 @@ describe("birdybeep test — a queued outcome names the real cause (0yk)", () =>
     const { code, text } = await runTest(backendSays(429, "rate_limited"));
     expect(text).not.toContain("Offline");
     expect(text).not.toContain("when you reconnect");
-    expect(text).toContain("Throttled by the backend (HTTP 429)");
-    expect(text).toContain("test event queued");
-    expect(text).toContain("Not your network");
+    expect(text).toContain("Backend returned HTTP 429");
+    expect(text).toContain("test event is queued");
     expect(code).toBe(EXIT.OK);
     expect(new LocalEventQueue().size()).toBe(1); // still parked for retry
   });
@@ -307,15 +307,15 @@ describe("birdybeep test — a queued outcome names the real cause (0yk)", () =>
     await setToken(TOKEN, FILE_ONLY);
     const { text } = await runTest(backendSays(500, "internal_error"));
     expect(text).not.toContain("Offline");
-    expect(text).toContain("backend");
+    expect(text).toContain("Backend");
     expect(text).toContain("HTTP 500");
   });
 
-  it("still says Offline when the machine really cannot reach the backend", async () => {
+  it("says the backend could not be reached when the network request fails", async () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
     const { text } = await runTest(() => Promise.reject(new TypeError("fetch failed")));
-    expect(text).toContain("Offline");
+    expect(text).toContain("Could not reach the backend");
     expect(new LocalEventQueue().size()).toBe(1);
   });
 

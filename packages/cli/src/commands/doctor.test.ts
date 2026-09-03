@@ -373,7 +373,7 @@ describe("doctor: push reachability", () => {
     });
     expect(code).toBe(EXIT.ERROR);
     expect(out.text()).toContain("Push reachability");
-    expect(out.text()).toContain("No device can receive a beep");
+    expect(out.text()).toContain("No active device can receive a Beep");
     expect(out.text()).toContain("Open the BirdyBeep app");
   });
 
@@ -570,15 +570,14 @@ describe("doctor: device check-in", () => {
       most_recent_check_in_at: daysAgo(45),
     });
     expect(code).toBe(EXIT.OK);
-    expect(text).toContain("has checked in for 45 days");
-    expect(text).toContain("Open BirdyBeep on your phone");
+    expect(text).toContain("No device has checked in since");
+    expect(text).toContain("Open BirdyBeep on a registered phone");
     expect(text).toContain("All checks passed.");
     // Explicitly a ✓ row, not a ✗ one.
     expect(text).toMatch(/✓ {2}Device check-in/);
     // …and it does not tell the reader beeps are still arriving. This row read one timestamp; the
     // rows above it are the ones that know whether a beep can be delivered at all.
     expect(text).not.toMatch(/beeps are still/i);
-    expect(text).toContain("the rows above measure");
   });
 
   it("calls a future check-in clock skew, not a check-in '0 days ago'", async () => {
@@ -590,8 +589,8 @@ describe("doctor: device check-in", () => {
     });
     expect(code).toBe(EXIT.OK);
     expect(text).toMatch(/✓ {2}Device check-in/);
-    expect(text).toContain("is in the future");
-    expect(text).toContain("clock skew between this machine and the server");
+    expect(text).toContain("is ahead of this machine's clock");
+    expect(text).toContain("Check the system time");
     expect(text).not.toContain("days ago");
   });
 
@@ -601,7 +600,7 @@ describe("doctor: device check-in", () => {
     // wrong answer this row exists to avoid.
     const { code, text } = await doctorWith({ ...reachable, most_recent_check_in_at: null });
     expect(code).toBe(EXIT.OK);
-    expect(text).toContain("No device on this account has checked in yet");
+    expect(text).toContain("No device check-in has been recorded");
     expect(text).toContain("newer version of the BirdyBeep app");
     expect(text).not.toContain("Open BirdyBeep on your phone");
   });
@@ -610,7 +609,7 @@ describe("doctor: device check-in", () => {
     // Absent ≠ null: a silent row would read as "checked in fine" to anyone scanning the board.
     const { code, text } = await doctorWith(reachable);
     expect(code).toBe(EXIT.OK);
-    expect(text).toContain("does not report device check-ins yet");
+    expect(text).toContain("Device check-ins are unavailable from this server");
   });
 
   it("adds no row when the account has no active device — that row already failed", async () => {

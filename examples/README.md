@@ -1,48 +1,15 @@
-# Examples — generated config per harness
+# Generated config examples
 
-A committed, **byte-for-byte** copy of exactly what each installer writes, so you can read the full
-footprint before running anything.
+These files show the configuration written by each BirdyBeep installer. CI compares them with fresh installations.
 
-Each file is the same artifact the adapter's snapshot tests assert against. A drift guard
-(`packages/cli/src/examples.test.ts`) re-runs the real `birdybeep agent install <harness>` into a
-temp HOME on every CI run and fails if the committed file differs by a byte.
-
-## Index
-
-| Harness                                   | Config file                                    | Installs to                                                   |
+| Harness                                   | Config file                                    | Installed at                                                  |
 | ----------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------- |
 | [Claude Code](./claude-code/README.md)    | [`settings.json`](./claude-code/settings.json) | `~/.claude/settings.json`                                     |
-| [Codex](./codex/README.md)                | [`config.toml`](./codex/config.toml)           | `~/.codex/config.toml` (or `$CODEX_HOME`)                     |
-| [OpenCode](./opencode/README.md)          | [`opencode.json`](./opencode/opencode.json)    | `~/.config/opencode/opencode.json` (honors `XDG_CONFIG_HOME`) |
+| [Codex](./codex/README.md)                | [`config.toml`](./codex/config.toml)           | `$CODEX_HOME/config.toml` or `~/.codex/config.toml`           |
+| [OpenCode](./opencode/README.md)          | [`opencode.json`](./opencode/opencode.json)    | `$XDG_CONFIG_HOME/opencode/opencode.json` or its default path |
 | [Cursor](./cursor/README.md)              | [`hooks.json`](./cursor/hooks.json)            | `~/.cursor/hooks.json`                                        |
-| [GitHub Copilot CLI](./copilot/README.md) | [`birdybeep.json`](./copilot/birdybeep.json)   | `~/.copilot/hooks/birdybeep.json` (honors `COPILOT_HOME`)     |
+| [GitHub Copilot CLI](./copilot/README.md) | [`birdybeep.json`](./copilot/birdybeep.json)   | `$COPILOT_HOME/hooks/birdybeep.json` or its default path      |
 
-Each example shows the **from-scratch** case: a brand-new config containing nothing but BirdyBeep's
-managed entries. On an existing config, the installer merges these entries in and leaves everything
-else untouched. Per-harness READMEs walk through both.
+The examples show a new configuration containing only BirdyBeep-owned entries. Installers merge these entries with existing configuration. Machine tokens remain in the OS keychain or a restricted fallback file rather than harness configuration. Uninstall removes only BirdyBeep-owned entries and restores the original where appropriate.
 
-## Invariants every example demonstrates
-
-- **Only BirdyBeep-managed entries are added.** Existing config is preserved, and the original is
-  backed up once to a `*.birdybeep-backup` file before the first change.
-- **No token is present.** Tokens live in the OS keychain (or a strict-permission file) and are read
-  at event time — never written into harness config or any repo file.
-- **Reversible.** `birdybeep agent uninstall <harness>` removes exactly the entries shown here and
-  restores the original.
-- **Idempotent.** Running install twice produces the same result, with no duplicate entries.
-
-## Per-harness caveats
-
-- **Codex** reports `needs_trust` until you open Codex and run `/hooks` to trust the hooks.
-- **OpenCode** reports `needs_restart` until you restart OpenCode so the plugin loads.
-- **Claude Code** takes effect immediately — it reads `settings.json` live, no restart or trust step.
-- **Cursor** takes effect immediately too — it reads `hooks.json` live. Its payloads carry
-  `user_email` and `transcript_path`, both of which the adapter drops outright (see the
-  [Cursor example](./cursor/README.md#privacy-note-specific-to-cursor)).
-- **GitHub Copilot CLI** takes effect immediately and combines BirdyBeep's dedicated hook file with
-  any other files in its hooks directory.
-
-## Learn more
-
-- [`docs/install.md`](../docs/install.md) — install / uninstall flow
-- [`docs/security.md`](../docs/security.md) — token storage and exactly what data leaves the machine
+See [Installing BirdyBeep](../docs/install.md) for activation and removal. See [Security and privacy](../docs/security.md) for token storage and transmitted fields.

@@ -424,7 +424,7 @@ describe("birdybeep pair", () => {
       ensureConfig: false,
     });
     expect(code).toBe(EXIT.OK);
-    expect(out.text()).toMatch(/still waiting/); // the heartbeat printed
+    expect(out.text()).toMatch(/Waiting for approval/); // the heartbeat printed
     expect(out.text()).toMatch(/Paired/); // and it still paired
   });
 

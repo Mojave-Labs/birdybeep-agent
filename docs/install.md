@@ -1,14 +1,11 @@
 # Installing BirdyBeep
 
-`birdybeep setup` does the whole job in one command. The sections after it are the same steps
-individually, for when you want one harness or one half. Every step is reversible.
+`birdybeep setup` connects this machine, installs adapters for detected coding agents, and sends a
+test Beep. Use the individual commands below when you need only one part of setup.
 
-- **Installs are non-destructive.** Each adapter adds only BirdyBeep-managed entries to your existing
-  config, backs up the original once before its first change, and is fully reversible.
-- **Installs are idempotent.** Running install twice produces the same result — no duplicates.
-- **Installs never write a token.** Your machine token lives in the OS keychain (or a
-  strict-permission file), never in harness config and never in a repo file. The hook reads it at
-  runtime.
+Installers preserve existing configuration and do not add duplicate entries. Before the first
+modification, they write one backup. Machine tokens remain in the OS keychain or a restricted
+fallback file.
 
 ## Supported harnesses
 
@@ -20,20 +17,17 @@ individually, for when you want one harness or one half. Every step is reversibl
 | Cursor             | `cursor`   | `~/.cursor/hooks.json`                                         | none — live immediately |
 | GitHub Copilot CLI | `copilot`  | `~/.copilot/hooks/birdybeep.json` (honors `$COPILOT_HOME`)     | none — live immediately |
 
-Anything not in that table is not supported today — see
-[Harness support & roadmap](#harness-support--roadmap) for what we looked at and why. Each harness's
-exact generated config is committed under [`examples/`](../examples/README.md).
+Anything not in that table is not supported today. See [Requirements for another adapter](#requirements-for-another-adapter)
+for the support criteria. Each harness's generated configuration is under [`examples/`](../examples/README.md).
 
-> **Versions this was verified against** (CLAUDE.md §21.1 — harness hook APIs move, so claims are
-> pinned to what was actually exercised): per harness, in the [support matrix](#support-matrix).
-> Claude Code, Codex, and OpenCode were exercised live over 2026-07-14/15 against the versions then
-> current; Cursor's headless `-p` payloads were captured 2026-07-15 (see
-> `packages/cursor/src/__fixtures__/README.md`). A newer harness release can change or add hook
-> events; re-run the adapter's live E2E before trusting the table.
+Tested harness versions are listed in the [support matrix](#support-matrix). Recheck compatibility
+after updating a harness.
 
 ---
 
-## 1. Install the CLI
+## Quick setup
+
+### Install the CLI
 
 The CLI is published to npm as [`@birdybeep/cli`](https://www.npmjs.com/package/@birdybeep/cli) and
 provides the `birdybeep` command.
@@ -59,14 +53,14 @@ The CLI works on macOS, Linux, and Windows.
 
 ---
 
-## 2. Set it all up — `birdybeep setup`
+### Run `birdybeep setup`
 
 ```bash
 birdybeep setup
 ```
 
-One command does the whole job: it pairs this machine, installs every supported harness it finds,
-prints a row per installed build saying what that build will do, and sends a test Beep.
+The command pairs this machine when needed, installs every supported harness it finds, prints a row
+for each installed build, and sends a test Beep.
 
 ```text
 ✓ Paired to you@example.com.
@@ -78,16 +72,15 @@ coverage
 !  Codex               terminal CLI 0.147.0         needs you
 !  Codex               ChatGPT desktop app          needs you
      → Codex hooks installed.
-     → Codex may require one-time hook trust. Open Codex and run /hooks.
-     → After trust is granted, Codex sessions on this machine will be tracked automatically.
+     → Open Codex and run /hooks. Status changes from needs_trust after a lifecycle hook fires.
 –  OpenCode            —                            not installed
 ✓  Cursor              cursor-agent CLI 2026.07.09  ready
 ✓  Cursor              Cursor.app 2.1.9             ready
 –  GitHub Copilot CLI  —                            not installed
 
-Not installed: OpenCode, GitHub Copilot CLI. Install any of them, then run `birdybeep setup` again to wire it up.
+Not installed: OpenCode, GitHub Copilot CLI. Install either one, then run `birdybeep setup` again.
 
-✓ Test event delivered — check your phone for a test Beep.
+✓ Test event accepted for 1 registered device(s). Check your phone for a test Beep.
 ```
 
 | State           | What it means                                                                                |
@@ -105,12 +98,9 @@ machine already has a token, so it costs one command and no QR scan.
 Flags: `--yes` / `--expect-email <addr>` behave as they do on `pair` (below); `--no-install` stops
 after the machine token; `--no-test` skips the closing Beep.
 
-The next two sections are the same two halves on their own — `birdybeep pair` for the token,
-`birdybeep agent install` for one harness at a time.
+## Manual setup and recovery
 
----
-
-## 3. Pair your machine — `birdybeep pair`
+### Pair your machine
 
 Pairing links this machine to your BirdyBeep account so events can be delivered to you.
 
@@ -125,7 +115,7 @@ complete link, and a display-only session code, then waits:
 To pair this machine, open the BirdyBeep app, tap “pair a machine”, and scan this QR or open the complete link:
    Scan or open:  https://birdybeep.com/pair#code=WXYZ-1234&s=<short-lived-approval-secret>
    Session code (display only; cannot approve by itself):  WXYZ-1234
-Waiting for you to approve this machine in the app…
+Waiting for approval in the BirdyBeep app.
 ```
 
 Approve it in the app, and the CLI asks you to confirm the account that approved it before it
@@ -136,13 +126,13 @@ Pair this machine to you@example.com? [y/N] y
 ✓ Paired to you@example.com.
 ```
 
-`pair` then runs the same harness half `setup` does — coverage table and test Beep included. Pass
+`pair` then installs detected adapters, prints the coverage table, and sends a test Beep. Pass
 `--no-install` to stop at the machine token.
 
 Answer anything but `y`/`yes` and **no token is stored** (exit code 1). On a headless box or in CI,
 pass `--expect-email <addr>` to pin the account that must have approved it (recommended) or `--yes`
 to skip the question — without one of them a non-interactive `pair` fails closed instead of hanging.
-Full detail in [Pairing → Confirming the approving account](./pairing.md#confirming-the-approving-account).
+Full detail in [Pairing → Confirm the approving account](./pairing.md#confirm-the-approving-account).
 
 What this does with your token:
 
@@ -161,7 +151,7 @@ It's idempotent (safe to run when already logged out).
 
 ---
 
-## 4. Install the agent adapters — `birdybeep agent install`
+### Install one or all adapters
 
 Adapters are the per-harness integrations. Installing one patches that harness's config so its
 lifecycle hooks call back into `birdybeep hook <harness>`.
@@ -192,12 +182,10 @@ create config for a harness you don't use. Output looks like this:
 ✓  Claude Code: installed (/Users/you/.claude/settings.json)
 ✓  Codex: needs_trust (/Users/you/.codex/config.toml)
      → Codex hooks installed.
-     → Codex may require one-time hook trust. Open Codex and run /hooks.
-     → After trust is granted, Codex sessions on this machine will be tracked automatically.
+     → Open Codex and run /hooks. Status changes from needs_trust after a lifecycle hook fires.
 ✓  OpenCode: needs_restart (/Users/you/.config/opencode/opencode.json)
      → BirdyBeep plugin added to OpenCode.
-     → Restart OpenCode for the plugin to load.
-     → After restart, OpenCode sessions on this machine will be tracked automatically.
+     → Restart OpenCode. Status changes from needs_restart after the plugin emits an event.
 ✓  Cursor: installed (/Users/you/.cursor/hooks.json)
 ✓  GitHub Copilot CLI: installed (/Users/you/.copilot/hooks/birdybeep.json)
 ```
@@ -266,9 +254,9 @@ A managed hook entry looks like this:
 - **File:** `~/.codex/config.toml` (honors `$CODEX_HOME` if set)
 - **Change:** adds `[[hooks.X]]` lifecycle entries for `SessionStart`, `PermissionRequest`,
   `PostToolUse`, `SubagentStart`, `SubagentStop`, and `Stop` (turn complete). Each hook runs
-  `birdybeep hook codex`. Your own config is preserved, including the top-level `notify` program,
-  which BirdyBeep never writes — see
-  [`examples/codex/README.md`](../examples/codex/README.md#the-notify-program).
+  `birdybeep hook codex`. Your own config is preserved. Existing and legacy top-level `notify`
+  behavior is documented in
+  [`examples/codex/README.md`](../examples/codex/README.md#existing-configuration).
 - **Status:** `needs_trust` — see the gotcha below.
 
 #### OpenCode
@@ -328,32 +316,28 @@ against installer drift in tests.
 
 ---
 
-## 5. Per-harness gotchas
+## Adapter reference
 
-Two of the five harnesses need one extra action before they're live (Claude Code, Cursor, and
-GitHub Copilot CLI are live the moment install finishes). The CLI surfaces this for you, both in
-the install output and in `birdybeep status` / `birdybeep doctor`.
+Codex and OpenCode require one action after installation. Claude Code, Cursor, and GitHub Copilot
+CLI do not.
 
-### Codex needs one-time hook trust → `needs_trust`
+### Codex: `needs_trust`
 
 Codex skips hooks it hasn't trusted, so a fresh install reports `needs_trust`. To grant trust:
 
 1. Open Codex.
 2. Run `/hooks`.
 
-Until then Codex silently skips the hooks, so no Beeps arrive. Codex isn't marked fully installed
-until the first trusted lifecycle hook fires, which proves trust was granted — until then its status
-stays `needs_trust`.
+Status remains `needs_trust` until a trusted lifecycle hook fires.
 
-### OpenCode needs a restart → `needs_restart`
+### OpenCode: `needs_restart`
 
-OpenCode loads plugins only at startup, so a fresh install reports `needs_restart`. **Restart
-OpenCode** and the plugin loads. Status stays `needs_restart` until the first event after the
-restart confirms the plugin is live.
+OpenCode loads plugins at startup. Restart OpenCode after installation. Status remains
+`needs_restart` until the plugin emits an event.
 
 ---
 
-## 6. Verify it works — `birdybeep status` and `birdybeep test`
+### Check status and send a test
 
 Check the overall state:
 
@@ -373,7 +357,7 @@ Integrations:
 Queue:   0 queued → 0 delivered, 0 remaining
 ```
 
-(When you aren't paired, the second line reads `` Paired:  no — run `birdybeep pair` `` and the
+(When you aren't paired, the second line reads ``Paired: no. Run `birdybeep pair`.`` and the
 command exits 1.)
 
 `status` shows your machine identity, pairing state, per-harness integration status, and the local
@@ -387,12 +371,10 @@ birdybeep test
 ```
 
 This pushes a test event through the actual sender path and reports whether it was delivered,
-queued for retry — and which of offline, a backend that asked for a retry, or an unreadable token
-store parked it — or not sent at all:
+queued for retry, or not sent:
 
 ```text
-✗ NOT PAIRED — this machine has no BirdyBeep machine token, so nothing was sent (and nothing was
-queued). Run `birdybeep pair`.
+✗ This machine is not paired. Run `birdybeep pair`. No event was sent or queued.
 ```
 
 If everything is paired and reachable, you should get a Beep on your phone.
@@ -409,7 +391,7 @@ queue as it goes and exits non-zero if anything is wrong.
 
 ---
 
-## 7. Staying up to date
+### Update notices
 
 When you run any command, the CLI prints a one-line notice to **stderr** if a newer
 `@birdybeep/cli` has been published:
@@ -419,27 +401,20 @@ a new version of birdybeep is available: 0.1.0 → 0.2.0
 upgrade with: npm install -g @birdybeep/cli@latest
 ```
 
-The notice is:
-
-- **Cached.** The registry is checked at most once a day; every other run reads a small cache in your
-  config dir, so there's no per-command network hit.
-- **Never on the hot path.** The `hook` command (which runs inside your agent) is never delayed or
-  touched by the check.
-- **Quiet for scripts.** It's skipped under `--json`, `--non-interactive`, non-TTY output (pipes,
-  logs), and `CI`. Turn it off entirely with `NO_UPDATE_NOTIFIER=1` (or
-  `BIRDYBEEP_NO_UPDATE_NOTIFIER=1`). It respects a custom `npm_config_registry` if you have one set.
-- **Advisory only.** It never touches your install — run the printed command (with whichever package
-  manager you installed with) when you're ready.
+The CLI checks npm for a newer release at most once a day. It skips the check for hook execution,
+JSON or non-interactive output, pipes, and CI. Disable notices with `NO_UPDATE_NOTIFIER=1` or
+`BIRDYBEEP_NO_UPDATE_NOTIFIER=1`. A custom `npm_config_registry` is respected. Updates are never
+installed automatically.
 
 Once you've upgraded, re-running `birdybeep agent install all` is safe (idempotent) and refreshes any
 adapter config that changed between versions.
 
 ---
 
-## 8. Uninstalling — `birdybeep agent uninstall`
+## Uninstall
 
-Uninstall is the exact inverse of install: it removes only BirdyBeep-managed entries and restores
-your config from the backup.
+Uninstall removes BirdyBeep-owned entries and restores configuration from the backup where
+appropriate.
 
 ```bash
 birdybeep agent uninstall all
@@ -455,30 +430,28 @@ birdybeep agent uninstall cursor
 birdybeep agent uninstall copilot
 ```
 
-Uninstall is safe and idempotent — running it when nothing is installed is a no-op:
+Running uninstall when nothing is installed is a no-op:
 
 ```text
 ✓  Claude Code: removed (/Users/you/.claude/settings.json)
 –  Codex: nothing to remove
 ```
 
-To fully unpair the machine afterward, run `birdybeep logout` to delete the stored token.
+Run `birdybeep unpair` to revoke the machine on the server and delete its local token. Run
+`birdybeep logout` to delete only the local token.
 
 ---
 
-## Harness support & roadmap
+## Requirements for another adapter
 
-Adapters are cheap to write and expensive to keep honest: each one has to be verified against the
-real harness end-to-end, and harness hook APIs move. So we ship an adapter only for harnesses we can
-actually exercise, and we say plainly what we skipped.
+BirdyBeep supports Claude Code, Codex, OpenCode, Cursor, and GitHub Copilot CLI. A new adapter needs:
 
-**Shipped today:** Claude Code, Codex, OpenCode, Cursor, and GitHub Copilot CLI (the table at the
-[top of this page](#supported-harnesses)).
+- a supported lifecycle hook or plugin API;
+- event fields that can be mapped without forwarding session content;
+- a reversible user-level installation;
+- an end-to-end test using the current harness.
 
-### Looked at and not shipped
-
-A landscape survey (snapshot: **2026-07-15**) ruled these out. Nothing here is a judgement of the
-tools — it's about whether an adapter would have users and a stable hook surface to bind to:
+Harnesses evaluated on 2026-07-15:
 
 | Harness        | Why there's no adapter                                                                            |
 | -------------- | ------------------------------------------------------------------------------------------------- |
@@ -487,44 +460,12 @@ tools — it's about whether an adapter would have users and a stable hook surfa
 | **Continue**   | Acquired by Cursor (2026-06-16); the Cursor adapter is the successor path.                        |
 | **Gemini CLI** | Individual access cut off (2026-06-18), folded toward Antigravity — no stable individual surface. |
 
-Harness landscapes move fast, and this list is a snapshot, not a standing verdict. If one of these
-comes back with a real hook API — or you want a harness that isn't listed at all — open an issue.
-
-### Tier 2 — what a new adapter needs
-
-The bar for any additional harness, in order:
-
-1. **A real lifecycle hook surface** — the harness must be able to invoke an external command (or
-   load a plugin) on session/approval/completion events. Polling and log-scraping are not adapters.
-2. **A payload with safe discriminators** — enough to map to a [§10.1](./SPEC.md) event type without
-   forwarding user or assistant content.
-3. **A reproducible install** — a documented user-level config file we can patch non-destructively,
-   back up, and fully restore on uninstall.
-4. **End-to-end verification** — the adapter is not "supported" until a real event, fired by the
-   real harness, is observed arriving at the backend. See
-   [`docs/adapter-development.md`](./adapter-development.md).
+This table is a dated record, not a permanent decision. Open an issue to request another harness.
+Implementation requirements are in [Adapter development](./adapter-development.md).
 
 ---
 
-## What gets sent (the privacy summary)
+## Security and privacy
 
-Before anything leaves your machine, the hook sanitizes the payload:
-
-- **Absolute paths are hashed** (including the working directory) — they're sent as `h_<hex>`, never
-  as readable paths.
-- **Secret-shaped strings are redacted** (`[redacted]`) — AWS/GitHub/OpenAI/Slack keys, JWTs, and
-  `key=value` secrets.
-- **Strings are truncated** (title ~200, body ~2000, metadata values ~500 chars) under a 16 KB total
-  cap.
-- **Raw user and assistant content is not forwarded** — only safe discriminators like a tool name
-  or status flow through.
-
-The hook always returns fast and never blocks your harness. If a send fails, the event goes to a
-best-effort local retry queue (24h retention, at most 500 entries, strict permissions) that's drained
-opportunistically on the next hook, `status`, or `doctor`. Until the machine is paired nothing is
-queued — `status` and `doctor` report how many events that has cost. On the backend, notification title and body are not
-persisted by default — only metadata, hashes, and delivery/session status.
-
-For the full detail, see [`docs/SPEC.md`](./SPEC.md) (§6, §7, §11) and the adapter source under
-`packages/claude-code`, `packages/codex`, `packages/opencode`, `packages/cursor`, and
-`packages/copilot`.
+See [Security and privacy](./security.md) for transmitted fields, filtering rules, token storage,
+local queue behavior, and backend storage.

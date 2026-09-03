@@ -173,7 +173,7 @@ describe("gcgp.4: an unpaired machine is not a silent one", () => {
       stderr: out.writer,
       ensureConfig: false,
     });
-    expect(out.text()).toContain("NOT PAIRED");
+    expect(out.text()).toContain("This machine is not paired");
     expect(out.text()).not.toContain("Offline");
     expect(code).toBe(EXIT.ERROR);
     expect(sink.received()).toHaveLength(0);

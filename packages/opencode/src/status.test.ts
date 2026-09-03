@@ -254,7 +254,7 @@ describe("opencodeDoctor — plugin launcher", () => {
     const r = await doctorWith(sandbox.home, dataDir);
     const check = r.checks.find((c) => c.name === LAUNCHER);
     expect(check?.ok).toBe(false);
-    expect(check?.detail).toMatch(/no error anywhere/);
+    expect(check?.detail).toMatch(/failed lookup drops the event/);
   });
 
   it("does not call a missing launcher an error while events are arriving", async () => {
@@ -271,6 +271,6 @@ describe("opencodeDoctor — plugin launcher", () => {
     });
     const check = r.checks.find((c) => c.name === LAUNCHER);
     expect(check?.ok).toBe(true);
-    expect(check?.detail).toMatch(/which is working here/);
+    expect(check?.detail).toMatch(/It is working here/);
   });
 });
