@@ -10,7 +10,7 @@
  *      Anthropic-compatible endpoint, firing real SessionStart / Stop / SessionEnd
  *      hooks, each spawning the real `birdybeep hook claude` CLI
  *   5. events must arrive at a local stub sink with the right types, Bearer token,
- *      hashed cwd, and NO raw prompt/response content
+ *      hashed cwd, a bounded completion summary, and no raw prompt/secret/path content
  *   6. uninstall restores settings.json (user hooks preserved, managed entries gone)
  *
  * Claude Code (unlike Codex) has NO trust gate — hooks fire the moment they are in
@@ -255,7 +255,22 @@ try {
     );
   }
   const bodies = JSON.stringify(events.map((e) => e.body));
-  assert(!bodies.includes("pong"), "raw model response leaked into a delivered event body");
+  const completions = events.filter((e) => e.body.event_type === "agent_completed");
+  assert(
+    completions.some((e) => e.body.body === "pong"),
+    "completion summary did not match the final reply",
+  );
+  for (const e of completions) {
+    assert(e.body.body.length <= 2_000, "completion summary exceeded its limit");
+  }
+  const outsideSummary = JSON.stringify(
+    events.map((e) => {
+      const { body, ...metadata } = e.body;
+      return e.body.event_type === "agent_completed" ? metadata : e.body;
+    }),
+  );
+  assert(!outsideSummary.includes("pong"), "assistant reply escaped the completion summary field");
+  assert(!bodies.includes("Reply with exactly one word"), "raw prompt leaked into an event");
   assert(!bodies.includes(sandbox), "raw sandbox path leaked into a delivered event body");
   assert(!bodies.includes(TOKEN), "machine token leaked into an event body");
   assert(!bodies.includes(OPENROUTER_KEY), "OpenRouter key leaked into an event body");
