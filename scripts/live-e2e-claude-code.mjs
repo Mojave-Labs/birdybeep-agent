@@ -189,10 +189,10 @@ try {
     [
       "--input-type=module",
       "-e",
-      `const { setToken } = await import(${JSON.stringify(pathToFileURL(AGENT_CORE_DIST).href)});
-       console.log("token store:", await setToken(${JSON.stringify(TOKEN)}));`,
+      `const { setToken, unavailableKeychainBackend } = await import(${JSON.stringify(pathToFileURL(AGENT_CORE_DIST).href)});
+       console.log("token store:", await setToken(${JSON.stringify(TOKEN)}, { backend: unavailableKeychainBackend }));`,
     ],
-    { env: makeBaseEnv(), encoding: "utf8" },
+    { env: makeBaseEnv(), encoding: "utf8", timeout: 30_000 },
   );
   assert(seed.status === 0, `token seed failed: ${seed.stderr}`);
   log(seed.stdout.trim());

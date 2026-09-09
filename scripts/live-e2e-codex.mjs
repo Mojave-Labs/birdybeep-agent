@@ -234,13 +234,17 @@ trust_level = "trusted"
 
   // ── 2. seed the machine token into the FILE store under the sandbox HOME ──
   begin("seed machine token (file store fallback)");
-  const seed = run("node", [
-    "--input-type=module",
-    "-e",
-    `const { setToken } = await import(${JSON.stringify(pathToFileURL(AGENT_CORE_DIST).href)});
-     const kind = await setToken(${JSON.stringify(TOKEN)});
+  const seed = run(
+    "node",
+    [
+      "--input-type=module",
+      "-e",
+      `const { setToken, unavailableKeychainBackend } = await import(${JSON.stringify(pathToFileURL(AGENT_CORE_DIST).href)});
+     const kind = await setToken(${JSON.stringify(TOKEN)}, { backend: unavailableKeychainBackend });
      console.log("token store:", kind);`,
-  ]);
+    ],
+    { timeoutMs: 30_000 },
+  );
   assert(seed.status === 0, `token seed failed: ${seed.stderr}`);
   log(seed.stdout.trim());
 
