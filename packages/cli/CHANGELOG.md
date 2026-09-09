@@ -1,5 +1,17 @@
 # @birdybeep/cli
 
+## 0.8.3
+
+### Patch Changes
+
+- 845e7bf: Show the BirdyBeep bird in terminal help, setup, and pairing, with lime help headers. Animate a blink while awaiting pairing approval and a short hop after success; set BIRDYBEEP_ANIMATION=0 to disable motion. Respect NO_COLOR and keep redirected and JSON output plain.
+- @birdybeep/agent-core@0.8.3
+  - @birdybeep/claude-code@0.8.3
+  - @birdybeep/codex@0.8.3
+  - @birdybeep/copilot@0.8.3
+  - @birdybeep/cursor@0.8.3
+  - @birdybeep/opencode@0.8.3
+
 ## 0.8.2
 
 ### Patch Changes
