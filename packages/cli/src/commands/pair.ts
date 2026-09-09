@@ -593,38 +593,45 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
       let lastBeat = startedAt;
       let paired: PairTokenResult | undefined;
       let terminal: Extract<PairTokenResult, { status: "error" }> | undefined;
-      for (;;) {
-        const nowMs = clock();
-        if (nowMs >= deadline) break;
-        await sleep(intervalMs);
-        const poll = await pairTokenPoll(
-          apiUrl,
-          start.device_code,
-          fetchImpl,
-          identity.fingerprintHash,
-          codeVerifier, // PKCE proof-of-possession (dgxd) — sent on every poll
-        );
-        if (poll.status === "paired") {
-          paired = poll;
-          break;
-        }
-        // A failure that waiting can't fix (e.g. the agent-install cap) must STOP the loop
-        // and be shown — never masked as "not approved yet" so the prompt hangs silently.
-        if (poll.status === "error" && !poll.retryable) {
-          terminal = poll;
-          break;
-        }
-        // Otherwise pending (not approved yet) or a transient server error → keep waiting,
-        // reprinting a heartbeat so the prompt is visibly alive. Human-mode only (NDJSON
-        // stays a clean two-line stream); time-gated on the clock so tests never see it.
-        if (!ctx.flags.json && nowMs - lastBeat >= HEARTBEAT_MS) {
-          ctx.io.line(
-            poll.status === "error"
-              ? `   Backend unavailable (${poll.message}); retrying.`
-              : "   Waiting for approval in the BirdyBeep app.",
+      let stopBird = ctx.io.bird?.wait();
+      try {
+        for (;;) {
+          const nowMs = clock();
+          if (nowMs >= deadline) break;
+          await sleep(intervalMs);
+          const poll = await pairTokenPoll(
+            apiUrl,
+            start.device_code,
+            fetchImpl,
+            identity.fingerprintHash,
+            codeVerifier, // PKCE proof-of-possession (dgxd) — sent on every poll
           );
-          lastBeat = nowMs;
+          if (poll.status === "paired") {
+            paired = poll;
+            break;
+          }
+          // A failure that waiting can't fix (e.g. the agent-install cap) must STOP the loop
+          // and be shown — never masked as "not approved yet" so the prompt hangs silently.
+          if (poll.status === "error" && !poll.retryable) {
+            terminal = poll;
+            break;
+          }
+          // Otherwise pending (not approved yet) or a transient server error → keep waiting,
+          // reprinting a heartbeat so the prompt is visibly alive. Human-mode only (NDJSON
+          // stays a clean two-line stream); time-gated on the clock so tests never see it.
+          if (!ctx.flags.json && nowMs - lastBeat >= HEARTBEAT_MS) {
+            stopBird?.();
+            ctx.io.line(
+              poll.status === "error"
+                ? `   Backend unavailable (${poll.message}); retrying.`
+                : "   Waiting for approval in the BirdyBeep app.",
+            );
+            lastBeat = nowMs;
+            stopBird = ctx.io.bird?.wait();
+          }
         }
+      } finally {
+        stopBird?.();
       }
 
       if (terminal !== undefined) {
@@ -713,6 +720,7 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
       // wired up. It only points anywhere now when the chain has been turned off.
       const nextStep =
         chain === undefined ? " Run `birdybeep setup` to install coding-agent hooks." : "";
+      await ctx.io.bird?.celebrate();
       ctx.io.line(`✓ Paired${humanSuffix}.${nextStep}${discardedSuffix}`);
 
       const report =

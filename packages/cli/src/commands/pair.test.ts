@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { runCli } from "../cli";
 import { cliConfigPath, writeCliConfig } from "../config";
-import { EXIT } from "../framework";
+import { createIo, EXIT } from "../framework";
 import { CLI_VERSION } from "../version";
 import {
   canOpenControllingTerminal,
@@ -155,6 +155,47 @@ function serverSha256Base64Url(input: string): string {
 }
 
 describe("birdybeep pair", () => {
+  it.each([true, false])(
+    "stops the waiting bird before confirmation and celebrates only approval: %s",
+    async (approve) => {
+      sandbox = createSandbox();
+      const events: string[] = [];
+      const cmd = createPairCommand({
+        setup: false,
+        fetchImpl: stubPairing(),
+        tokenOptions: FILE_ONLY,
+        sleep: () => Promise.resolve(),
+        ...CONFIRM_YES,
+        promptLine: () => {
+          events.push("confirm");
+          return Promise.resolve(approve ? "y" : "n");
+        },
+      });
+      const out = capture();
+      const io = createIo(false, out.writer, out.writer);
+      io.bird = {
+        wait: () => {
+          events.push("wait");
+          return () => {
+            events.push("stop");
+          };
+        },
+        celebrate: async () => {
+          expect(await getToken(FILE_ONLY)).toBe(MACHINE_TOKEN);
+          events.push("hop");
+        },
+      };
+      await cmd.run?.({
+        args: [],
+        flags: { json: false, nonInteractive: false, help: false, version: false },
+        io,
+      });
+      expect(events).toEqual(
+        approve ? ["wait", "stop", "confirm", "hop"] : ["wait", "stop", "confirm"],
+      );
+    },
+  );
+
   it("pairs via the device-code flow and stores the token securely (not in config)", async () => {
     sandbox = createSandbox();
     const cmd = createPairCommand({
