@@ -1,6 +1,6 @@
 # Security and privacy
 
-BirdyBeep sends a bounded event record. It excludes prompts, assistant replies, tool input and output, file contents, and readable absolute paths. This page lists the accepted fields and explains how events and tokens are stored.
+BirdyBeep sends a bounded event record that can include a short completion summary from the assistant’s final reply. It does not forward entire transcripts or dedicated prompt, tool-input, tool-output, or file-content fields. Readable absolute paths are hashed before sending. This page lists the accepted fields and explains how events and tokens are stored.
 
 ## Event payload
 
@@ -36,11 +36,11 @@ Per-tool events (`tool_started` and `tool_finished`) remain on the machine. They
 
 ### Adapter-generated notification text
 
-Adapters generate notification titles and bodies from lifecycle state. They do not use prompts or assistant replies as notification text.
+Adapters generate notification titles and bodies from lifecycle state. Claude Code and Codex also use the first non-empty line of the assistant’s final reply as a completion summary, trimmed to 200 characters before normalization. A short reply may appear in full. The summary passes through the path hashing and secret redaction described below before it is sent. When no summary is available, the body is `Turn complete`. Redaction matches recognized credential patterns; other text in the selected line remains visible in the notification.
 
-- Codex excludes `input-messages`, `last-assistant-message`, and `tool_input`.
+- Codex uses `last-assistant-message` (notify) or `last_assistant_message` (hooks) for completion summaries. It excludes `input-messages` and `tool_input`.
 - OpenCode excludes tool arguments, permission titles, and error messages.
-- Claude Code may include its notification `message` and a user-assigned session name after normalization.
+- Claude Code uses `last_assistant_message` for completion summaries. It may also include its notification `message` and a user-assigned session name after normalization.
 - Cursor excludes `prompt`, `user_email`, `transcript_path`, tool input and output, and shell-command text.
 - GitHub Copilot CLI excludes prompts, tool arguments and results, transcript paths, subagent responses, and error messages and stacks.
 

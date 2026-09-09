@@ -105,3 +105,5 @@ If `unpair` cannot reach the server, it still deletes the local token and tells 
 Neither command removes installed adapters or clears the local event queue. Use `birdybeep agent uninstall` to remove adapters.
 
 For expired links, terminal-confirmation errors, wrong-account approvals, or missing notifications, see [Troubleshooting](./troubleshooting.md).
+
+In interactive terminals, the bird breathes and blinks while waiting, then crouches, hops, and settles after pairing succeeds. Set `BIRDYBEEP_ANIMATION=0` to disable motion. `NO_COLOR=1` disables color.

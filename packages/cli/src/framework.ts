@@ -12,11 +12,15 @@ import { mkdirSync } from "node:fs";
 
 import { birdyBeepConfigDir } from "@birdybeep/agent-core";
 
+import { type BirdAnimation, createBirdAnimation } from "./bird-animation";
+import { presentation } from "./presentation";
+
 /** Shared exit-code convention so callers (humans + agents) can branch on the result. */
 export const EXIT = { OK: 0, ERROR: 1, USAGE: 2 } as const;
 
 /** A minimal output sink (process.stdout/stderr in prod; capturing buffers in tests). */
 export interface Writer {
+  readonly isTTY?: boolean;
   write(s: string): void;
 }
 
@@ -32,6 +36,7 @@ export interface GlobalFlags {
 /** Json-aware output. `line`/`result` are mutually exclusive by mode so stdout stays clean. */
 export interface Io {
   readonly json: boolean;
+  bird?: BirdAnimation;
   /** Human line → stdout (suppressed in `--json` mode). */
   line(text: string): void;
   /** Always → stderr (errors/warnings show in both modes). */
@@ -42,9 +47,10 @@ export interface Io {
   emit(human: string, json: unknown): void;
 }
 
-export function createIo(json: boolean, stdout: Writer, stderr: Writer): Io {
+export function createIo(json: boolean, stdout: Writer, stderr: Writer, animate = false): Io {
   return {
     json,
+    ...(!json && animate ? { bird: createBirdAnimation(stdout) } : {}),
     line: (text) => {
       if (!json) stdout.write(`${text}\n`);
     },
@@ -271,7 +277,8 @@ export interface DispatchDeps {
  */
 export async function dispatch(argv: string[], deps: DispatchDeps): Promise<number> {
   const { flags, rest } = parseGlobalFlags(argv);
-  const io = createIo(flags.json, deps.stdout, deps.stderr);
+  const io = createIo(flags.json, deps.stdout, deps.stderr, !flags.nonInteractive);
+  const style = presentation(deps.stdout);
 
   // Config dir is created on first run (non-secret CLI config only — never a token).
   if (deps.ensureConfig !== false) {
@@ -307,7 +314,7 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
   }
 
   if (rest.length === 0 || (flags.help && command === undefined)) {
-    io.emit(renderRootHelp(deps.version, deps.commands), {
+    io.emit(style.banner() + style.help(renderRootHelp(deps.version, deps.commands)), {
       version: deps.version,
       commands: deps.commands.map((c) => ({
         name: c.name,
@@ -325,7 +332,7 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
 
   const path = pathParts.join(" ");
   if (flags.help) {
-    io.emit(renderCommandHelp(path, command), {
+    io.emit(style.help(renderCommandHelp(path, command)), {
       name: path,
       summary: command.summary,
       usage: command.usage,
@@ -351,6 +358,10 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
 
   let code: number;
   try {
+    if (!flags.nonInteractive && (path === "setup" || path === "pair")) {
+      const banner = style.banner();
+      if (banner) io.line(banner.trimEnd());
+    }
     code = await command.run({ args, flags, io });
   } catch (err) {
     if (err instanceof MissingInputError) {
