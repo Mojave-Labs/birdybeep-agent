@@ -27,6 +27,10 @@ after updating a harness.
 
 ## Quick setup
 
+### Download the iPhone app
+
+[Download BirdyBeep on the App Store](https://apps.apple.com/us/app/birdybeep/id6782737319).
+
 ### Install the CLI
 
 The CLI is published to npm as [`@birdybeep/cli`](https://www.npmjs.com/package/@birdybeep/cli) and
@@ -112,6 +116,10 @@ This uses a device-flow pairing handshake. The CLI prints a scannable QR (on a t
 complete link, and a display-only session code, then waits:
 
 ```text
+Download BirdyBeep for iPhone:
+   Download:  https://apps.apple.com/us/app/birdybeep/id6782737319
+
+Pair this machine:
 To pair this machine, open the BirdyBeep app, tap “pair a machine”, and scan this QR or open the complete link:
    Scan or open:  https://birdybeep.com/pair#code=WXYZ-1234&s=<short-lived-approval-secret>
    Session code (display only; cannot approve by itself):  WXYZ-1234

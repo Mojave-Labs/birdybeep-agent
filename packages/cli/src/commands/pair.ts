@@ -1,8 +1,8 @@
 /**
  * `birdybeep pair` (§7.1/§7.2/§9.4) — pair this machine via the device-code flow.
- * `POST /v1/pair/start` (machine_label derived from hostname/OS) → show a scannable
- * QR matrix + the complete pair link + display-only `user_code` → poll `POST /v1/pair/token`
- * with the device
+ * `POST /v1/pair/start` (machine_label derived from hostname/OS) → show the App Store
+ * download URL/QR, then a separately labeled pairing QR matrix + the complete pair link +
+ * display-only `user_code` → poll `POST /v1/pair/token` with the device
  * code (+ stable machine fingerprint) until it returns the durable token or the
  * `expires_at` (10-min) deadline. The issued token is stored in the SECURE store only
  * (keychain / strict-perm file — never config or the QR); the non-secret apiUrl is
@@ -51,6 +51,9 @@ export const DEFAULT_POLL_INTERVAL_MS = 2000;
  * fires spuriously in the fast, instant-sleep tests.
  */
 export const HEARTBEAT_MS = 15_000;
+
+/** Canonical iPhone download destination, shared by human and JSON pairing output. */
+export const APP_STORE_URL = "https://apps.apple.com/us/app/birdybeep/id6782737319";
 
 /**
  * Render the QR payload as a terminal-scannable half-block matrix. `border: 2` keeps a
@@ -566,11 +569,20 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
         // qr_payload for approval while we poll; the final success object is a later line.
         ctx.io.result({
           status: "pairing_started",
+          app_store_url: APP_STORE_URL,
           user_code: start.user_code,
           qr_payload: start.qr_payload,
           expires_at: start.expires_at,
         });
       } else {
+        // Keep the permanent store QR and short-lived pairing QR in separate, explicit
+        // sections. New users can install the app with the first, then scan the second.
+        const isTTY = deps.isTTY ?? process.stdout.isTTY === true;
+        ctx.io.line("Download BirdyBeep for iPhone:");
+        if (isTTY) ctx.io.line(renderQr(APP_STORE_URL));
+        ctx.io.line(`   Download:  ${APP_STORE_URL}`);
+        ctx.io.line("");
+        ctx.io.line("Pair this machine:");
         // Approval needs the high-entropy fragment secret carried by the complete QR/link.
         // The short user_code remains visible only to identify the same pending session.
         ctx.io.line(
@@ -578,7 +590,6 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
         );
         // The matrix is TTY-only (a piped/CI consumer wants greppable lines, and
         // half-block art garbles logs); the link + code lines below ALWAYS print.
-        const isTTY = deps.isTTY ?? process.stdout.isTTY === true;
         if (isTTY) ctx.io.line(renderQr(start.qr_payload));
         ctx.io.line(`   Scan or open:  ${start.qr_payload}`);
         ctx.io.line(

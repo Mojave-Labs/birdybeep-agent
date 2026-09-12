@@ -20,6 +20,7 @@ import { cliConfigPath, writeCliConfig } from "../config";
 import { createIo, EXIT } from "../framework";
 import { CLI_VERSION } from "../version";
 import {
+  APP_STORE_URL,
   canOpenControllingTerminal,
   createPairCommand,
   decidePairConfirmation,
@@ -214,6 +215,7 @@ describe("birdybeep pair", () => {
     });
 
     expect(code).toBe(EXIT.OK);
+    expect(out.text()).toContain(`Download:  ${APP_STORE_URL}`);
     expect(out.text()).toContain(QR_PAYLOAD); // complete qr_payload link shown
     expect(out.text()).toContain("Session code (display only; cannot approve by itself):  AB-1234");
     expect(out.text()).toMatch(/scan this QR or open the complete link/i);
@@ -246,11 +248,15 @@ describe("birdybeep pair", () => {
     });
 
     expect(code).toBe(EXIT.OK);
+    expect(out.text()).toContain(renderQrMatrix(APP_STORE_URL));
     // Structural proof: the output embeds EXACTLY the uqr rendering of the payload the
     // stub backend returned. (No pure-JS QR decoder is available without adding a dep,
     // so we assert encode-equivalence; live scan verification is the xrepo E2E's job.)
     expect(out.text()).toContain(renderQrMatrix(QR_PAYLOAD));
     expect(out.text()).toMatch(/[█▀▄]/); // half-block matrix actually present
+    expect(out.text()).toMatch(
+      /Download BirdyBeep for iPhone:[\s\S]+Pair this machine:[\s\S]+To pair this machine/,
+    );
     expect(out.text()).toContain(QR_PAYLOAD); // complete link fallback still printed
     expect(out.text()).toContain("Session code (display only; cannot approve by itself)");
   });
@@ -275,6 +281,7 @@ describe("birdybeep pair", () => {
 
     expect(code).toBe(EXIT.OK);
     expect(out.text()).not.toMatch(/[█▀▄]/); // no half-block art in pipes
+    expect(out.text()).toContain(`Download:  ${APP_STORE_URL}`);
     expect(out.text()).toContain(QR_PAYLOAD); // complete plain link remains
     expect(out.text()).toContain("Session code (display only; cannot approve by itself)");
   });
@@ -341,6 +348,7 @@ describe("birdybeep pair", () => {
     // user_code is identification only; approval requires the qr_payload's fragment secret.
     expect(lines[0]).toMatchObject({
       status: "pairing_started",
+      app_store_url: APP_STORE_URL,
       user_code: "AB-1234",
       qr_payload: QR_PAYLOAD,
     });
