@@ -1,5 +1,17 @@
 # @birdybeep/cli
 
+## 0.8.4
+
+### Patch Changes
+
+- 8baee53: Show the BirdyBeep App Store link and a clearly separated download QR before pairing.
+- @birdybeep/agent-core@0.8.4
+  - @birdybeep/claude-code@0.8.4
+  - @birdybeep/codex@0.8.4
+  - @birdybeep/copilot@0.8.4
+  - @birdybeep/cursor@0.8.4
+  - @birdybeep/opencode@0.8.4
+
 ## 0.8.3
 
 ### Patch Changes
