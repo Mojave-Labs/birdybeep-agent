@@ -52,6 +52,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
@@ -230,6 +231,10 @@ done
 file="$store/\${service}__\${account}"
 case "$cmd" in
   add-generic-password)
+    if [ "\${BIRDYBEEP_FAKE_KEYCHAIN_DENY_WRITE:-0}" = "1" ]; then
+      printf '%s\n' 'security: SecKeychainItemCreateFromContent (<default>): User interaction is not allowed.' >&2
+      exit 36
+    fi
     if [ "$wflag" -eq 1 ]; then
       IFS= read -r pw1 || pw1=""
       IFS= read -r pw2 || pw2=""
@@ -249,7 +254,7 @@ esac
   }
   let caseNo = 0;
   /** A fresh hermetic HOME per case: no token, config, or install salt is ever shared. */
-  function newHome() {
+  function newHome({ denyKeychainWrite = false } = {}) {
     const home = join(sandbox, `case-${++caseNo}`);
     mkdirSync(home, { recursive: true });
     return {
@@ -262,6 +267,7 @@ esac
         XDG_STATE_HOME: join(home, ".local", "state"),
         BIRDYBEEP_API_URL: baseUrl,
         BIRDYBEEP_FAKE_KEYCHAIN: join(home, "fake-keychain"),
+        BIRDYBEEP_FAKE_KEYCHAIN_DENY_WRITE: denyKeychainWrite ? "1" : "0",
         // A pty makes stderr a tty, which would otherwise wake the npm update notifier.
         NO_UPDATE_NOTIFIER: "1",
       },
@@ -299,8 +305,14 @@ esac
    * Both stdout AND stderr are captured into `out` — the gate's refusal/decline messages go to
    * stderr (ctx.io.errline), so an stdout-only capture would assert against nothing.
    */
-  async function pairCase({ args = [], approver, mode = "pipe", answer }) {
-    const { env } = newHome();
+  async function pairCase({
+    args = [],
+    approver,
+    mode = "pipe",
+    answer,
+    denyKeychainWrite = false,
+  }) {
+    const { env } = newHome({ denyKeychainWrite });
     const pairArgs = ["pair", ...args];
     let command;
     let argv;
@@ -464,6 +476,34 @@ esac
     );
     check("accept: reports the account it paired to", r.out.includes(approver.email));
     assertNoTokenLeak("accept", r);
+  }
+
+  // ── regression: macOS keychain denies the write → secure file fallback ───
+  if (process.platform === "darwin") {
+    const approver = await makeAccount("keychaindenied");
+    const r = await pairCase({
+      approver,
+      args: ["--yes"],
+      denyKeychainWrite: true,
+    });
+    assertApproved("keychain denied fallback", r);
+    check(
+      "keychain denied fallback: CLI exits 0",
+      r.code === 0,
+      `code ${r.code} out=${r.out.slice(-500)}`,
+    );
+    check(
+      "keychain denied fallback: minted token resolves from the strict-permission file",
+      typeof r.token === "string" && /^mt_[0-9a-f]{64}$/.test(r.token),
+      `token=${r.token}`,
+    );
+    const fallbackPath = join(r.env.HOME, "Library", "Application Support", "birdybeep", "token");
+    check("keychain denied fallback: fallback file exists", existsSync(fallbackPath));
+    check(
+      "keychain denied fallback: fallback file mode is 0600",
+      (statSync(fallbackPath).mode & 0o777) === 0o600,
+    );
+    assertNoTokenLeak("keychain denied fallback", r);
   }
 
   // ── case 3: --yes with NO tty at all ──────────────────────────────────────
