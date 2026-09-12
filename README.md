@@ -10,6 +10,9 @@ BirdyBeep sends phone notifications when Claude Code, Codex, OpenCode, Cursor, o
 
 ## Install
 
+[Download BirdyBeep for iPhone](https://apps.apple.com/us/app/birdybeep/id6782737319), then install
+the CLI on each machine you want it to watch:
+
 ```bash
 npm install -g @birdybeep/cli
 birdybeep setup

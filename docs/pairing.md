@@ -12,6 +12,11 @@ The QR and complete link contain a short-lived approval secret. The machine toke
 4. Confirm the approving account in the terminal.
 
 ```text
+Download BirdyBeep for iPhone:
+   ▄▄▄▄▄▄▄ ▄  ▄▄ ▄▄▄▄▄▄▄
+   Download:  https://apps.apple.com/us/app/birdybeep/id6782737319
+
+Pair this machine:
 To pair this machine, open the BirdyBeep app, tap “pair a machine”, and scan this QR or open the complete link:
    ▄▄▄▄▄▄▄ ▄  ▄▄ ▄▄▄▄▄▄▄
    Scan or open:  https://birdybeep.com/pair#code=WXYZ-1234&s=<short-lived-approval-secret>
