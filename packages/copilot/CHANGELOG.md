@@ -1,5 +1,11 @@
 # @birdybeep/copilot
 
+## 0.8.4
+
+### Patch Changes
+
+- @birdybeep/agent-core@0.8.4
+
 ## 0.8.3
 
 ### Patch Changes
