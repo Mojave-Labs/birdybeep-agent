@@ -1,5 +1,17 @@
 # @birdybeep/cli
 
+## 0.8.5
+
+### Patch Changes
+
+- Updated dependencies [3019121]
+  - @birdybeep/agent-core@0.8.5
+  - @birdybeep/claude-code@0.8.5
+  - @birdybeep/codex@0.8.5
+  - @birdybeep/copilot@0.8.5
+  - @birdybeep/cursor@0.8.5
+  - @birdybeep/opencode@0.8.5
+
 ## 0.8.4
 
 ### Patch Changes
