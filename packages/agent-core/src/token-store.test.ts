@@ -113,6 +113,16 @@ describe("keychain path (fake backend — real OS keychain never touched)", () =
     expect(existsSync(filePath)).toBe(false);
     expect(await getToken({ backend, filePath })).toBe("newest-keychain-token");
   });
+
+  it("rejects a newline-bearing token instead of masking validation as a keychain failure", async () => {
+    sandbox = createSandbox();
+    const backend = fakeKeychain();
+    const filePath = sandbox.path("data", "token");
+
+    await expect(setToken("line1\nline2", { backend, filePath })).rejects.toThrow(/newline/i);
+    expect(backend.store.size).toBe(0);
+    expect(existsSync(filePath)).toBe(false);
+  });
 });
 
 describe("file fallback (no usable keychain)", () => {
