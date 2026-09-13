@@ -1,5 +1,11 @@
 # @birdybeep/agent-core
 
+## 0.8.5
+
+### Patch Changes
+
+- 3019121: Complete pairing with the strict-permission token file when macOS Keychain access is denied.
+
 ## 0.8.4
 
 ## 0.8.3
