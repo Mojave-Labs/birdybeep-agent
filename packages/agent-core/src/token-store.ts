@@ -74,6 +74,13 @@ export interface KeychainBackend {
 /** Longest failure description we pass on — a diagnostic line, not a log dump. */
 const MAX_REASON_LENGTH = 160;
 
+/** Reject values that cannot round-trip through every supported token store unchanged. */
+function assertTokenCanRoundTrip(token: string): void {
+  if (/[\r\n]/.test(token)) {
+    throw new Error("machine token must not contain a newline; refusing to store it");
+  }
+}
+
 /**
  * A one-line, secret-free description of a token-store failure, for `status`/`doctor`/the hook's
  * stderr line. Never carries token material: the keychain only echoes a secret on a SUCCESSFUL
@@ -384,9 +391,7 @@ export function macosKeychainBackend(options: MacosKeychainOptions = {}): Keycha
       //     A zero exit is therefore not proof of a write, so we read the value back and
       //     verify — otherwise a silent mis-store would wipe the user's token and leave them
       //     failing auth forever with no diagnostic.
-      if (/[\r\n]/.test(secret)) {
-        throw new Error("machine token must not contain a newline; refusing to store it");
-      }
+      assertTokenCanRoundTrip(secret);
       // -U updates an existing item; namespaced to BirdyBeep's service/account.
       await run(
         ["add-generic-password", "-U", "-s", service, "-a", account, "-w"],
@@ -431,37 +436,70 @@ export function resolveTokenStore(options: TokenStoreOptions = {}): TokenStore {
 
 // ── High-level API used by the CLI + sender ──────────────────────────────────
 
-/** Store the machine token in the primary store (keychain if available, else file). */
+/**
+ * Store the machine token in the keychain when it actually accepts the write, otherwise use the
+ * strict-permission file. `available` only means the OS exposes a backend; a locked/headless
+ * macOS login session can still reject `security add-generic-password` with interaction denied.
+ *
+ * A successful keychain write clears an older fallback. If the cleanup itself fails, align the
+ * fallback to the same new token so either subsequent read path is safe.
+ */
 export async function setToken(
   token: string,
   options: TokenStoreOptions = {},
 ): Promise<TokenStoreKind> {
-  const store = resolveTokenStore(options);
-  await store.set(token);
-  return store.kind;
+  // Validate before entering the Keychain fallback catch. A malformed value is not an
+  // operational Keychain failure and must never turn into a successful, altered file write.
+  assertTokenCanRoundTrip(token);
+  const backend = options.backend ?? defaultKeychainBackend();
+  const file = new FileTokenStore(options.filePath !== undefined ? { path: options.filePath } : {});
+  if (!backend.available) {
+    await file.set(token);
+    return file.kind;
+  }
+
+  try {
+    await new KeychainTokenStore(backend).set(token);
+  } catch {
+    await file.set(token);
+    return file.kind;
+  }
+
+  try {
+    await file.clear();
+  } catch {
+    // Do not let a readable stale fallback outrank the newly written keychain item. Keeping two
+    // matching secure copies is safer than reporting success while later reading the old token.
+    await file.set(token);
+  }
+  return "keychain";
 }
 
 /**
- * Read the machine token: keychain first if available, then the file fallback — and say WHICH
+ * Read the machine token: an existing file fallback first, then keychain — and say WHICH
  * of "no token" and "the store would not answer" happened (birdybeep-agent-gcgp.23).
  *
- * A token found anywhere wins. Otherwise a store that FAILED outranks a store that was merely
- * empty: a locked keychain plus an empty file fallback is not evidence that this machine is
- * unpaired, and reporting it as such is what turned a screen lock into dropped events.
+ * A file token means a newer write already found the keychain unusable, so it must outrank a
+ * readable but older keychain item. A successful later keychain write clears that fallback.
+ * Otherwise a store that FAILED outranks a store that was merely empty: a locked keychain plus
+ * an empty file fallback is not evidence that this machine is unpaired, and reporting it as such
+ * is what turned a screen lock into dropped events.
  */
 export async function readToken(options: TokenStoreOptions = {}): Promise<TokenLookup> {
   const backend = options.backend ?? defaultKeychainBackend();
+  const file = await new FileTokenStore(
+    options.filePath !== undefined ? { path: options.filePath } : {},
+  ).read();
+  if (file.state === "present") return file;
+
   let keychain: TokenLookup = { state: "absent" };
   if (backend.available) {
     keychain = await new KeychainTokenStore(backend).read();
     if (keychain.state === "present") return keychain;
   }
-  const file = await new FileTokenStore(
-    options.filePath !== undefined ? { path: options.filePath } : {},
-  ).read();
-  if (file.state === "present") return file;
+  if (file.state === "unavailable") return file;
   if (keychain.state === "unavailable") return keychain;
-  return file; // absent, or the file store's own failure
+  return file; // absent
 }
 
 /**

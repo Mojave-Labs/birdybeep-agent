@@ -77,6 +77,52 @@ describe("keychain path (fake backend — real OS keychain never touched)", () =
     await clearToken({ backend, filePath });
     expect(await getToken({ backend, filePath })).toBeNull();
   });
+
+  it("falls back on a denied keychain write and keeps the newer file token authoritative", async () => {
+    sandbox = createSandbox();
+    const filePath = sandbox.path("data", "token");
+    const store = new Map<string, string>([["birdybeep:machine-token", "old-keychain-token"]]);
+    let locked = true;
+    const backend: KeychainBackend = {
+      available: true,
+      get: (service, account) =>
+        locked
+          ? Promise.reject(new Error("User interaction is not allowed."))
+          : Promise.resolve(store.get(`${service}:${account}`) ?? null),
+      set: (service, account, secret) => {
+        if (locked) return Promise.reject(new Error("User interaction is not allowed."));
+        store.set(`${service}:${account}`, secret);
+        return Promise.resolve();
+      },
+      delete: (service, account) => {
+        store.delete(`${service}:${account}`);
+        return Promise.resolve();
+      },
+    };
+
+    expect(await setToken("new-file-token", { backend, filePath })).toBe("file");
+    expect(readFileSync(filePath, "utf8")).toBe("new-file-token");
+
+    // The old Keychain item can become readable later. The fallback is the successful, newer
+    // write, so it must remain authoritative instead of resurrecting the revoked old token.
+    locked = false;
+    expect(await getToken({ backend, filePath })).toBe("new-file-token");
+
+    // A later successful Keychain rotation removes the fallback, making Keychain primary again.
+    expect(await setToken("newest-keychain-token", { backend, filePath })).toBe("keychain");
+    expect(existsSync(filePath)).toBe(false);
+    expect(await getToken({ backend, filePath })).toBe("newest-keychain-token");
+  });
+
+  it("rejects a newline-bearing token instead of masking validation as a keychain failure", async () => {
+    sandbox = createSandbox();
+    const backend = fakeKeychain();
+    const filePath = sandbox.path("data", "token");
+
+    await expect(setToken("line1\nline2", { backend, filePath })).rejects.toThrow(/newline/i);
+    expect(backend.store.size).toBe(0);
+    expect(existsSync(filePath)).toBe(false);
+  });
 });
 
 describe("file fallback (no usable keychain)", () => {
