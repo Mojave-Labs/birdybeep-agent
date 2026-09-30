@@ -17,8 +17,9 @@ import { copilotAdapter } from "@birdybeep/copilot";
 import { cursorAdapter } from "@birdybeep/cursor";
 import { opencodeAdapter } from "@birdybeep/opencode";
 
-import { isPaired } from "../diagnostics";
+import { describeTokenStoreUnavailable, pairingReport, tokenStoreRemedy } from "../diagnostics";
 import { type Command, type CommandContext, EXIT } from "../framework";
+import { installAction, integrationLabel, integrationMark } from "../output";
 
 const DEFAULT_ADAPTERS: AgentAdapter[] = [
   claudeCodeAdapter,
@@ -108,7 +109,8 @@ async function installSelected(
   // gcgp.5: installing adapters on an unpaired machine wires up hooks that have nowhere to send.
   // `agent install` never mentioned pairing, so the two halves of setup were each silent about
   // the other. Read once, reported at the end where the user is already looking for next steps.
-  const paired = await isPaired(tokenOptions);
+  const pairing = await pairingReport(tokenOptions);
+  const paired = pairing.state === "paired";
 
   if (ctx.flags.json) {
     ctx.io.result({ target, paired, results: outcomes });
@@ -116,26 +118,40 @@ async function installSelected(
   }
 
   if (outcomes.length === 0 || outcomes.every((o) => !o.detected)) {
-    ctx.io.line("No supported harnesses detected. Nothing was installed.");
+    ctx.io.line(
+      "No supported coding agents detected. Install Claude Code, Codex, OpenCode, Cursor, or GitHub Copilot CLI, then run `birdybeep setup`.",
+    );
   }
   for (const o of outcomes) {
     if (!o.detected) {
       // A skip used to be a dead end: no hint that installing the harness and re-running would
       // finish the job, and nothing recorded so a later run picks it up.
-      ctx.io.line(
-        `–  ${o.displayName}: not detected (skipped). Install it, then run \`birdybeep agent install ${installTarget(o.harness)}\`.`,
-      );
+      if (ctx.flags.verbose || target !== "all")
+        ctx.io.line(
+          `–  ${o.displayName}: not detected (skipped). Install it, then run \`birdybeep agent install ${installTarget(o.harness)}\`.`,
+        );
       continue;
     }
     const changed = (o.changedFiles ?? []).length > 0 ? o.changedFiles!.join(", ") : "no changes";
-    ctx.io.line(`✓  ${o.displayName}: ${o.status} (${changed})`);
-    for (const action of o.requiredActions ?? []) ctx.io.line(`     → ${action}`);
+    ctx.io.line(
+      ctx.flags.verbose
+        ? `✓  ${o.displayName}: ${o.status} (${changed})`
+        : `${integrationMark(o.status ?? "unknown")}  ${o.displayName}: ${integrationLabel(o.status ?? "unknown")}`,
+    );
+    for (const action of o.requiredActions ?? []) {
+      const instruction = ctx.flags.verbose ? action : installAction(action);
+      if (instruction) ctx.io.line(`  → ${instruction}`);
+    }
   }
-  if (!paired) {
+  if (pairing.state === "unknown") {
+    ctx.io.line(`! ${describeTokenStoreUnavailable(pairing)}`);
+    ctx.io.line(`  → ${tokenStoreRemedy(pairing)}`);
+  } else if (!paired) {
     ctx.io.line(
       "⚠  This machine is not paired. Run `birdybeep setup` before expecting notifications.",
     );
   }
+  if (paired && outcomes.some((o) => o.detected)) ctx.io.line("\nNext: birdybeep status");
   return EXIT.OK;
 }
 
@@ -176,11 +192,19 @@ async function uninstallSelected(adapters: AgentAdapter[], ctx: CommandContext):
   }
   for (const o of outcomes) {
     if (!o.changed) {
-      ctx.io.line(`–  ${o.displayName}: nothing to remove`);
+      if (ctx.flags.verbose || target !== "all")
+        ctx.io.line(`–  ${o.displayName}: nothing to remove`);
       continue;
     }
     const touched = [...o.removedFiles, ...o.restoredFiles].join(", ") || "config restored";
-    ctx.io.line(`✓  ${o.displayName}: removed (${touched})`);
+    ctx.io.line(
+      ctx.flags.verbose
+        ? `✓  ${o.displayName}: removed (${touched})`
+        : `✓  ${o.displayName}: hooks removed`,
+    );
+  }
+  if (outcomes.every((o) => !o.changed) && target === "all" && !ctx.flags.verbose) {
+    ctx.io.line("No BirdyBeep hooks to remove.");
   }
   return EXIT.OK;
 }
@@ -198,18 +222,28 @@ export function createAgentCommand(deps: AgentCommandDeps = {}): Command {
   const tokenOptions = deps.tokenOptions ?? {};
   return {
     name: "agent",
-    summary: "Install or uninstall harness adapters",
+    summary: "Add or remove coding-agent hooks",
+    helpGroup: "Manage",
+    examples: [
+      "birdybeep agent install",
+      "birdybeep agent install codex",
+      "birdybeep agent uninstall",
+    ],
     usage: "birdybeep agent <install|uninstall> [all|claude|codex|opencode|cursor|copilot]",
     subcommands: [
       {
         name: "install",
-        summary: "Install adapters (all | claude | codex | opencode | cursor | copilot)",
+        summary: "Set up all detected coding agents, or select one",
+        examples: ["birdybeep agent install", "birdybeep agent install codex"],
+        positionalArgs: 1,
         usage: "birdybeep agent install [all|claude|codex|opencode|cursor|copilot]",
         run: (ctx) => installSelected(adapters, ctx, tokenOptions),
       },
       {
         name: "uninstall",
-        summary: "Restore harness config to its pre-install state",
+        summary: "Remove BirdyBeep hooks while preserving other settings",
+        examples: ["birdybeep agent uninstall", "birdybeep agent uninstall claude --verbose"],
+        positionalArgs: 1,
         usage: "birdybeep agent uninstall [all|claude|codex|opencode|cursor|copilot]",
         run: (ctx) => uninstallSelected(adapters, ctx),
       },

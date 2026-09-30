@@ -13,11 +13,10 @@ The QR and complete link contain a short-lived approval secret. The machine toke
 
 ```text
 Download BirdyBeep for iPhone:
-   ▄▄▄▄▄▄▄ ▄  ▄▄ ▄▄▄▄▄▄▄
    Download:  https://apps.apple.com/us/app/birdybeep/id6782737319
 
 Pair this machine:
-To pair this machine, open the BirdyBeep app, tap “pair a machine”, and scan this QR or open the complete link:
+Open BirdyBeep on your iPhone, tap “pair a machine”, and scan this QR or open the complete link:
    ▄▄▄▄▄▄▄ ▄  ▄▄ ▄▄▄▄▄▄▄
    Scan or open:  https://birdybeep.com/pair#code=WXYZ-1234&s=<short-lived-approval-secret>
    Session code (display only; cannot approve by itself):  WXYZ-1234
@@ -26,9 +25,11 @@ Pair this machine to you@example.com? [y/N] y
 ✓ Paired to you@example.com.
 ```
 
-The command then installs detected adapters, prints a coverage table, and sends a test Beep. Pass `--no-install` to stop after storing the machine token or `--no-test` to skip the test.
+The command then installs detected adapters, summarizes each coding agent, and sends a test Beep. Pass `--no-install` to stop after storing the machine token or `--no-test` to skip the test.
 
 If the pairing session expires, run `birdybeep pair` again for a new QR and link.
+
+Add `--verbose` to show both the download QR and pairing QR, plus individual build details. The default shows one QR for pairing.
 
 ## QR, links, and remote machines
 

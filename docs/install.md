@@ -63,8 +63,10 @@ The CLI works on macOS, Linux, and Windows.
 birdybeep setup
 ```
 
-The command pairs this machine when needed, installs every supported harness it finds, prints a row
-for each installed build, and sends a test Beep.
+The command pairs this machine when needed, installs every supported harness it finds, summarizes each
+coding agent, and sends a test Beep. Add `--verbose` to see each installed build.
+
+Detailed output from `birdybeep setup --verbose`:
 
 ```text
 ✓ Paired to you@example.com.
@@ -134,7 +136,7 @@ Pair this machine to you@example.com? [y/N] y
 ✓ Paired to you@example.com.
 ```
 
-`pair` then installs detected adapters, prints the coverage table, and sends a test Beep. Pass
+`pair` then installs detected adapters, summarizes the coding agents, and sends a test Beep. Pass
 `--no-install` to stop at the machine token.
 
 Answer anything but `y`/`yes` and **no token is stored** (exit code 1). On a headless box or in CI,
@@ -186,6 +188,8 @@ birdybeep agent install copilot
 The command detects each supported harness first and **skips any that aren't installed** — it won't
 create config for a harness you don't use. Output looks like this:
 
+With `--verbose`:
+
 ```text
 ✓  Claude Code: installed (/Users/you/.claude/settings.json)
 ✓  Codex: needs_trust (/Users/you/.codex/config.toml)
@@ -198,7 +202,7 @@ create config for a harness you don't use. Output looks like this:
 ✓  GitHub Copilot CLI: installed (/Users/you/.copilot/hooks/birdybeep.json)
 ```
 
-Re-run it and the idempotency shows in the output — the same statuses, with `(no changes)` in place
+Add `--verbose` for file paths and detailed install results. Re-run it and the idempotency shows in the detailed output — the same statuses, with `(no changes)` in place
 of the paths.
 
 Use `--json` for machine-readable output (changed files, backups, required actions, and per-harness
@@ -214,7 +218,7 @@ status).
 | Cursor             | Supported | `installed`                                        | Cursor Agent 2026.07.09 fixtures; Cursor IDE 3.14.27 live E2E  |
 | GitHub Copilot CLI | Supported | `installed`                                        | CLI 1.0.70 BYOK + 1.0.78 GitHub OAuth live E2E (2026-08-07)    |
 
-The version column is a tested baseline, not a maximum supported version. `birdybeep status` reports
+The version column is a tested baseline, not a maximum supported version. `birdybeep status --verbose` reports
 the harness version detected on the current machine so API drift is visible in diagnostics.
 
 ### What each install writes
@@ -355,18 +359,21 @@ birdybeep status
 
 ```text
 Machine: MacBook Pro (macos)
-Paired:  yes
-Integrations:
-  Claude Code: installed
-  Codex: needs_trust
-  OpenCode: needs_restart
-  Cursor: installed
-  GitHub Copilot CLI: installed
-Queue:   0 queued → 0 delivered, 0 remaining
+✓ Paired: yes
+
+!  Codex: trust hooks to enable notifications
+  → Open Codex, run /hooks, and approve the BirdyBeep hooks.
+!  OpenCode: restart to enable notifications
+  → Restart OpenCode, then run a turn.
+✓  Claude Code: ready
+✓  Cursor: ready
+✓  GitHub Copilot CLI: ready
+Queue: empty
+
+Details: birdybeep status --verbose
 ```
 
-(When you aren't paired, the second line reads ``Paired: no. Run `birdybeep pair`.`` and the
-command exits 1.)
+When you aren't paired, status points you to `birdybeep setup` and exits 1. If token storage is unreadable, it reports pairing as unknown and explains how to restore access.
 
 `status` shows your machine identity, pairing state, per-harness integration status, and the local
 queue depth. It opportunistically drains any queued events while it runs, and exits non-zero if

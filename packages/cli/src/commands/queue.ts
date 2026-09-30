@@ -10,16 +10,25 @@ import { type Command, EXIT } from "../framework";
 export function createQueueCommand(): Command {
   return {
     name: "queue",
-    summary: "Local event-queue maintenance",
+    summary: "Manage events waiting to retry",
+    helpGroup: "Manage",
+    examples: ["birdybeep status", "birdybeep queue clear"],
     usage: "birdybeep queue <clear>",
     subcommands: [
       {
         name: "clear",
-        summary: "Clear the local offline event queue (debug)",
+        summary: "Discard events waiting to retry",
+        examples: ["birdybeep queue clear"],
+        positionalArgs: 0,
         usage: "birdybeep queue clear",
         run: (ctx) => {
           const cleared = new LocalEventQueue().clear();
-          ctx.io.emit(`Cleared ${cleared} queued event(s).`, { cleared });
+          ctx.io.emit(
+            cleared === 0
+              ? "Queue is empty. Nothing to clear."
+              : `Discarded ${cleared} queued event${cleared === 1 ? "" : "s"}.`,
+            { cleared },
+          );
           return EXIT.OK;
         },
       },

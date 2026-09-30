@@ -19,7 +19,12 @@ Installation steps are in [`install.md`](install.md); data and token handling ar
 
 `doctor` shows failures and fixes first, then a summary of healthy integrations. `--verbose` shows
 every check, detected build, and local-only event tally. `--json` returns all findings without
-terminal formatting. A required check failure exits with status 1 in every mode.
+terminal formatting. A required check failure exits with status 1 in every mode. Optional agents
+you have not installed are skipped. If no supported coding agents are installed, doctor reports
+one setup failure with a next step.
+
+`--verbose` also works on status, setup, pairing, and agent installation/removal. Everyday output
+uses plain-language states and shows actions before healthy integrations.
 
 ## Adapter status
 

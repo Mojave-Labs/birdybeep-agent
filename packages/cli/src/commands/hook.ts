@@ -384,6 +384,7 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
   return {
     name: "hook",
     summary: "Internal: normalize + send an event fired by a harness hook",
+    helpGroup: "Advanced",
     usage: "birdybeep hook <claude|codex|opencode|cursor|copilot> [copilot-event]",
     run: async (ctx) => {
       const hookStartedAt = now();

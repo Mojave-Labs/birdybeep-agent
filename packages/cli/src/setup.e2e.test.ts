@@ -261,10 +261,13 @@ function ndjson(stdout: string): Record<string, unknown>[] {
 }
 
 describe("one command sets the whole machine up", () => {
-  it("pairs, installs every harness that is there, prints coverage, and lands a real Beep", async () => {
+  it("verbose setup pairs, installs every harness that is there, prints coverage, and lands a real Beep", async () => {
     sandbox = createSandbox();
     const home = sandbox.home;
-    const { code, text } = await run({ argv: ["setup"], adapters: acceptanceAdapters() });
+    const { code, text } = await run({
+      argv: ["setup", "--verbose"],
+      adapters: acceptanceAdapters(),
+    });
     transcript("birdybeep setup — Claude Code, Codex and Cursor installed", text);
 
     expect(code).toBe(EXIT.OK);
@@ -343,8 +346,13 @@ describe("one command sets the whole machine up", () => {
     });
     expect(code).toBe(EXIT.OK);
     expect(text).toContain("✓ Paired to you@example.com.");
-    expect(text).toContain("coverage");
-    expect(text).toMatch(/Claude Code\s+terminal CLI 2\.1\.227\s+ready/);
+    transcript("birdybeep pair — compact setup", text);
+    expect(text).toContain("Coding agents:");
+    expect(text).toContain("Claude Code: ready; awaiting first event");
+    expect(text).toContain("Codex: trust hooks to enable notifications");
+    expect(text).not.toContain("needs_trust");
+    expect(text).not.toContain("terminal CLI 2.1.227");
+    expect(text).not.toContain("Not installed:");
     // The old ending sent people to `birdybeep test` and no further.
     expect(text).not.toContain("Run `birdybeep test`");
     expect(readFileSync(claudeSettingsPath(sandbox.home), "utf8")).toContain(CLAUDE_HOOK);
@@ -363,7 +371,8 @@ describe("one command sets the whole machine up", () => {
     });
     expect(code).toBe(EXIT.OK);
     expect(text).toContain("Already paired");
-    expect(text).toContain("coverage");
+    expect(text).toContain("Coding agents:");
+    expect(text.match(/Claude Code:/g)).toHaveLength(1);
     expect(readFileSync(claudeSettingsPath(sandbox.home), "utf8")).toContain(CLAUDE_HOOK);
   });
 
@@ -398,12 +407,33 @@ describe("one command sets the whole machine up", () => {
       ],
     });
     expect(code).toBe(EXIT.ERROR); // a broken harness must not read as a clean setup
-    expect(text).toMatch(/Claude Code\s+—\s+failed/);
+    expect(text).toContain("Claude Code: setup failed");
     expect(text).toContain("settings.json is read-only");
     expect(text).toContain("`birdybeep agent install claude`");
     // The other harness still got wired up — one bad adapter costs the user nothing else.
-    expect(text).toMatch(/Cursor\s+cursor-agent CLI 2026\.07\.09\s+ready/);
+    expect(text).toContain("Cursor: ready; awaiting first event");
     expect(readFileSync(cursorHooksPath(sandbox.home), "utf8")).toContain("birdybeep");
+  });
+
+  it("never calls a returned install error ready, even when the adapter enumerates no builds", async () => {
+    sandbox = createSandbox();
+    const broken: AgentAdapter = {
+      ...claudeCodeAdapter,
+      detect: () => Promise.resolve({ detected: true, surfaces: [] }),
+      install: () =>
+        Promise.resolve({
+          status: "error",
+          changed: false,
+          changedFiles: [],
+          backupFiles: [],
+          requiredActions: [],
+        }),
+    };
+    const { code, text } = await run({ argv: ["setup"], adapters: [broken] });
+    expect(code).toBe(EXIT.ERROR);
+    expect(text).toContain("Claude Code: setup failed");
+    expect(text).not.toContain("Claude Code: ready");
+    expect(text).toContain("birdybeep doctor");
   });
 
   it("mirrors the whole run in one --json object", async () => {

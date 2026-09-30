@@ -31,9 +31,12 @@ import {
   machineIdentity,
   pairingReport,
   type SurfaceCoverageOptions,
+  surfaceRemedy,
+  tokenStoreRemedy,
   unpairedActivity,
 } from "../diagnostics";
 import { type Command, EXIT } from "../framework";
+import { integrationAction, integrationLabel, integrationMark, queueSummary } from "../output";
 
 const DEFAULT_ADAPTERS: AgentAdapter[] = [
   claudeCodeAdapter,
@@ -64,8 +67,10 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
 
   return {
     name: "status",
-    summary: "Show pairing + per-harness integration status",
-    usage: "birdybeep status [--json]",
+    summary: "See what is connected and what needs attention",
+    usage: "birdybeep status [--verbose] [--json]",
+    examples: ["birdybeep status", "birdybeep status --verbose"],
+    positionalArgs: 0,
     run: async (ctx) => {
       const machine = machineIdentity();
       // gcgp.23: three answers. A token store that would not answer is reported as unknown —
@@ -98,7 +103,7 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
 
       if (ctx.flags.json) {
         ctx.io.result(report);
-      } else {
+      } else if (ctx.flags.verbose) {
         ctx.io.line(`Machine: ${machine.label} (${machine.os})`);
         ctx.io.line(
           pairing.state === "paired"
@@ -125,6 +130,54 @@ export function createStatusCommand(deps: StatusCommandDeps = {}): Command {
         if (unpaired !== null) ctx.io.line(`⚠ Lost:   ${describeUnpairedActivity(unpaired)}`);
         // gcgp.3: the counterpart signal — hooks that fired and were deliberately not sent.
         if (filtered !== null) ctx.io.line(`Local:   ${describeFilteredActivity(filtered)}`);
+      } else {
+        ctx.io.line(`Machine: ${machine.label} (${machine.os})`);
+        ctx.io.line(
+          pairing.state === "paired"
+            ? "✓ Paired: yes"
+            : pairing.state === "unpaired"
+              ? "! Paired: no. Run `birdybeep setup` to connect this machine."
+              : `! Paired: unknown. ${describeTokenStoreUnavailable(pairing)}`,
+        );
+        if (pairing.state === "unknown") ctx.io.line(`  → ${tokenStoreRemedy(pairing)}`);
+        ctx.io.line("");
+        const visible = integrations.filter((i) => i.status !== "not_detected");
+        visible.sort((a, b) => Number(a.status === "installed") - Number(b.status === "installed"));
+        for (const i of visible) {
+          const group = surfaces.find((g) => g.harness === i.harness);
+          const gaps =
+            i.status === "installed"
+              ? (group?.surfaces.filter((state) => state.coverage === "uncovered") ?? [])
+              : [];
+          const awaiting =
+            i.status === "installed" &&
+            group?.surfaces.length &&
+            group.surfaces.every((state) => state.coverage === "wired");
+          ctx.io.line(
+            `${gaps.length > 0 ? "!" : integrationMark(i.status)}  ${i.displayName}: ${gaps.length > 0 ? "some builds need attention" : integrationLabel(i.status)}${awaiting ? "; awaiting first event" : ""}`,
+          );
+          const action = integrationAction(i.harness, i.status);
+          if (action) ctx.io.line(`  → ${action}`);
+          for (const state of gaps) {
+            ctx.io.line(`  ! ${describeSurface(state)}: no events observed`);
+            const remedy = group ? surfaceRemedy(state, group, true) : undefined;
+            if (remedy) ctx.io.line(`    → ${remedy}`);
+          }
+        }
+        if (visible.length === 0) {
+          ctx.io.line(
+            "No coding agents connected. Install a supported coding agent, then run `birdybeep setup`.",
+          );
+        }
+        ctx.io.line(
+          `Queue: ${queueSummary(depthBefore, drain.delivered, depthAfter, overflowDropped)}`,
+        );
+        if (unpaired !== null) ctx.io.line(`⚠ Lost: ${describeUnpairedActivity(unpaired)}`);
+        if (filtered !== null)
+          ctx.io.line(
+            `Activity: ${filtered.count} local-only events handled; these do not send notifications.`,
+          );
+        ctx.io.line("\nDetails: birdybeep status --verbose");
       }
       // not-paired → defined non-zero; so is an unreadable store, which is equally "not
       // confirmed working" for a script that branches on it (gcgp.23).

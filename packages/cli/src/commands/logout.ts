@@ -35,11 +35,16 @@ const base = (apiUrl: string): string => apiUrl.replace(/\/$/, "");
 export function createLogoutCommand(deps: LogoutCommandDeps = {}): Command {
   return {
     name: "logout",
-    summary: "Remove the local machine token (does NOT revoke the machine server-side)",
+    summary: "Sign out locally; keep the machine listed in the app",
+    helpGroup: "Manage",
+    examples: ["birdybeep logout"],
+    positionalArgs: 0,
     usage: "birdybeep logout",
     run: async (ctx) => {
       await clearToken(deps.tokenOptions ?? {});
-      ctx.io.emit("Logged out. The machine token was removed.", { loggedOut: true });
+      ctx.io.emit("Logged out. The machine token was removed.\nReconnect: birdybeep setup", {
+        loggedOut: true,
+      });
       return EXIT.OK;
     },
   };
@@ -83,6 +88,9 @@ export function createUnpairCommand(deps: UnpairCommandDeps = {}): Command {
   return {
     name: "unpair",
     summary: "Revoke this machine and remove its local token",
+    helpGroup: "Manage",
+    examples: ["birdybeep unpair"],
+    positionalArgs: 0,
     usage: "birdybeep unpair",
     run: async (ctx) => {
       const token = await getToken(deps.tokenOptions ?? {});

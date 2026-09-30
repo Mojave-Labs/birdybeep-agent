@@ -141,6 +141,64 @@ function bridgeDoctor(deps: DoctorCommandDeps = {}): Command {
 }
 
 describe("birdybeep doctor", () => {
+  it("skips absent optional agents without hiding faults in installed agents", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const absent = adapterWithDoctor("cursor", "Cursor", {
+      ok: false,
+      checks: [
+        { name: "Cursor installed", ok: false, status: "not_detected" },
+        { name: "Machine token present", ok: false },
+      ],
+    });
+    const cmd = bridgeDoctor({ adapters: [absent, codexUntrusted] });
+    for (const args of [["doctor"], ["doctor", "--verbose"], ["doctor", "--json"]]) {
+      const out = capture();
+      expect(
+        await runCli(args, {
+          commands: [cmd],
+          stdout: out.writer,
+          stderr: out.writer,
+          ensureConfig: false,
+        }),
+      ).toBe(EXIT.ERROR);
+      if (args.includes("--json")) {
+        const report = JSON.parse(out.text()) as DoctorJson;
+        expect(report.checks.find((check) => check.name === "Cursor: availability")?.ok).toBe(true);
+        expect(report.checks.filter((check) => !check.ok).map((check) => check.name)).toEqual([
+          "Codex: Codex hooks trusted",
+        ]);
+      } else {
+        expect(out.text()).toContain("Open Codex and run /hooks");
+        expect(out.text()).not.toContain("✗  Cursor");
+        if (!args.includes("--verbose")) expect(out.text()).not.toContain("Cursor:");
+      }
+    }
+  });
+
+  it("reports one actionable setup failure when no coding agents are installed", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const absent = adapterWithDoctor("cursor", "Cursor", {
+      ok: false,
+      checks: [{ name: "Cursor installed", ok: false, status: "not_detected" }],
+    });
+    const out = capture();
+    expect(
+      await runCli(["doctor", "--json"], {
+        commands: [bridgeDoctor({ adapters: [absent] })],
+        stdout: out.writer,
+        stderr: out.writer,
+        ensureConfig: false,
+      }),
+    ).toBe(EXIT.ERROR);
+    const report = JSON.parse(out.text()) as DoctorJson;
+    const failures = report.checks.filter((check) => !check.ok);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.name).toBe("Coding agents");
+    expect(failures[0]?.remedy).toContain("birdybeep setup");
+  });
+
   it("puts failures first and collapses healthy adapter checks", async () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);

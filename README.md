@@ -18,23 +18,22 @@ npm install -g @birdybeep/cli
 birdybeep setup
 ```
 
-`birdybeep setup` connects this machine, installs adapters for detected coding agents, prints a coverage row for each installed build, and sends a test Beep. It skips pairing when a machine token already exists.
+`birdybeep setup` connects this machine, installs hooks for coding agents it finds, and sends a test Beep. Re-running setup skips pairing when a machine token already exists. Each agent gets one summary; actions that need your attention appear first.
 
 ```text
 ✓ Paired to you@example.com.
 
-coverage
-   harness             build                        state
-✓  Claude Code         terminal CLI 2.1.227         ready
-✓  Claude Code         Claude desktop app 2.1.229   ready
-!  Codex               terminal CLI 0.147.0         needs you
-     → Open Codex and run /hooks. Status changes from needs_trust after a lifecycle hook fires.
-–  OpenCode            —                            not installed
-
-Not installed: OpenCode. Install it, then run `birdybeep setup` again.
+Coding agents:
+!  Codex: trust hooks to enable notifications
+  → Open Codex and run /hooks to approve the BirdyBeep hooks, then run a turn.
+✓  Claude Code: ready; awaiting first event
 
 ✓ Test event accepted for 1 registered device(s). Check your phone for a test Beep.
+
+Finish the actions above, then run `birdybeep status`.
 ```
+
+Use `birdybeep status` to check your connections, `birdybeep test` to send another test notification, and `birdybeep doctor` for fixes. Add `--verbose` to see individual builds, file paths, and full diagnostics. Agents you haven't installed are skipped; setup explains what to install when none are found.
 
 Adapter files, activation requirements, tested versions, and configuration backups are covered in the [installation guide](./docs/install.md#what-each-install-writes). Machine token storage is covered in [Security and privacy](./docs/security.md#tokens). Exact generated configuration is under [`examples/`](./examples/README.md).
 
@@ -42,29 +41,30 @@ Adapter files, activation requirements, tested versions, and configuration backu
 
 Run `birdybeep <command> --help` for command-specific options.
 
-| Command                                                                     | Result                                                                                    |
-| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `birdybeep setup`                                                           | Connect the machine, install detected adapters, show coverage, and send a test Beep.      |
-| `birdybeep pair [--no-install] [--no-test]`                                 | Connect the machine to a BirdyBeep account, then install adapters and test.               |
-| `birdybeep logout`                                                          | Delete the local machine token. The machine remains listed in the app.                    |
-| `birdybeep unpair`                                                          | Revoke the machine on the server and delete its local token.                              |
-| `birdybeep status`                                                          | Show pairing, adapter, and queue status.                                                  |
-| `birdybeep test`                                                            | Send a test event and report whether it was delivered, queued, or rejected.               |
-| `birdybeep doctor`                                                          | Check pairing, adapters, the queue, device reachability, quota, and backend reachability. |
-| `birdybeep agent install [all\|claude\|codex\|opencode\|cursor\|copilot]`   | Install adapters for all detected harnesses or one selected harness.                      |
-| `birdybeep agent uninstall [all\|claude\|codex\|opencode\|cursor\|copilot]` | Remove BirdyBeep-owned entries and restore configuration where appropriate.               |
-| `birdybeep queue clear`                                                     | Delete locally queued events.                                                             |
+| Command                                                                     | Result                                                                                       |
+| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `birdybeep setup`                                                           | Connect the machine, install detected adapters, summarize connections, and send a test Beep. |
+| `birdybeep pair [--no-install] [--no-test]`                                 | Connect the machine to a BirdyBeep account, then install adapters and test.                  |
+| `birdybeep logout`                                                          | Delete the local machine token. The machine remains listed in the app.                       |
+| `birdybeep unpair`                                                          | Revoke the machine on the server and delete its local token.                                 |
+| `birdybeep status`                                                          | Show pairing, adapter, and queue status.                                                     |
+| `birdybeep test`                                                            | Send a test event and report whether it was delivered, queued, or rejected.                  |
+| `birdybeep doctor`                                                          | Check pairing, adapters, the queue, device reachability, quota, and backend reachability.    |
+| `birdybeep agent install [all\|claude\|codex\|opencode\|cursor\|copilot]`   | Install adapters for all detected harnesses or one selected harness.                         |
+| `birdybeep agent uninstall [all\|claude\|codex\|opencode\|cursor\|copilot]` | Remove BirdyBeep-owned entries and restore configuration where appropriate.                  |
+| `birdybeep queue clear`                                                     | Delete locally queued events.                                                                |
 
 `birdybeep hook <harness>` and `birdybeep report-status` are called by installed adapters rather than directly by users.
 
 ### Global flags and exit codes
 
-| Flag                | Effect                                   |
-| ------------------- | ---------------------------------------- |
-| `--json`            | Machine-readable JSON output.            |
-| `--non-interactive` | Never prompt; fail if input is required. |
-| `-h`, `--help`      | Show help.                               |
-| `-v`, `--version`   | Show the CLI version.                    |
+| Flag                | Effect                                             |
+| ------------------- | -------------------------------------------------- |
+| `--verbose`         | Include full diagnostic and configuration details. |
+| `--json`            | Machine-readable JSON output.                      |
+| `--non-interactive` | Never prompt; fail if input is required.           |
+| `-h`, `--help`      | Show help.                                         |
+| `-v`, `--version`   | Show the CLI version.                              |
 
 Exit codes: `0` success, `1` error, `2` usage.
 
