@@ -49,7 +49,6 @@ jobs:
       - run: pnpm build
       - run: pnpm format:check
       - name: system certificate trust (real TLS and CLI)
-        if: runner.os != 'Windows'
         run: node scripts/live-e2e-system-ca.mjs
       # birdybeep-agent-fuf: prove the codex notify send survives `codex exec` reaping its
       # process group. Needs only the built CLI + POSIX process groups (no codex binary / API
