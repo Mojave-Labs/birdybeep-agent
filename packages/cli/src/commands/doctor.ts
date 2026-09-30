@@ -43,6 +43,7 @@ import {
   unpairedActivity,
 } from "../diagnostics";
 import { type Command, EXIT } from "../framework";
+import { certificateFailure } from "../network";
 import { queueSummary } from "../output";
 
 const DEFAULT_ADAPTERS: AgentAdapter[] = [
@@ -61,16 +62,26 @@ interface Check {
 }
 
 /** Best-effort backend reachability probe (HEAD; any non-5xx response = reachable). */
-async function defaultProbeNetwork(baseUrl: string): Promise<boolean> {
+interface NetworkProbe {
+  ok: boolean;
+  detail?: string;
+  remedy?: string;
+}
+
+async function defaultProbeNetwork(
+  baseUrl: string,
+  fetchImpl: typeof fetch,
+): Promise<NetworkProbe> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3000);
+  if (typeof timer.unref === "function") timer.unref();
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3000);
-    if (typeof timer.unref === "function") timer.unref();
-    const res = await fetch(baseUrl, { method: "HEAD", signal: controller.signal });
+    const res = await fetchImpl(baseUrl, { method: "HEAD", signal: controller.signal });
+    return { ok: res.status < 500 };
+  } catch (error) {
+    return { ok: false, ...certificateFailure(error) };
+  } finally {
     clearTimeout(timer);
-    return res.status < 500;
-  } catch {
-    return false;
   }
 }
 
@@ -79,7 +90,7 @@ export interface DoctorCommandDeps {
   createSender?: (baseUrl: string) => Sender;
   tokenOptions?: TokenStoreOptions;
   /** Backend reachability probe (tests inject reachable/unreachable). */
-  probeNetwork?: (baseUrl: string) => Promise<boolean>;
+  probeNetwork?: (baseUrl: string) => Promise<boolean | NetworkProbe>;
   /** fetch used by the push-reachability read (injected in tests). */
   fetchImpl?: typeof fetch;
   /**
@@ -97,7 +108,8 @@ export interface DoctorCommandDeps {
 
 export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
   const adapters = deps.adapters ?? DEFAULT_ADAPTERS;
-  const probeNetwork = deps.probeNetwork ?? defaultProbeNetwork;
+  const probeNetwork =
+    deps.probeNetwork ?? ((baseUrl) => defaultProbeNetwork(baseUrl, deps.fetchImpl ?? fetch));
   const makeSender =
     deps.createSender ??
     ((baseUrl) =>
@@ -307,15 +319,16 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
       });
 
       // 4. Backend reachability.
-      const reachable = await probeNetwork(apiUrl);
+      const probe = await probeNetwork(apiUrl);
+      const network = typeof probe === "boolean" ? { ok: probe } : probe;
       checks.push(
-        reachable
+        network.ok
           ? { name: "Backend reachable", ok: true }
           : {
               name: "Backend reachable",
               ok: false,
-              detail: `Could not reach ${apiUrl}.`,
-              remedy: "Check your network. Queued events retry automatically.",
+              detail: `Could not reach ${apiUrl}.${network.detail ? ` ${network.detail}` : ""}`,
+              remedy: network.remedy ?? "Check your network. Queued events retry automatically.",
             },
       );
 

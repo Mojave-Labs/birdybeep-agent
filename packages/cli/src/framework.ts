@@ -13,6 +13,7 @@ import { mkdirSync } from "node:fs";
 import { birdyBeepConfigDir } from "@birdybeep/agent-core";
 
 import { type BirdAnimation, createBirdAnimation } from "./bird-animation";
+import { commandErrorMessage } from "./network";
 import { wrapTerminalText } from "./output";
 import { presentation } from "./presentation";
 
@@ -417,7 +418,7 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
       );
       return EXIT.USAGE;
     }
-    io.errline(`birdybeep ${path}: ${err instanceof Error ? err.message : String(err)}`);
+    io.errline(`birdybeep ${path}: ${commandErrorMessage(err)}`);
     return EXIT.ERROR;
   }
 

@@ -40,6 +40,32 @@ const ALL_COMMANDS = [
 ];
 
 describe("help + version", () => {
+  it("explains certificate errors hidden by fetch in setup", async () => {
+    const out = capture();
+    const cause = Object.assign(new Error("private proxy credentials"), {
+      code: "SELF_SIGNED_CERT_IN_CHAIN",
+    });
+    expect(
+      await runCli(["setup"], {
+        commands: [
+          {
+            name: "setup",
+            summary: "Set up BirdyBeep",
+            run: () => {
+              throw new TypeError("fetch failed", { cause });
+            },
+          },
+        ],
+        stdout: out.writer,
+        stderr: out.writer,
+        ensureConfig: false,
+      }),
+    ).toBe(EXIT.ERROR);
+    expect(out.text()).toContain("Certificate verification failed (SELF_SIGNED_CERT_IN_CHAIN)");
+    expect(out.text()).toContain("NODE_EXTRA_CA_CERTS");
+    expect(out.text()).not.toContain("private proxy credentials");
+  });
+
   it("lists every §9.4 command in --help", async () => {
     const out = capture();
     const code = await runCli(["--help"], {

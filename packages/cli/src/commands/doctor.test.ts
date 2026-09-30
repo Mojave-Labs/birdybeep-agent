@@ -141,6 +141,41 @@ function bridgeDoctor(deps: DoctorCommandDeps = {}): Command {
 }
 
 describe("birdybeep doctor", () => {
+  it("reports a fetch certificate cause in both text and JSON", async () => {
+    sandbox = createSandbox();
+    const failure = new TypeError("fetch failed", {
+      cause: Object.assign(new Error("private proxy details"), {
+        code: "SELF_SIGNED_CERT_IN_CHAIN",
+      }),
+    });
+    const cmd = createDoctorCommand({
+      adapters: [],
+      tokenOptions: FILE_ONLY,
+      baseUrl: "https://backend.example.test",
+      fetchImpl: () => Promise.reject(failure),
+      detectCursor: () => Promise.resolve({ detected: false }),
+    });
+    for (const args of [["doctor"], ["doctor", "--json"]]) {
+      const out = capture();
+      expect(
+        await runCli(args, {
+          commands: [cmd],
+          stdout: out.writer,
+          stderr: out.writer,
+          ensureConfig: false,
+        }),
+      ).toBe(EXIT.ERROR);
+      expect(out.text()).toContain("SELF_SIGNED_CERT_IN_CHAIN");
+      expect(out.text()).not.toContain("private proxy details");
+      if (args.includes("--json")) {
+        const report = JSON.parse(out.text()) as DoctorJson;
+        const network = report.checks.find((check) => check.name === "Backend reachable");
+        expect(network?.ok).toBe(false);
+        expect(network?.remedy).toContain("system trust store");
+      }
+    }
+  });
+
   it("skips absent optional agents without hiding faults in installed agents", async () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
