@@ -107,9 +107,11 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
   return {
     name: "doctor",
     summary: "Diagnose token, trust, restart, and offline-queue issues",
-    usage: "birdybeep doctor [--json]",
+    usage: "birdybeep doctor [--verbose] [--json]",
+    options: [{ flag: "--verbose", summary: "Show every check and detected build" }],
     run: async (ctx) => {
       const checks: Check[] = [];
+      const adapterChecks = new Map<string, Check[]>();
       const apiUrl = deps.baseUrl ?? resolveApiUrl();
 
       // 1. Machine token. Three answers, not two (birdybeep-agent-gcgp.23): a store that could
@@ -241,6 +243,7 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
       // harness so nothing above is reordered and the two read as one block.
       const surfaceGroups = await gatherSurfaces(adapters, deps.surfaceOptions ?? {});
       for (const adapter of adapters) {
+        const start = checks.length;
         const result = await adapter.doctor();
         for (const c of result.checks) {
           checks.push({
@@ -251,8 +254,8 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
           });
         }
         const group = surfaceGroups.find((g) => g.harness === adapter.id);
-        if (group === undefined) continue;
-        for (const state of group.surfaces) {
+        for (const state of group?.surfaces ?? []) {
+          if (group === undefined) continue;
           const remedy = surfaceRemedy(state, group);
           checks.push({
             name: `${adapter.displayName}: ${describeSurface(state)}`,
@@ -261,6 +264,7 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
             ...(remedy !== undefined ? { remedy } : {}),
           });
         }
+        adapterChecks.set(adapter.displayName, checks.slice(start));
       }
 
       // 3. Local queue: drain opportunistically, report depth (and any cap overflow, gcgp.4).
@@ -313,12 +317,46 @@ export function createDoctorCommand(deps: DoctorCommandDeps = {}): Command {
           ...(unpaired !== null ? { unpairedActivity: unpaired } : {}),
           ...(filtered !== null ? { filteredActivity: filtered } : {}),
         });
-      } else {
+      } else if (ctx.args.includes("--verbose")) {
         for (const c of checks) {
           ctx.io.line(`${c.ok ? "✓" : "✗"}  ${c.name}${c.detail ? `: ${c.detail}` : ""}`);
           if (!c.ok && c.remedy) ctx.io.line(`     → ${c.remedy}`);
         }
         ctx.io.line(ok ? "\nAll checks passed." : "\nSome checks failed. See fixes above.");
+      } else {
+        const failures = checks.filter((c) => !c.ok);
+        ctx.io.line(
+          ok
+            ? "All checks passed."
+            : `${failures.length} check${failures.length === 1 ? "" : "s"} need${failures.length === 1 ? "s" : ""} attention.`,
+        );
+        if (failures.length > 0) {
+          ctx.io.line("");
+          for (const c of failures) {
+            ctx.io.line(`✗  ${c.name}${c.detail ? `: ${c.detail}` : ""}`);
+            if (c.remedy) ctx.io.line(`     → ${c.remedy}`);
+          }
+        }
+
+        ctx.io.line("");
+        const adapterRows = new Set([...adapterChecks.values()].flat());
+        for (const c of checks) {
+          if (!c.ok || adapterRows.has(c) || c.name === "Local-only events (never notifiable)") {
+            continue;
+          }
+          // Registration history belongs in the detailed view; keep device count and push outcome.
+          const detail =
+            c.name === "Push reachability"
+              ? c.detail?.replace(/, registered [^;]+(?=;)/, "")
+              : c.detail;
+          ctx.io.line(`✓  ${c.name}${detail ? `: ${detail}` : ""}`);
+        }
+        for (const [name, rows] of adapterChecks) {
+          if (rows.length > 0 && rows.every((c) => c.ok)) {
+            ctx.io.line(`✓  ${name}: checks passed`);
+          }
+        }
+        ctx.io.line("\nFull diagnostics: birdybeep doctor --verbose");
       }
       return ok ? EXIT.OK : EXIT.ERROR;
     },

@@ -4,6 +4,7 @@ Run `birdybeep doctor` first. It checks pairing, detected adapters, the local qu
 
 ```bash
 birdybeep doctor
+birdybeep doctor --verbose
 birdybeep doctor --json
 ```
 
@@ -16,7 +17,9 @@ Installation steps are in [`install.md`](install.md); data and token handling ar
 | `✓`    | check passed |
 | `✗`    | check failed |
 
-`doctor` exits with status 1 when a required check fails. `--json` returns the same checks without terminal formatting.
+`doctor` shows failures and fixes first, then a summary of healthy integrations. `--verbose` shows
+every check, detected build, and local-only event tally. `--json` returns all findings without
+terminal formatting. A required check failure exits with status 1 in every mode.
 
 ## Adapter status
 

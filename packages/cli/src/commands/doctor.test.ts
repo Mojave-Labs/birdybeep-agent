@@ -13,6 +13,7 @@ import {
   clearToken,
   createSender,
   type DoctorResult,
+  recordFilteredEvent,
   setToken,
   unavailableKeychainBackend,
 } from "@birdybeep/agent-core";
@@ -140,6 +141,55 @@ function bridgeDoctor(deps: DoctorCommandDeps = {}): Command {
 }
 
 describe("birdybeep doctor", () => {
+  it("puts failures first and collapses healthy adapter checks", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    recordFilteredEvent("tool_finished");
+    const healthy = adapterWithDoctor("claude_code", "Claude Code", {
+      ok: true,
+      checks: [
+        { name: "Claude Code installed", ok: true },
+        { name: "settings.json is valid JSON", ok: true },
+        { name: "BirdyBeep hooks installed", ok: true },
+        { name: "Hook command resolves", ok: true },
+      ],
+    });
+    const cmd = bridgeDoctor({ adapters: [healthy, codexUntrusted, opencodeNeedsRestart] });
+    const run = async (args: string[]) => {
+      const out = capture();
+      const code = await runCli(["doctor", ...args], {
+        commands: [cmd],
+        stdout: out.writer,
+        stderr: out.writer,
+        ensureConfig: false,
+      });
+      return { code, text: out.text() };
+    };
+    const compact = await run([]);
+    expect(compact.code).toBe(EXIT.ERROR);
+    expect(compact.text.startsWith("2 checks need attention.\n")).toBe(true);
+    expect(compact.text.indexOf("/hooks")).toBeLessThan(compact.text.indexOf("✓"));
+    expect(compact.text).toContain("Restart OpenCode");
+    expect(compact.text).toContain("✓  Claude Code: checks passed");
+    expect(compact.text).not.toContain("settings.json is valid JSON");
+    expect(compact.text).not.toContain("✓  Codex");
+    expect(compact.text).not.toContain("Local-only events");
+    expect(compact.text).toContain("birdybeep doctor --verbose");
+
+    const verbose = await run(["--verbose"]);
+    expect(verbose.code).toBe(compact.code);
+    expect(verbose.text).toContain("Claude Code: settings.json is valid JSON");
+    expect(verbose.text).toContain("Codex: Codex hooks trusted");
+    expect(verbose.text).toContain("Local-only events (never notifiable)");
+    const json = await run(["--json"]);
+    const verboseJson = await run(["--verbose", "--json"]);
+    expect(JSON.parse(verboseJson.text)).toEqual(JSON.parse(json.text));
+    expect((JSON.parse(json.text) as DoctorJson).checks).toContainEqual({
+      name: "Claude Code: settings.json is valid JSON",
+      ok: true,
+    });
+  });
+
   it("flags every fault with a fix, drains the queue, and exits non-zero (--json)", async () => {
     sink = await StubEventSink.start();
     sandbox = createSandbox();
