@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { runCli } from "./cli.js";
+import { commandErrorMessage, configureSystemTrust } from "./network.js";
 import { nodeVersionError } from "./node-check.js";
 
 // Executable entry: the only side-effectful module. Guard the Node version first (clear
@@ -10,12 +11,13 @@ if (versionError !== null) {
   process.stderr.write(`${versionError}\n`);
   process.exitCode = 1;
 } else {
+  configureSystemTrust();
   runCli(process.argv.slice(2)).then(
     (code) => {
       process.exitCode = code;
     },
     (err: unknown) => {
-      process.stderr.write(`birdybeep: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.stderr.write(`birdybeep: ${commandErrorMessage(err)}\n`);
       process.exitCode = 1;
     },
   );

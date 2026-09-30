@@ -153,6 +153,20 @@ will not bypass the error.
 
 Check the connection, VPN, or proxy. Retryable events remain in the local queue. Run `birdybeep doctor` or `birdybeep status` after connectivity returns.
 
+### Certificate verification failed
+
+BirdyBeep uses certificates trusted by your operating system on Node 22.19+ and 24.6+,
+along with Node's default certificates and any `NODE_EXTRA_CA_CERTS` file. On macOS,
+this includes trusted certificates from Keychain.
+
+If your network inspects HTTPS, its certificate authority must be trusted by your computer.
+Ask your IT team to install its root certificate in the system trust store, or supply a
+PEM certificate bundle and set `NODE_EXTRA_CA_CERTS` to its path in the environment used
+by BirdyBeep and your coding agents. Restart running agents after changing that environment.
+
+On older Node releases, update Node or use `NODE_EXTRA_CA_CERTS`. For an expired certificate
+or hostname mismatch, follow the specific message from `birdybeep doctor`.
+
 ### Events are queued
 
 Queued events remain local while delivery is unavailable. Restore network or token-store access, then run `birdybeep doctor` to drain the queue.
