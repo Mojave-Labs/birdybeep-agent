@@ -493,6 +493,15 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
     name: verb.name,
     summary: verb.summary,
     usage: verb.usage,
+    helpGroup: verb.name === "pair" ? "Manage" : "Everyday",
+    examples:
+      verb.name === "setup"
+        ? [
+            "birdybeep setup",
+            "birdybeep setup --verbose",
+            "birdybeep setup --expect-email you@example.com --non-interactive",
+          ]
+        : ["birdybeep pair", "birdybeep pair --no-install --no-test"],
     ...(verb.gettingStarted !== undefined ? { gettingStarted: verb.gettingStarted } : {}),
     options: [
       {
@@ -579,14 +588,14 @@ function createPairingCommand(verb: PairingVerb, deps: PairCommandDeps = {}): Co
         // sections. New users can install the app with the first, then scan the second.
         const isTTY = deps.isTTY ?? process.stdout.isTTY === true;
         ctx.io.line("Download BirdyBeep for iPhone:");
-        if (isTTY) ctx.io.line(renderQr(APP_STORE_URL));
+        if (isTTY && ctx.flags.verbose) ctx.io.line(renderQr(APP_STORE_URL));
         ctx.io.line(`   Download:  ${APP_STORE_URL}`);
         ctx.io.line("");
         ctx.io.line("Pair this machine:");
         // Approval needs the high-entropy fragment secret carried by the complete QR/link.
         // The short user_code remains visible only to identify the same pending session.
         ctx.io.line(
-          "To pair this machine, open the BirdyBeep app, tap “pair a machine”, and scan this QR or open the complete link:",
+          "Open BirdyBeep on your iPhone, tap “pair a machine”, and scan this QR or open the complete link:",
         );
         // The matrix is TTY-only (a piped/CI consumer wants greppable lines, and
         // half-block art garbles logs); the link + code lines below ALWAYS print.
@@ -760,7 +769,7 @@ export function createPairCommand(deps: PairCommandDeps = {}): Command {
     {
       name: "pair",
       summary: "Pair this machine and install detected coding-agent hooks",
-      usage: "birdybeep pair [--yes] [--expect-email <addr>] [--no-install] [--no-test] [--json]",
+      usage: "birdybeep pair [options]",
       skipWhenPaired: false,
     },
     deps,
@@ -778,7 +787,7 @@ export function createSetupCommand(deps: PairCommandDeps = {}): Command {
     {
       name: "setup",
       summary: "Set up BirdyBeep on this machine",
-      usage: "birdybeep setup [--yes] [--expect-email <addr>] [--no-install] [--no-test] [--json]",
+      usage: "birdybeep setup [options]",
       gettingStarted: "Connect this machine and install hooks for detected coding agents.",
       skipWhenPaired: true,
     },

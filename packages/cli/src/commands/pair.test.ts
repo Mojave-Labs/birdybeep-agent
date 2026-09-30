@@ -248,17 +248,41 @@ describe("birdybeep pair", () => {
     });
 
     expect(code).toBe(EXIT.OK);
-    expect(out.text()).toContain(renderQrMatrix(APP_STORE_URL));
+    expect(out.text()).not.toContain(renderQrMatrix(APP_STORE_URL));
     // Structural proof: the output embeds EXACTLY the uqr rendering of the payload the
     // stub backend returned. (No pure-JS QR decoder is available without adding a dep,
     // so we assert encode-equivalence; live scan verification is the xrepo E2E's job.)
     expect(out.text()).toContain(renderQrMatrix(QR_PAYLOAD));
     expect(out.text()).toMatch(/[█▀▄]/); // half-block matrix actually present
     expect(out.text()).toMatch(
-      /Download BirdyBeep for iPhone:[\s\S]+Pair this machine:[\s\S]+To pair this machine/,
+      /Download BirdyBeep for iPhone:[\s\S]+Pair this machine:[\s\S]+Open BirdyBeep/,
     );
     expect(out.text()).toContain(QR_PAYLOAD); // complete link fallback still printed
     expect(out.text()).toContain("Session code (display only; cannot approve by itself)");
+  });
+
+  it("keeps both scannable QR codes in verbose pairing", async () => {
+    sandbox = createSandbox();
+    const cmd = createPairCommand({
+      setup: false,
+      fetchImpl: stubPairing(),
+      tokenOptions: FILE_ONLY,
+      sleep: () => Promise.resolve(),
+      ...CONFIRM_YES,
+      isTTY: true,
+    });
+    const out = capture();
+    expect(
+      await runCli(["pair", "--verbose"], {
+        commands: [cmd],
+        stdout: out.writer,
+        stderr: out.writer,
+        ensureConfig: false,
+      }),
+    ).toBe(EXIT.OK);
+    expect(out.text()).toContain(renderQrMatrix(APP_STORE_URL));
+    expect(out.text()).toContain(renderQrMatrix(QR_PAYLOAD));
+    expect(out.text()).toContain(QR_PAYLOAD);
   });
 
   it("prints NO matrix when stdout is not a TTY (piped/CI output stays greppable)", async () => {

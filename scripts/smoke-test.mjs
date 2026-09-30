@@ -222,10 +222,59 @@ try {
 
   const help = runCli(["--help"]);
   assertExit(help, [0], "birdybeep --help");
-  for (const command of ["pair", "logout", "unpair", "status", "test", "doctor", "agent", "hook"]) {
+  for (const command of [
+    "setup",
+    "pair",
+    "logout",
+    "unpair",
+    "status",
+    "test",
+    "doctor",
+    "agent",
+    "hook",
+    "queue",
+    "report-status",
+  ]) {
     if (!help.stdout.includes(command)) throw new Error(`--help is missing command: ${command}`);
   }
   console.log("   birdybeep --help lists the full command surface  ✓");
+
+  for (const args of [
+    ["setup"],
+    ["pair"],
+    ["status"],
+    ["test"],
+    ["doctor"],
+    ["logout"],
+    ["unpair"],
+    ["agent", "install"],
+    ["agent", "uninstall"],
+    ["queue", "clear"],
+    ["report-status"],
+    ["hook"],
+  ]) {
+    const detail = runCli([...args, "--help"]);
+    assertExit(detail, [0], `${args.join(" ")} --help`);
+    if (!detail.stdout.includes("--verbose"))
+      throw new Error(`${args.join(" ")} help omitted shared output options`);
+  }
+  const compactStatus = runCli(["status"]);
+  assertExit(compactStatus, [1], "compact status");
+  if (
+    !compactStatus.stdout.includes("Paired: no") ||
+    !compactStatus.stdout.includes("birdybeep setup") ||
+    !compactStatus.stdout.includes("Queue: empty")
+  )
+    throw new Error("compact status omitted pairing next step or queue summary");
+  const badClear = runCli(["queue", "clear", "typo"]);
+  assertExit(badClear, [2], "queue clear typo");
+  const clear = runCli(["queue", "clear"]);
+  assertExit(clear, [0], "queue clear empty");
+  const logout = runCli(["logout"]);
+  assertExit(logout, [0], "logout unpaired");
+  const unpair = runCli(["unpair"]);
+  assertExit(unpair, [0], "unpair unpaired");
+  console.log("   every command has shared help; maintenance rejects stray arguments  ✓");
 
   const status = runCli(["status", "--json"]);
   assertExit(status, [1], "birdybeep status --json (unpaired)");
@@ -242,6 +291,33 @@ try {
     throw new Error("clean-HOME doctor did not diagnose the missing machine token");
   }
   console.log("   birdybeep doctor runs and diagnoses the clean unpaired environment  ✓");
+
+  const compactDoctor = runCli(["doctor"]);
+  const verboseDoctor = runCli(["doctor", "--verbose"]);
+  assertExit(compactDoctor, [1], "birdybeep doctor (unpaired)");
+  assertExit(verboseDoctor, [1], "birdybeep doctor --verbose (unpaired)");
+  if (
+    !compactDoctor.stdout.includes("needs attention") &&
+    !compactDoctor.stdout.includes("need attention")
+  )
+    throw new Error("compact doctor did not lead with an attention summary");
+  if (compactDoctor.stdout.indexOf("✗  Machine token") > compactDoctor.stdout.indexOf("✓")) {
+    throw new Error("compact doctor buried the missing token below healthy checks");
+  }
+  for (const check of doctorReport.checks.filter((check) => !check.ok)) {
+    if (!compactDoctor.stdout.includes(check.name) || !verboseDoctor.stdout.includes(check.name)) {
+      throw new Error(`doctor hid a failure: ${check.name}`);
+    }
+    if (check.remedy && !compactDoctor.stdout.includes(check.remedy)) {
+      throw new Error(`compact doctor hid a fix: ${check.name}`);
+    }
+  }
+  if (!compactDoctor.stdout.includes("birdybeep doctor --verbose")) {
+    throw new Error("compact doctor did not offer full diagnostics");
+  }
+  const doctorHelp = runCli(["doctor", "--help"]);
+  if (!doctorHelp.stdout.includes("--verbose")) throw new Error("doctor help omitted --verbose");
+  console.log("   doctor compact/verbose output preserves real failures and fixes  ✓");
 
   const tokenPath = join(isolatedBase.XDG_DATA_HOME, "birdybeep", "token");
   if (existsSync(tokenPath)) throw new Error(`smoke unexpectedly wrote a token: ${tokenPath}`);

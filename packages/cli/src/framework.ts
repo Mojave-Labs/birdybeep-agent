@@ -13,6 +13,7 @@ import { mkdirSync } from "node:fs";
 import { birdyBeepConfigDir } from "@birdybeep/agent-core";
 
 import { type BirdAnimation, createBirdAnimation } from "./bird-animation";
+import { wrapTerminalText } from "./output";
 import { presentation } from "./presentation";
 
 /** Shared exit-code convention so callers (humans + agents) can branch on the result. */
@@ -21,6 +22,7 @@ export const EXIT = { OK: 0, ERROR: 1, USAGE: 2 } as const;
 /** A minimal output sink (process.stdout/stderr in prod; capturing buffers in tests). */
 export interface Writer {
   readonly isTTY?: boolean;
+  readonly columns?: number;
   write(s: string): void;
 }
 
@@ -31,6 +33,8 @@ export interface GlobalFlags {
   nonInteractive: boolean;
   help: boolean;
   version: boolean;
+  /** Include build histories, config paths, and other diagnostic detail. */
+  verbose?: boolean;
 }
 
 /** Json-aware output. `line`/`result` are mutually exclusive by mode so stdout stays clean. */
@@ -48,19 +52,23 @@ export interface Io {
 }
 
 export function createIo(json: boolean, stdout: Writer, stderr: Writer, animate = false): Io {
+  const write = (writer: Writer, text: string) =>
+    writer.write(
+      `${writer.isTTY ? wrapTerminalText(text, Math.min(writer.columns ?? 88, 88)) : text}\n`,
+    );
   return {
     json,
     ...(!json && animate ? { bird: createBirdAnimation(stdout) } : {}),
     line: (text) => {
-      if (!json) stdout.write(`${text}\n`);
+      if (!json) write(stdout, text);
     },
-    errline: (text) => stderr.write(`${text}\n`),
+    errline: (text) => write(stderr, text),
     result: (value) => {
       if (json) stdout.write(`${JSON.stringify(value)}\n`);
     },
     emit: (human, value) => {
       if (json) stdout.write(`${JSON.stringify(value)}\n`);
-      else stdout.write(`${human}\n`);
+      else write(stdout, human);
     },
   };
 }
@@ -86,6 +94,11 @@ export interface CommandOption {
 export interface Command {
   name: string;
   summary: string;
+  /** Where this command belongs in human help (JSON keeps the complete command list). */
+  helpGroup?: "Everyday" | "Manage" | "Advanced";
+  examples?: readonly string[];
+  /** Maximum positional arguments for commands that do not consume option values. */
+  positionalArgs?: number;
   /** One-line usage shown in the command's own `--help`. */
   usage?: string;
   /**
@@ -129,6 +142,7 @@ export function requireValue<T>(ctx: CommandContext, field: string, provided: T 
 }
 
 const GLOBAL_FLAG_TOKENS = new Set([
+  "--verbose",
   "--json",
   "--non-interactive",
   "--version",
@@ -145,6 +159,9 @@ export function parseGlobalFlags(argv: string[]): { flags: GlobalFlags; rest: st
     switch (token) {
       case "--json":
         flags.json = true;
+        break;
+      case "--verbose":
+        flags.verbose = true;
         break;
       case "--non-interactive":
         flags.nonInteractive = true;
@@ -184,7 +201,16 @@ function isUnknownFlag(token: string, allowed: ReadonlySet<string>): boolean {
 
 function renderRootHelp(version: string, commands: Command[]): string {
   const width = Math.max(...commands.map((c) => c.name.length));
-  const lines = commands.map((c) => `  ${c.name.padEnd(width)}  ${c.summary}`);
+  const lines = (["Everyday", "Manage", "Advanced"] as const).flatMap((group) => {
+    const members = commands.filter((c) => (c.helpGroup ?? "Everyday") === group);
+    return members.length === 0
+      ? []
+      : [
+          `  ${group === "Everyday" ? "Setup & checks" : group === "Manage" ? "Manage this machine" : "Used by coding-agent hooks"}:`,
+          ...members.map((c) => `  ${c.name.padEnd(width)}  ${c.summary}`),
+          "",
+        ];
+  });
   const featured = commands.filter((c) => c.gettingStarted !== undefined);
   return [
     `birdybeep ${version}: phone alerts for coding agents.`,
@@ -204,9 +230,12 @@ function renderRootHelp(version: string, commands: Command[]): string {
     "",
     "Global options:",
     "  --json              Machine-readable JSON output",
+    "  --verbose           Show builds, files, and diagnostic details",
     "  --non-interactive   Never prompt; fail fast if input is required",
     "  -h, --help          Show help (root or per-command)",
     "  -v, --version       Show the CLI version",
+    "",
+    "Run birdybeep <command> --help for examples and options.",
   ].join("\n");
 }
 
@@ -252,6 +281,15 @@ function renderCommandHelp(path: string, command: Command): string {
       ...command.subcommands.map((c) => `  ${c.name.padEnd(width)}  ${c.summary}`),
     );
   }
+  if (command.examples?.length) {
+    lines.push("", "Examples:", ...command.examples.map((example) => `  ${example}`));
+  }
+  lines.push(
+    "",
+    "Output options:",
+    "  --verbose  Show diagnostic details",
+    "  --json     Return all findings as JSON",
+  );
   return lines.join("\n");
 }
 
@@ -344,6 +382,9 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
 
   if (command.run === undefined) {
     // A pure command group invoked without a subcommand → show its help as a usage error.
+    if (rest[1] !== undefined && !rest[1].startsWith("-")) {
+      io.errline(`birdybeep ${path}: unknown subcommand "${rest[1]}".`);
+    }
     io.errline(renderCommandHelp(path, command));
     return EXIT.USAGE;
   }
@@ -353,6 +394,12 @@ export async function dispatch(argv: string[], deps: DispatchDeps): Promise<numb
   const unknown = args.find((token) => isUnknownFlag(token, allowed));
   if (unknown !== undefined) {
     io.errline(`birdybeep ${path}: unknown option "${unknown}".`);
+    io.errline(`Run \`birdybeep ${path} --help\` for available options.`);
+    return EXIT.USAGE;
+  }
+  if (command.positionalArgs !== undefined && args.length > command.positionalArgs) {
+    io.errline(`birdybeep ${path}: unexpected argument "${args[command.positionalArgs]}".`);
+    io.errline(`Run \`birdybeep ${path} --help\` for usage.`);
     return EXIT.USAGE;
   }
 

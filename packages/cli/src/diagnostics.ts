@@ -446,11 +446,17 @@ function installTarget(harness: string): string {
 }
 
 /** What to do about an uncovered surface; `undefined` when another check already owns the fix. */
-export function surfaceRemedy(state: SurfaceState, group: HarnessSurfaces): string | undefined {
+export function surfaceRemedy(
+  state: SurfaceState,
+  group: HarnessSurfaces,
+  concise = false,
+): string | undefined {
   if (state.coverage !== "uncovered") return undefined;
   // The harness-level cause already has its own check with its own remedy — don't print it twice.
   if (!CONFIGURED_STATUSES.has(group.status)) return undefined;
   const install = `\`birdybeep agent install ${installTarget(group.harness)}\``;
+  if (concise)
+    return `Run a turn in ${state.surface.label}. If no events appear, re-run ${install} from a terminal where \`birdybeep\` works, then check \`birdybeep status\`.`;
   // The two kinds fail for different reasons, so they get different instructions. A desktop app
   // spawns its engine with the LOGIN shell's PATH, which is where a bare hook command goes
   // missing — the failure this whole epic turned up.

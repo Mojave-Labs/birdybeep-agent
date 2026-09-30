@@ -185,7 +185,13 @@ describe("errors + exit codes", () => {
         },
       },
     ];
-    for (const token of ["--json=true", "--non-interactive=1", "--help=x", "-v=2"]) {
+    for (const token of [
+      "--json=true",
+      "--non-interactive=1",
+      "--help=x",
+      "-v=2",
+      "--verbose=true",
+    ]) {
       const out = capture();
       const code = await runCli(["echo", token], {
         commands: echo,
@@ -344,5 +350,94 @@ describe("config dir bootstrap (temp HOME)", () => {
         expect(readFileSync(full, "utf8")).not.toMatch(/bbm_|bearer/i);
       }
     }
+  });
+});
+
+describe("friendly command navigation", () => {
+  it("groups everyday commands and gives actionable subcommand examples", async () => {
+    const root = capture();
+    await runCli(["--help"], { stdout: root.writer, stderr: root.writer, ensureConfig: false });
+    for (const heading of [
+      "Setup & checks:",
+      "Manage this machine:",
+      "Used by coding-agent hooks:",
+      "--verbose",
+    ])
+      expect(root.text()).toContain(heading);
+    const help = capture();
+    await runCli(["agent", "install", "--help"], {
+      stdout: help.writer,
+      stderr: help.writer,
+      ensureConfig: false,
+    });
+    expect(help.text()).toContain("Examples:");
+    expect(help.text()).toContain("birdybeep agent install codex");
+  });
+
+  it("accepts verbose anywhere in the command path without leaking it to command arguments", async () => {
+    const seen: boolean[] = [];
+    const commands: Command[] = [
+      {
+        name: "agent",
+        summary: "group",
+        subcommands: [
+          {
+            name: "install",
+            summary: "install",
+            positionalArgs: 1,
+            run: (ctx) => {
+              seen.push(ctx.flags.verbose === true);
+              expect(ctx.args).toEqual(["codex"]);
+              return EXIT.OK;
+            },
+          },
+        ],
+      },
+    ];
+    for (const argv of [
+      ["--verbose", "agent", "install", "codex"],
+      ["agent", "--verbose", "install", "codex"],
+      ["agent", "install", "codex", "--verbose"],
+    ]) {
+      expect(await runCli(argv, { commands, ensureConfig: false })).toBe(EXIT.OK);
+    }
+    expect(seen).toEqual([true, true, true]);
+  });
+
+  it("rejects extra arguments and unknown subcommands before performing destructive actions", async () => {
+    let mutations = 0;
+    const commands: Command[] = [
+      {
+        name: "queue",
+        summary: "queue",
+        subcommands: [
+          {
+            name: "clear",
+            summary: "discard",
+            positionalArgs: 0,
+            run: () => {
+              mutations++;
+              return EXIT.OK;
+            },
+          },
+        ],
+      },
+    ];
+    for (const argv of [
+      ["queue", "clear", "surprise"],
+      ["queue", "typo"],
+    ]) {
+      const out = capture();
+      expect(
+        await runCli(argv, {
+          commands,
+          stdout: out.writer,
+          stderr: out.writer,
+          ensureConfig: false,
+        }),
+      ).toBe(EXIT.USAGE);
+      expect(out.text()).toContain("birdybeep queue");
+    }
+    expect(mutations).toBe(0);
   });
 });

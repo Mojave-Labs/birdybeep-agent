@@ -213,9 +213,20 @@ describe("gcgp.23: a locked token store is not an unpaired machine", () => {
       stderr: statusOut.writer,
       ensureConfig: false,
     });
-    expect(statusOut.text()).toContain("Paired:  unknown");
+    expect(statusOut.text()).toContain("Paired: unknown");
     expect(statusOut.text()).toContain("QUEUED, not lost");
-    expect(statusOut.text()).not.toContain("Paired:  no");
+    expect(statusOut.text()).not.toContain("Paired: no");
+
+    // Installing hooks must not mistake a locked paired machine for an unpaired one either.
+    const installOut = capture();
+    await runCli(["agent", "install", "claude"], {
+      commands: [createAgentCommand({ adapters: [detectedClaude], tokenOptions })],
+      stdout: installOut.writer,
+      stderr: installOut.writer,
+      ensureConfig: false,
+    });
+    expect(installOut.text()).toContain("QUEUED, not lost");
+    expect(installOut.text()).not.toContain("This machine is not paired");
 
     // (5) …and so does `doctor`, whose remedy is to unlock the store, not to pair again.
     const doctorOut = capture();
@@ -322,7 +333,9 @@ describe("gcgp.23: a locked token store is not an unpaired machine", () => {
       stderr: statusOut.writer,
       ensureConfig: false,
     });
-    expect(statusOut.text()).toContain("Paired:  no. Run `birdybeep pair`.");
+    expect(statusOut.text()).toContain(
+      "Paired: no. Run `birdybeep setup` to connect this machine.",
+    );
     expect(statusOut.text()).not.toContain("token store");
   });
 

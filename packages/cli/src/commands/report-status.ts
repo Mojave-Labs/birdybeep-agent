@@ -27,6 +27,7 @@ import { OPENCODE_ADAPTER_VERSION, opencodeAdapter } from "@birdybeep/opencode";
 
 import { resolveApiUrl } from "../config";
 import { type Command, EXIT } from "../framework";
+import { integrationAction, integrationLabel, integrationMark } from "../output";
 
 const DEFAULT_ADAPTERS: AgentAdapter[] = [
   claudeCodeAdapter,
@@ -73,6 +74,8 @@ export function createReportStatusCommand(deps: ReportStatusCommandDeps = {}): C
   return {
     name: "report-status",
     summary: "Internal: report integration status to the backend",
+    helpGroup: "Advanced",
+    positionalArgs: 0,
     usage: "birdybeep report-status [--json]",
     run: async (ctx) => {
       const token = await getToken(deps.tokenOptions ?? {});
@@ -137,13 +140,28 @@ export function createReportStatusCommand(deps: ReportStatusCommandDeps = {}): C
         ctx.io.errline(
           `Report rejected (${errorCode ?? "auth"}). Your token may be revoked. Re-run \`birdybeep pair\`.`,
         );
-      } else {
+      } else if (ctx.flags.verbose) {
         for (const e of effective) {
           ctx.io.line(
             outcome === "reported"
               ? `✓  ${e.harness}: ${e.status} (reported)`
-              : `•  ${e.harness}: ${e.status} (deferred; backend unreachable)`,
+              : `•  ${e.harness}: ${e.status} (deferred; retry later)`,
           );
+        }
+      } else {
+        ctx.io.line(
+          outcome === "reported"
+            ? "✓ Integration status updated in the app."
+            : `! Integration status could not be updated${errorCode ? ` (${errorCode})` : ""}. Try \`birdybeep report-status\` again later.`,
+        );
+        if (outcome === "reported") {
+          for (const e of effective.filter((item) => item.status !== "not_detected")) {
+            const name =
+              adapters.find((adapter) => adapter.id === e.harness)?.displayName ?? e.harness;
+            ctx.io.line(`${integrationMark(e.status)}  ${name}: ${integrationLabel(e.status)}`);
+            const action = integrationAction(e.harness, e.status);
+            if (action) ctx.io.line(`  → ${action}`);
+          }
         }
       }
 

@@ -125,8 +125,8 @@ describe("birdybeep status", () => {
     });
     const text = out.text();
     expect(text).toContain("Machine:");
-    expect(text).toContain("Paired:  yes");
-    expect(text).toContain("Codex: installed");
+    expect(text).toContain("Paired: yes");
+    expect(text).toContain("Codex: ready");
     expect(text).toContain("Queue:");
   });
 
@@ -172,8 +172,46 @@ describe("birdybeep status", () => {
       stderr: human.writer,
       ensureConfig: false,
     });
-    expect(human.text()).toContain("3 local-only event(s)");
-    expect(human.text()).toContain("tool_finished ×3");
+    expect(human.text()).toContain("3 local-only events handled");
+    expect(human.text()).not.toContain("tool_finished");
+    const verbose = capture();
+    await runCli(["status", "--verbose"], {
+      commands: [cmd],
+      stdout: verbose.writer,
+      stderr: verbose.writer,
+      ensureConfig: false,
+    });
+    expect(verbose.text()).toContain("3 local-only event(s)");
+    expect(verbose.text()).toContain("tool_finished ×3");
+  });
+
+  it("shows trust/restart actions before ready agents and skips absent optional agents", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const cmd = createStatusCommand({
+      adapters: [
+        withStatus({ id: "claude_code", displayName: "Claude Code" } as AgentAdapter, "installed"),
+        withStatus({ id: "codex", displayName: "Codex" } as AgentAdapter, "needs_trust"),
+        withStatus({ id: "opencode", displayName: "OpenCode" } as AgentAdapter, "needs_restart"),
+        withStatus({ id: "cursor", displayName: "Cursor" } as AgentAdapter, "not_detected"),
+      ],
+      createSender: () => createSender({ baseUrl: "http://127.0.0.1:1", tokenOptions: FILE_ONLY }),
+      tokenOptions: FILE_ONLY,
+    });
+    const out = capture();
+    expect(
+      await runCli(["status"], {
+        commands: [cmd],
+        stdout: out.writer,
+        stderr: out.writer,
+        ensureConfig: false,
+      }),
+    ).toBe(EXIT.OK);
+    expect(out.text()).toContain("Open Codex, run /hooks");
+    expect(out.text()).toContain("Restart OpenCode");
+    expect(out.text().indexOf("Codex:")).toBeLessThan(out.text().indexOf("Claude Code:"));
+    expect(out.text()).not.toContain("Cursor:");
+    expect(out.text()).not.toContain("needs_trust");
   });
 
   it("not paired → says so clearly and exits non-zero", async () => {
@@ -192,7 +230,7 @@ describe("birdybeep status", () => {
       ensureConfig: false,
     });
     expect(code).toBe(EXIT.ERROR);
-    expect(out.text()).toContain("Paired:  no");
+    expect(out.text()).toContain("Paired: no");
   });
 });
 
@@ -249,7 +287,17 @@ describe("birdybeep status per-surface coverage", () => {
     });
 
     expect(code).toBe(EXIT.OK);
-    expect(out.text()).toContain("✓ terminal CLI 2.1.227: active");
-    expect(out.text()).toContain("✗ Claude desktop app 2.1.229: uncovered");
+    expect(out.text()).not.toContain("terminal CLI 2.1.227");
+    expect(out.text()).toContain("Claude desktop app 2.1.229: no events observed");
+    expect(out.text()).toContain("birdybeep agent install claude");
+    const verbose = capture();
+    await runCli(["status", "--verbose"], {
+      commands: [cmd],
+      stdout: verbose.writer,
+      stderr: verbose.writer,
+      ensureConfig: false,
+    });
+    expect(verbose.text()).toContain("✓ terminal CLI 2.1.227: active");
+    expect(verbose.text()).toContain("✗ Claude desktop app 2.1.229: uncovered");
   });
 });

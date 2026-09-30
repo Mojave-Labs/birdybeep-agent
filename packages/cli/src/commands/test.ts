@@ -77,8 +77,10 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
 
   return {
     name: "test",
-    summary: "Send a test event end-to-end",
+    summary: "Send a test notification to your phone",
     usage: "birdybeep test [--json]",
+    examples: ["birdybeep test", "birdybeep doctor"],
+    positionalArgs: 0,
     run: async (ctx) => {
       const event = buildTestEvent();
       const baseUrl = deps.baseUrl ?? resolveApiUrl();
@@ -159,9 +161,13 @@ export function createTestCommand(deps: TestCommandDeps = {}): Command {
         // the user off to debug a network that had just carried the request to the backend and
         // back. Name what answered, and say the retry is automatic.
         const status = result.status !== undefined ? ` HTTP ${String(result.status)}` : " an error";
-        ctx.io.line(`• Backend returned${status}. The test event is queued for retry.`);
+        ctx.io.line(
+          `• Backend returned${status}. The test event is queued for retry. Run \`birdybeep doctor\` if this continues.`,
+        );
       } else if (result.outcome === "queued") {
-        ctx.io.line("• Could not reach the backend. The test event is queued.");
+        ctx.io.line(
+          "• Could not reach the backend. The test event is queued. Check your connection; it retries on the next event or `birdybeep doctor`.",
+        );
       } else if (result.code === "quota_exceeded") {
         // 58l: "rejected by the backend" named nothing. The error envelope says WHICH rejection
         // this is, and the reachability read carries the account's meter — so name the cause and

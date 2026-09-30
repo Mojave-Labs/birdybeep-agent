@@ -38,6 +38,7 @@ import {
   type SurfaceState,
 } from "../diagnostics";
 import { type GlobalFlags, type Io } from "../framework";
+import { installAction, integrationLabel } from "../output";
 import { installTarget } from "./agent";
 import { createTestCommand } from "./test";
 
@@ -259,9 +260,11 @@ export function buildHarnessReports(
               harness: adapter.id,
               displayName: adapter.displayName,
               state:
-                status !== undefined && PENDING_STATUSES.has(status)
-                  ? ("needs you" as const)
-                  : ("ready" as const),
+                status === "error"
+                  ? ("failed" as const)
+                  : status !== undefined && PENDING_STATUSES.has(status)
+                    ? ("needs you" as const)
+                    : ("ready" as const),
             },
           ]
         : surfaces.map((state) => {
@@ -321,6 +324,43 @@ export function renderCoverageTable(reports: SetupHarnessReport[]): string[] {
   return lines;
 }
 
+/** One integration per line, with build-level faults kept visible. */
+export function renderSetupSummary(reports: SetupHarnessReport[]): string[] {
+  const detected = reports.filter((report) => report.detected || report.error !== undefined);
+  const needsAttention = (report: SetupHarnessReport) =>
+    report.error !== undefined ||
+    report.rows.some((row) => ["needs you", "failed", "not covered"].includes(row.state));
+  const lines = ["Coding agents:"];
+  for (const report of [...detected].sort(
+    (a, b) => Number(needsAttention(b)) - Number(needsAttention(a)),
+  )) {
+    const failed = report.error !== undefined || report.rows.some((row) => row.state === "failed");
+    const pending = report.rows.some((row) => row.state === "needs you");
+    const gaps = report.rows.filter((row) => row.state === "not covered");
+    const label = failed
+      ? "setup failed"
+      : pending
+        ? integrationLabel(report.status ?? "unknown")
+        : gaps.length > 0
+          ? "some builds need attention"
+          : report.rows.some((row) => row.state === "ready")
+            ? "ready; awaiting first event"
+            : "events observed";
+    lines.push(
+      `${failed ? "✗" : pending || gaps.length > 0 ? "!" : "✓"}  ${report.displayName}: ${label}`,
+    );
+    for (const action of new Set(report.actions)) {
+      const instruction = installAction(action);
+      if (instruction) lines.push(`  → ${instruction}`);
+    }
+    for (const row of gaps) {
+      lines.push(`  ! ${row.build ?? report.displayName}: no events observed`);
+      if (row.remedy) lines.push(`    → ${row.remedy}`);
+    }
+  }
+  return detected.length > 0 ? lines : [];
+}
+
 /**
  * What to tell someone about the harnesses that are not here. A machine with none of them is the
  * dead end this ticket exists to close: the run must say what to install and that re-running
@@ -360,8 +400,12 @@ export async function runHarnessSetup(
   const reports = buildHarnessReports(installs, groups);
 
   ctx.io.line("");
-  for (const line of renderCoverageTable(reports)) ctx.io.line(line);
-  const missing = describeMissing(reports);
+  for (const line of ctx.flags.verbose ? renderCoverageTable(reports) : renderSetupSummary(reports))
+    ctx.io.line(line);
+  const missing =
+    ctx.flags.verbose || reports.every((report) => !report.detected)
+      ? describeMissing(reports)
+      : [];
   if (missing.length > 0) {
     ctx.io.line("");
     for (const line of missing) ctx.io.line(line);
@@ -394,6 +438,21 @@ export async function runHarnessSetup(
       },
     };
     beepOk = (await command.run?.({ args: [], flags: ctx.flags, io: beepIo })) === 0;
+  }
+
+  if (!ctx.flags.verbose) {
+    const pending = reports.some((report) =>
+      report.rows.some((row) => ["needs you", "not covered"].includes(row.state)),
+    );
+    ctx.io.line(
+      counts.failed > 0 || !beepOk
+        ? "\nSetup needs attention. Run `birdybeep doctor` for the remaining fixes."
+        : pending
+          ? "\nFinish the actions above, then run `birdybeep status`."
+          : counts.installed > 0
+            ? "\nRun a turn in your coding agent to try notifications. Check `birdybeep status` anytime."
+            : "",
+    );
   }
 
   return {

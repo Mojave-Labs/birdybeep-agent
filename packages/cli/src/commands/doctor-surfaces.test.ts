@@ -106,6 +106,45 @@ function byName(json: DoctorJson): Record<string, DoctorJson["checks"][number]> 
 }
 
 describe("doctor per-surface coverage", () => {
+  it("hides healthy build histories in compact mode but keeps uncovered builds and fixes", async () => {
+    sandbox = createSandbox();
+    await setToken(TOKEN, FILE_ONLY);
+    const path = join(sandbox.home, "observed.json");
+    const cmd = createDoctorCommand({
+      adapters: [claudeWith("installed", [TERMINAL, DESKTOP])],
+      createSender: () => createSender({ baseUrl: "http://127.0.0.1:1", tokenOptions: FILE_ONLY }),
+      tokenOptions: FILE_ONLY,
+      baseUrl: "http://127.0.0.1:1",
+      probeNetwork: () => Promise.resolve(true),
+      surfaceOptions: { observedBuilds: { path } },
+    });
+    const render = async (args: string[]) => {
+      const out = capture();
+      const code = await runCli(["doctor", ...args], {
+        commands: [cmd],
+        stdout: out.writer,
+        stderr: out.writer,
+        ensureConfig: false,
+      });
+      return { code, text: out.text() };
+    };
+    const fresh = await render([]);
+    expect(fresh.code).toBe(EXIT.OK);
+    expect(fresh.text).toContain("✓  Claude Code: checks passed");
+    expect(fresh.text).not.toContain("terminal CLI");
+    expect(fresh.text).not.toContain("desktop app");
+    const verbose = await render(["--verbose"]);
+    expect(verbose.text).toContain("Claude Code: terminal CLI 2.1.227");
+    expect(verbose.text).toContain("nothing has fired");
+
+    recordObservedBuild("claude_code", { version: "2.1.227", surface: "terminal" }, { path });
+    const uncovered = await render([]);
+    expect(uncovered.code).toBe(EXIT.ERROR);
+    expect(uncovered.text).toContain("✗  Claude Code: Claude desktop app 2.1.229");
+    expect(uncovered.text).toContain("LOGIN shell's PATH");
+    expect(uncovered.text).not.toContain("✓  Claude Code");
+  });
+
   it("gives the terminal and desktop builds their own rows, with their own versions", async () => {
     sandbox = createSandbox();
     await setToken(TOKEN, FILE_ONLY);
