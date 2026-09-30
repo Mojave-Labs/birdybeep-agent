@@ -1,5 +1,17 @@
 # @birdybeep/cli
 
+## 0.8.6
+
+### Patch Changes
+
+- c46bd65: Use operating-system trusted certificates on supported Node releases so setup and hooks work on networks that inspect HTTPS. Show certificate verification errors and recovery steps in setup and doctor.
+- @birdybeep/agent-core@0.8.6
+  - @birdybeep/claude-code@0.8.6
+  - @birdybeep/codex@0.8.6
+  - @birdybeep/copilot@0.8.6
+  - @birdybeep/cursor@0.8.6
+  - @birdybeep/opencode@0.8.6
+
 ## 0.8.5
 
 ### Patch Changes
