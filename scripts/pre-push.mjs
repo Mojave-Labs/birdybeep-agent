@@ -6,7 +6,7 @@
 // tickets), so they are gated automatically without a separate step here — no
 // hard-gating on suites that don't exist yet. CI + required status checks remain the
 // authoritative, un-bypassable block; this hook just catches problems before they
-// leave the machine. Chained AFTER beads sync via .beads/hooks/pre-push.
+// leave the machine. Runs from the repository-owned hook installed by prepare.
 // Never --no-verify past a real failure.
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";

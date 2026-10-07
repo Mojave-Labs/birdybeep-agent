@@ -2,23 +2,11 @@
 
 _public, MIT — @birdybeep/cli + Claude Code / Codex / OpenCode / Cursor / Copilot adapters_
 
-**69 beads** in this repo: 9 epics · 60 work tickets (2 human-required). This file is a human-orchestrator snapshot — **beads is the live source of truth** (`bd ready`, `bd show <id>`, `bd dep tree <id>`).
+This file is a historical roadmap. Use the live [BIRD board](https://mojavelabs.atlassian.net/jira/software/projects/BIRD/boards/103) for current scope, ownership, status, parents and blockers. Filter by `repo-birdybeep-agent` for this repository.
 
 ## How to drive the build (agentic-first)
 
-You are the orchestrator and the final-product tester. Agents do everything else and must verify end-to-end before pushing (see `CLAUDE.md`).
-
-```bash
-bd ready                 # what's unblocked right now (respects the dependency graph)
-bd show <id>             # full ticket: scope, acceptance, MANDATORY testing, deps, refs
-bd update <id> --claim   # take it
-bd close <id>            # done — only after the real E2E/UI test is green
-bd list -l "phase:1"     # everything in a phase    (also: epic:<name>, area:backend|mobile|web|cli|adapter|...)
-bd dep tree <epic-id>    # see an epic's children + ordering
-bd list -l human-required  # the manual gates (you, not agents)
-```
-
-Work flows along the dependency graph: `bd ready` only surfaces a ticket once its prerequisites are closed. Start at Phase 1 and let the graph pull you forward. Labels on every ticket: `repo:*`, `epic:*`, `phase:N`, an area (`backend`/`mobile`/`web`/`docs`/`cli`/`adapter`/`infra`/`security`/`billing`/`testing`), and `human-required` where applicable.
+Read the Jira issue and its acceptance criteria, assign it and move it to In Progress, then implement and run the mandatory real-product checks in `CLAUDE.md`. Record evidence and follow-ups in Jira. Mark Done after verification and publication. Respect native dependency links and `blocked`, `deferred` and `human-required` labels.
 
 ## The testing mandate (non-negotiable)
 

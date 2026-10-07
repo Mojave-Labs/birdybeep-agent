@@ -21,4 +21,4 @@ Evidence (commands, harness/backend versions, and observed result):
 - [ ] Raw prompts/replies, tool input/output, PII, and absolute paths are dropped or sanitized before delivery.
 - [ ] Generated config snapshots/examples are current and uninstall remains reversible.
 - [ ] A Changeset is included for every publishable behavior change, or this PR is docs/internal-only.
-- [ ] Follow-up work is tracked in Beads; no unowned TODO was left in the patch.
+- [ ] Follow-up work is tracked in Jira; no unowned TODO was left in the patch.

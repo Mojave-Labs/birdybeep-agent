@@ -23,11 +23,3 @@ pnpm-debug.log*
 
 # OS
 .DS_Store
-
-# Beads / Dolt files (added by bd init)
-.dolt/
-*.db
-.beads-credential-key
-
-# Beads / Dolt files (added by bd init)
-.beads/proxieddb/

@@ -47,8 +47,8 @@ work” is not verification.
 - Installs are user-level, idempotent, non-destructive, backed up once, and fully reversible.
 - Hooks always return quickly. Offline delivery queues best-effort and must never stall a harness.
 - Keep the public `HARNESS_IDS` tuple in lockstep with the private product schema.
-- Use `bd` for maintainer task state. External contributors can use the linked GitHub issue/PR; a
-  maintainer will reconcile accepted work into Beads.
+- Use Jira project BIRD for maintainer task state. External contributors can use the linked GitHub issue/PR; a
+  maintainer will reconcile accepted work into Jira.
 
 ## Review expectations
 

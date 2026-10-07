@@ -1,42 +1,29 @@
-// Auto-installed via the root `prepare` script (runs on every `pnpm install`).
-//
-// beads owns git's core.hooksPath (.beads/hooks). Rather than fight it, we CHAIN
-// the BirdyBeep pre-push gate by appending a managed block OUTSIDE the beads
-// `--- BEGIN/END BEADS INTEGRATION ---` markers, so the hook runs: beads sync →
-// our gate. This is idempotent and self-healing: if `bd hooks install` ever
-// rewrites the shim, the next `pnpm install` re-applies the block. Never fails install.
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+// Installed by prepare. The shared hook runs the verification script in the checkout being pushed.
+import { execFileSync } from "node:child_process";
+import { chmodSync, copyFileSync, mkdirSync, realpathSync } from "node:fs";
+import { relative, resolve, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const HOOK = ".beads/hooks/pre-push";
-const BEGIN = "# --- BEGIN BIRDYBEEP PRE-PUSH GATE ---";
-const END = "# --- END BIRDYBEEP PRE-PUSH GATE ---";
-const BLOCK = `${BEGIN}
-# Managed by scripts/install-hooks.mjs (A-PREPUSH). Runs AFTER beads sync.
-# Bypassing with --no-verify defeats the agentic-first testing mandate.
-_bb_root=$(git rev-parse --show-toplevel 2>/dev/null || echo .)
-if [ -f "$_bb_root/scripts/pre-push.mjs" ]; then
-  node "$_bb_root/scripts/pre-push.mjs" || exit $?
-fi
-${END}`;
-
+const root = fileURLToPath(new URL("../", import.meta.url));
+const git = (...args) =>
+  execFileSync("git", args, {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
 try {
-  if (!existsSync(HOOK)) {
-    console.error(
-      `birdybeep: ${HOOK} not found (beads hooks not installed yet) — skipping pre-push gate wiring.`,
-    );
-    process.exit(0);
-  }
-  let content = readFileSync(HOOK, "utf8");
-  if (content.includes(BEGIN)) {
-    process.exit(0); // already chained
-  }
-  if (!content.endsWith("\n")) content += "\n";
-  content += `\n${BLOCK}\n`;
-  writeFileSync(HOOK, content);
-  chmodSync(HOOK, 0o755);
-  console.error("birdybeep: chained pre-push gate into .beads/hooks/pre-push");
-} catch (err) {
-  console.error(
-    `birdybeep: could not wire pre-push gate (${err.message}) — continuing without it.`,
-  );
+  const checkout = git("rev-parse", "--show-toplevel");
+  if (relative(realpathSync.native(checkout), realpathSync.native(root)) !== "") process.exit(0);
+} catch {
+  // Source archives and published packages do not have a Git checkout.
+  process.exit(0);
 }
+// core.hooksPath is shared by linked worktrees. Keep the hook available to older
+// checkouts too; it still executes each checkout's own scripts/pre-push.mjs.
+const hooks = join(resolve(root, git("rev-parse", "--git-common-dir")), "birdybeep-hooks");
+mkdirSync(hooks, { recursive: true });
+const prePush = join(hooks, "pre-push");
+copyFileSync(new URL("../.githooks/pre-push", import.meta.url), prePush);
+chmodSync(prePush, 0o755);
+git("config", "--local", "core.hooksPath", hooks);
+console.error("birdybeep: installed shared pre-push verification gate");
