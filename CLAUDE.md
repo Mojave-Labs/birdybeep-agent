@@ -43,73 +43,28 @@ This package edits real config files in users' home directories and hooks into r
 - **Pre-push hook** (`A-PREPUSH`) runs lint + typecheck + unit + snapshot + adapter smoke and **blocks the push** on failure.
 - **CI** (`A-CI`) re-runs the full matrix and blocks merge. Never bypass.
 
-## 🔁 The work loop (every ticket)
-`bd ready` → claim → read `bd show <id>` and its **Testing (mandatory)** section → write test/snapshot first → implement → **run the real install + fire real events in the sandbox** → inspect output → `bd close` → commit + push (Session Completion below; the hook re-verifies). File follow-ups with `bd create`; durable notes with `bd remember`.
+## Jira workflow
 
-## 🔀 Beads repository boundaries
+Jira project **BIRD** is the authoritative tracker for both BirdyBeep repositories:
+https://mojavelabs.atlassian.net/jira/software/projects/BIRD/boards/103
 
-- **Do NOT run `bd repo sync` / `bd repo add`** (multi-repo hydration) — it imports the *sibling* repo's issues into this DB and the auto-export hooks would commit them, re-polluting. For cross-repo context, peek with `bd -C /path/to/sibling <cmd>`.
-- **Beads vs git conflicts:** on a `.beads/issues.jsonl` conflict during `git pull --rebase`/merge, don't hand-merge it — the shared Dolt server is the truth. Resolve by regenerating the file (`bd export`) and verify `bd count` + `external_ref` links after.
-
-## 🗄️ Beads data service
-
-This checkout uses an externally managed shared Dolt service for Beads. Connection details are
-supplied outside the repository through `BEADS_DOLT_SERVER_HOST`, `BEADS_DOLT_SERVER_PORT`, and
-`BEADS_DOLT_PASSWORD` or untracked local configuration; never document or commit real endpoints or
-credentials. If bd reports **"Dolt server unreachable"**, fix connectivity or local configuration.
-Never replace the shared service with `bd init`, embedded mode, or `bd import` of `issues.jsonl`.
-
-- `.beads/issues.jsonl` stays a passive per-checkout export for git visibility — never a sync channel, never hand-edited.
-- **bd version is pinned at 1.1.0.** Coordinate any upgrade across every client and database; never
-  run an unpinned installer against the shared service.
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:7510c1e2 -->
-## Beads Issue Tracker
-
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
-```
-
-### Rules
-
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
-
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
+- Use `repo-birdybeep` for the app/API/web repo and `repo-birdybeep-agent` for the CLI/adapters. Cross-repo work carries both labels.
+- Read the live issue, acceptance criteria, **Testing (mandatory)** section, comments, parent and blockers before starting. Assign it and move it to **In Progress**.
+- Write the test, snapshot or UI flow first where practical, implement, then exercise the real running product and inspect its output.
+- Use BIRD for all task tracking; do not maintain a parallel task tracker in repository files.
+- Historical issue IDs resolve through `docs/jira-issue-map.csv` or their full legacy-ID label in Jira. Use BIRD keys for new references.
+- Keep scope, decisions, verification evidence, blockers and follow-ups on the Jira issue. Use native parent and dependency links.
+- Preserve `blocked`, `deferred` and `human-required` labels where applicable. An issue with an unresolved blocker is not ready just because it is in To Do.
+- Move an issue to **Done** only after the required real-product verification succeeds and the changes are committed and pushed. Keep physical-device, production and account-dependent acceptance explicit.
+- Durable engineering context belongs in repository documentation or private Jira comments; never put credentials or private infrastructure details in the public agent repo.
 
 ## Session Completion
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+1. File remaining work in BIRD and record blockers and verification evidence.
+2. Run the quality gates and real-product checks for every changed surface.
+3. Commit, integrate current remote changes, and push with the normal pre-push hook. Never bypass or weaken a gate.
+4. Verify the commits are on the remote and the working tree is clean; then update the Jira issue and hand off any remaining acceptance.
 
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-<!-- END BEADS INTEGRATION -->
 
 
 ## Non-Interactive Shell Commands
@@ -155,7 +110,7 @@ came to get something done. Answer that, then stop.
 
 **Never write, in any user-facing file:**
 - What this repo *is* relative to the product — that it is public, open-source, MIT-licensed, auditable, "the client half", or that a separate/private repo holds the app and backend. Nobody reading the install docs needs the org chart.
-- Why a design decision was made. Rationale goes on the beads ticket, not in front of users.
+- Why a design decision was made. Rationale goes on the Jira issue, not in front of users.
 - Self-congratulatory framing: "deliberately", "carefully", "on purpose", "by design", "robust", "comprehensive", "seamless", "small-footprint", "first-class".
 - Reassurance the reader didn't ask for ("don't worry", "it's safe", "trust and transparency are features"). State what the code does; let the reader draw conclusions.
 - The same fact repeated across documents. Each fact lives in exactly one place; link to it.

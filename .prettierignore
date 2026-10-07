@@ -9,8 +9,6 @@ pnpm-lock.yaml
 
 # Tool-managed config — owned by its tool, not the formatter
 .claude/
-.beads/
-.dolt/
 
 # Human-owned governance docs (kept in sync with the private product repo) —
 # not reformatted here to avoid cross-repo drift.

@@ -6,7 +6,7 @@
  *
  * The canonical event schema + enums (CORE-SCHEMA) are exported below. The
  * normalizer/queue/sender/token-store/adapter-interface land in the remaining
- * agent-core epic (CORE-*) tickets — see `bd ready`.
+ * agent-core epic (CORE-*) tickets — see the BIRD board.
  */
 export * from "./adapter";
 export * from "./api";

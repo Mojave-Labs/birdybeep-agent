@@ -21,15 +21,7 @@ import type { DeliveredEvent, EventSink } from "./sink";
 export const EVENT_SIZE_CAP_BYTES = 16 * 1024;
 
 /** Directories never worth scanning when looking for leaked secrets. */
-const SCAN_IGNORE = new Set([
-  "node_modules",
-  ".git",
-  "dist",
-  ".turbo",
-  ".beads",
-  ".dolt",
-  "coverage",
-]);
+const SCAN_IGNORE = new Set(["node_modules", ".git", "dist", ".turbo", "coverage"]);
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null

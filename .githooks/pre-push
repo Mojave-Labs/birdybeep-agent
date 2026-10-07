@@ -1,0 +1,6 @@
+#!/bin/sh
+# Run the repository verification gate before publication.
+set -eu
+_bb_root=$(git rev-parse --show-toplevel)
+cd "$_bb_root"
+exec node scripts/pre-push.mjs "$@"
