@@ -11,7 +11,7 @@ try {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   }).trim();
-  if (relative(realpathSync(checkout), realpathSync(root)) !== "") process.exit(0);
+  if (relative(realpathSync.native(checkout), realpathSync.native(root)) !== "") process.exit(0);
 } catch {
   // Source archives and published packages do not have a Git checkout.
   process.exit(0);

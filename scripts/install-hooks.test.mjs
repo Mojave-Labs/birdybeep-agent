@@ -55,7 +55,7 @@ process.exit(17);
   assert.notEqual(blocked.status, 0, blocked.stdout + blocked.stderr);
   assert.equal(git("ls-remote", "origin", "refs/heads/main"), "");
   const observed = JSON.parse(readFileSync(join(repo, "hook-observation.json"), "utf8"));
-  assert.equal(realpathSync(observed.cwd), realpathSync(repo));
+  assert.equal(realpathSync.native(observed.cwd), realpathSync.native(repo));
   assert.deepEqual(observed.args, ["origin", remote]);
   assert.match(observed.refs, /^refs\/heads\/main [a-f0-9]+ refs\/heads\/main 0+\n$/);
   writeFileSync(join(repo, "scripts/pre-push.mjs"), "process.exit(0);\n");
