@@ -277,10 +277,20 @@ describe("defaultInvokeHook resolves birdybeep on PATH, never a cwd-planted bina
     process.chdir(repo); // the harness cwd == the hostile repo
     process.env["PATH"] = binDir; // only the legit birdybeep is on PATH
 
+    const stringify = vi.spyOn(JSON, "stringify");
     const plugin = createBirdyBeepPlugin(); // NO deps → real defaultInvokeHook → safeSpawn
     const hooks = await plugin({ directory: repo });
     await hooks.event({ event: { type: "session.created", properties: { info: { id: SID } } } });
 
+    expect(
+      stringify.mock.calls.filter(
+        ([value]) =>
+          typeof value === "object" &&
+          value !== null &&
+          "type" in value &&
+          (value as { type: unknown }).type === "session.created",
+      ),
+    ).toHaveLength(1); // recorded-launcher miss reuses the same serialized payload
     expect(await waitForFile(good)).toBe(true); // the PATH birdybeep received the event
     expect(readFileSync(good, "utf8")).toContain("session.created"); // …the exact envelope
     expect(existsSync(pwned)).toBe(false); // the cwd birdybeep was NEVER executed
@@ -308,5 +318,54 @@ describe("defaultInvokeHook resolves birdybeep on PATH, never a cwd-planted bina
     // A breadcrumb was emitted so the drop isn't silent (once-per-process; this worker's first).
     const logged = errSpy.mock.calls.some((c) => String(c[0]).includes("birdybeep"));
     expect(logged).toBe(true);
+  });
+});
+
+describe("BIRD-616 bounded property projection", () => {
+  it("does not enumerate/serialize irrelevant properties and keeps mapper fields", async () => {
+    const envelopes: OpenCodeEventEnvelope[] = [];
+    const hooks = await createBirdyBeepPlugin({
+      invokeHook: (e) => {
+        envelopes.push(e);
+      },
+    })({ directory: CWD });
+    const unused = {
+      toJSON: () => {
+        throw new Error("must never serialize irrelevant data");
+      },
+    };
+    const properties = {
+      sessionID: SID,
+      info: { id: SID, directory: CWD, title: unused },
+      status: { type: "retry", attempt: 2, message: unused },
+      error: { name: "Error", data: unused },
+      permission: "bash",
+      tool: "read",
+      metadata: unused,
+      patterns: unused,
+      huge: "x".repeat(2_000_000),
+      toJSON: unused.toJSON,
+    };
+    await hooks.event({ event: { type: "session.status", properties } });
+    expect(envelopes).toHaveLength(1);
+    const serialized = JSON.stringify(envelopes[0]);
+    expect(serialized.length).toBeLessThan(1000);
+    expect((JSON.parse(serialized) as { properties: unknown }).properties).toEqual({
+      sessionID: SID,
+      info: { id: SID, directory: CWD },
+      status: { type: "retry", attempt: 2 },
+      error: { name: "Error" },
+      permission: "bash",
+      tool: "read",
+    });
+  });
+
+  it("drops oversized identity without truncating it into another session", async () => {
+    const invokeHook = vi.fn();
+    const hooks = await createBirdyBeepPlugin({ invokeHook })({ directory: CWD });
+    await hooks.event({
+      event: { type: "session.idle", properties: { sessionID: "s".repeat(1025) } },
+    });
+    expect(invokeHook).not.toHaveBeenCalled();
   });
 });

@@ -53,12 +53,11 @@ jobs:
 
       # npm's OIDC trusted publishing needs npm >= 11.5.1; the runner's Node 22 bundles
       # npm 10.x, which never attempts the OIDC handshake and fails publish with a
-      # misleading ENEEDAUTH. Pin the current 11.x line (avoid betting a release on a
-      # brand-new npm major). pnpm publish shells out to this npm, so the version here
-      # is what matters.
+      # misleading ENEEDAUTH. Use the reviewed OIDC baseline exactly; upgrades require a reviewed diff.
+      # pnpm publish shells out to this npm.
       - name: Upgrade npm to an OIDC-capable version (>= 11.5.1)
         run: |
-          npm install -g npm@^11.5.1
+          npm install -g npm@11.5.1
           echo "npm now: $(npm --version)"
 
       # Write ~/.npmrc ourselves so the changesets action doesn't generate one that

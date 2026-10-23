@@ -183,7 +183,9 @@ try {
       BIRDYBEEP_API_URL: url,
       NO_UPDATE_NOTIFIER: "1",
     });
-    const preloads = [];
+    // PATH cannot isolate the absolute /usr/bin/security used by the CLI (BIRD-616).
+    // Keep Keychain storage synthetic while exercising real TLS and file-token fallback.
+    const preloads = ["--import", new URL("./fixtures/no-keychain.mjs", import.meta.url).href];
     if (trust === "system") {
       if (process.platform === "linux") {
         env.SSL_CERT_FILE = ca;
@@ -209,7 +211,7 @@ try {
     }).finally(() => clearTimeout(timer));
     assert.notEqual(code, null, `${name} timed out`);
     assert.ok(!`${stdout}${stderr}`.includes(`mt_${"ab".repeat(32)}`), "token must not be printed");
-    return { code, stdout, stderr };
+    return { code, stdout, stderr, home };
   }
   const setupArgs = [
     "setup",
@@ -293,6 +295,17 @@ try {
   const paired = await run("trusted-setup", setupArgs, "system");
   assert.equal(paired.code, 0, paired.stderr);
   assert.equal(JSON.parse(paired.stdout.trim().split("\n").at(-1)).paired, true);
+  const dataDir =
+    process.platform === "win32"
+      ? join(paired.home, "AppData", "Local")
+      : process.platform === "darwin"
+        ? join(paired.home, "Library", "Application Support")
+        : join(paired.home, ".local", "share");
+  assert.equal(
+    readFileSync(join(dataDir, "birdybeep", "token"), "utf8"),
+    `mt_${"ab".repeat(32)}`,
+    "trusted setup must store only the synthetic token in its isolated file fallback",
+  );
   console.log(
     `✓ System-trusted CA accepted by doctor and setup (${process.platform === "darwin" ? "isolated store-read injection" : "native OS store"})`,
   );

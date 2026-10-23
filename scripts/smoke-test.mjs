@@ -12,7 +12,7 @@
  *   node scripts/smoke-test.mjs --package-spec /tmp/broken.tgz --skip-build
  *
  * Every mode uses a fresh HOME, XDG dirs, npm cache/config, and global prefix. The CLI
- * runs with a deliberately minimal PATH that contains Node but not macOS `security`, so
+ * runs with a test-only Node preload disabling Keychain access, so
  * an existing login-keychain token can never make the supposedly-unpaired smoke pass.
  */
 import { execFileSync, spawnSync } from "node:child_process";
@@ -27,6 +27,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 
 const ROOT = process.cwd();
 const PACKAGES = ["agent-core", "claude-code", "codex", "cursor", "copilot", "opencode", "cli"];
@@ -135,10 +136,11 @@ const isolatedBase = {
 };
 mkdirSync(isolatedBase.TMPDIR, { recursive: true });
 
-// Keep Node for the bin shebang, but intentionally hide `security` and all harness CLIs.
+// Keep Node for the bin shebang, hide harness CLIs and isolate the per-user Keychain.
 const cliEnv = {
   ...isolatedBase,
   PATH: dirname(process.execPath),
+  NODE_OPTIONS: `--import=${JSON.stringify(pathToFileURL(join(ROOT, "scripts/fixtures/no-keychain.mjs")).href)}`,
   BIRDYBEEP_API_URL: "http://127.0.0.1:1",
 };
 

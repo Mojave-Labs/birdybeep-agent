@@ -406,3 +406,49 @@ describe("no-leak invariant over many adversarial inputs", () => {
     }
   });
 });
+
+describe("BIRD-616 URL component path privacy", () => {
+  it.each([
+    ["https://example.com/view?file=/Users/alice/private.txt", "alice"],
+    ["https://example.com/view?file=C:\\Users\\alice\\private.txt", "alice"],
+    ["https://example.com/view?file=\\\\server\\share\\private.txt", "server"],
+    ["https://example.com/view?file=%2Fhome%2Falice%2Fprivate.txt", "alice"],
+    ["https://example.com/view#file=%2543%253A%255CUsers%255Calice%255Cprivate.txt", "alice"],
+    ["https://example.com/view/%2FUsers/alice/private.txt", "alice"],
+    ["https://example.com/view?file=%2FUsers%2Falice%2Fprivate.txt%ZZ", "alice"],
+    ["https://example.com/view#%2FUsers%2Falice%FF", "alice"],
+    ["https://example.com/view/%2Fsrv%2Falice%2Fprivate.txt", "alice"],
+    ["https://example.com/view/%252FUsers%252Falice%252Fprivate.txt", "alice"],
+    [
+      `https://example.com/view?file=${Array.from({ length: 5 }).reduce<string>((v) => encodeURIComponent(v), "/Users/alice/private")}%ZZ`,
+      "alice",
+    ],
+  ])("scrubs local text in %s", (url, privateText) => {
+    const out = scrubAbsolutePaths(url);
+    expect(decodeURIComponent(out)).not.toContain(privateText);
+    expect(out).toContain("h_");
+    expect(new URL(out).hostname).toBe("example.com");
+    const event = normalizeEvent({ ...baseDraft, body: `Open ${url}`, metadata: { url } });
+    expect(decodeURIComponent(JSON.stringify(event))).not.toContain(privateText);
+  });
+
+  it.each([
+    "https://example.com/a/b/c?q=hello%20world#section-2",
+    "https://example.com/api/v1/events?next=https%3A%2F%2Fother.example%2Fa%2Fb",
+    "wss://example.com/socket/events?channel=build",
+    "https://api.github.com/users/octocat",
+    "https://example.com/home/help",
+    "https://example.com/projects/group%2Frepo",
+  ])("preserves the legitimate remote URL %s byte-for-byte", (url) => {
+    expect(scrubAbsolutePaths(url)).toBe(url);
+  });
+});
+
+it("BIRD-616: bounds nested URL processing", () => {
+  expect(() =>
+    scrubAbsolutePaths("https://a/#".repeat(2000) + "/Users/alice/private"),
+  ).not.toThrow();
+  expect(scrubAbsolutePaths("https://a/#".repeat(2000) + "/Users/alice/private")).not.toContain(
+    "alice",
+  );
+});

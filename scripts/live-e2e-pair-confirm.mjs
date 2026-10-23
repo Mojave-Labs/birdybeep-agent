@@ -210,7 +210,7 @@ try {
   sandbox = mkdtempSync(join(tmpdir(), "bb-pairconfirm-home-"));
   // Keep the real keychain integration path without ever touching the user's login keychain.
   // macOS's `security` ignores HOME and can block on an auth prompt even in a temp profile, so
-  // place a per-run file-backed shim first on PATH. Linux never invokes it.
+  // use a test-only preload to redirect it to a per-run file-backed shim. Linux never invokes it.
   const shimDir = join(sandbox, "bin");
   mkdirSync(shimDir, { recursive: true });
   if (process.platform === "darwin") {
@@ -267,6 +267,8 @@ esac
         XDG_STATE_HOME: join(home, ".local", "state"),
         BIRDYBEEP_API_URL: baseUrl,
         BIRDYBEEP_FAKE_KEYCHAIN: join(home, "fake-keychain"),
+        BIRDYBEEP_TEST_SECURITY_SHIM: join(shimDir, "security"),
+        NODE_OPTIONS: `--import=${JSON.stringify(pathToFileURL(join(AGENT_REPO, "scripts/fixtures/keychain-shim.mjs")).href)}`,
         BIRDYBEEP_FAKE_KEYCHAIN_DENY_WRITE: denyKeychainWrite ? "1" : "0",
         // A pty makes stderr a tty, which would otherwise wake the npm update notifier.
         NO_UPDATE_NOTIFIER: "1",

@@ -32,3 +32,10 @@ describe("Changesets release workflow compatibility (gcgp.32)", () => {
     expect(releaseWorkflow).not.toMatch(/^\s+(?:publish|version):\s+/m);
   });
 });
+
+it("BIRD-616: pins the reviewed npm OIDC baseline exactly", () => {
+  const installs = [...releaseWorkflow.matchAll(/npm install -g npm@([^\s]+)/g)];
+  expect(installs.map((match) => match[1])).toEqual(["11.5.1"]);
+  expect(releaseWorkflow).toContain("NPM_TOKEN: ${{ secrets.NPM_TOKEN }}");
+  expect(releaseWorkflow).toContain("id-token: write");
+});

@@ -105,7 +105,7 @@ const sandbox = mkdtempSync(join(tmpdir(), "bb-pair-headless-"));
  * `security add-generic-password` blocks on the locked login keychain and never returns — the
  * first windows/macos run of this lane died exactly there (`code null` after the kill timeout,
  * two orphaned `security` processes). That is an environment property, not a product bug (a real
- * user's login keychain is unlocked), so the rig puts a file-backed `security` FIRST on PATH.
+ * user's login keychain is unlocked), so a test-only Node preload redirects the system executable to a file-backed shim.
  *
  * The CLI's real keychain code path still runs end to end — it spawns `security`, feeds the
  * secret twice over STDIN (never argv), and does its read-back verification — but against this
@@ -149,7 +149,7 @@ esac
 `;
   writeFileSync(join(shimDir, "security"), shim, { mode: 0o755 });
   chmodSync(join(shimDir, "security"), 0o755);
-  log(`macOS: shimming \`security\` on PATH (${shimDir}) — the runner's keychain is locked`);
+  log(`macOS: using isolated Keychain fixture (${shimDir})`);
 }
 
 let caseNo = 0;
@@ -181,6 +181,8 @@ function newHome() {
       // store is scoped to THIS case's home so nothing leaks between cases.
       PATH: `${shimDir}${delimiter}${process.env.PATH ?? ""}`,
       BIRDYBEEP_FAKE_KEYCHAIN: join(home, "fake-keychain"),
+      BIRDYBEEP_TEST_SECURITY_SHIM: join(shimDir, "security"),
+      NODE_OPTIONS: `--import=${JSON.stringify(pathToFileURL(join(REPO, "scripts/fixtures/keychain-shim.mjs")).href)}`,
     },
   };
 }
