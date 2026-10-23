@@ -27,6 +27,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 
 const ROOT = process.cwd();
 const PACKAGES = ["agent-core", "claude-code", "codex", "cursor", "copilot", "opencode", "cli"];
@@ -139,7 +140,7 @@ mkdirSync(isolatedBase.TMPDIR, { recursive: true });
 const cliEnv = {
   ...isolatedBase,
   PATH: dirname(process.execPath),
-  NODE_OPTIONS: `--import=${JSON.stringify(join(ROOT, "scripts/fixtures/no-keychain.mjs"))}`,
+  NODE_OPTIONS: `--import=${JSON.stringify(pathToFileURL(join(ROOT, "scripts/fixtures/no-keychain.mjs")).href)}`,
   BIRDYBEEP_API_URL: "http://127.0.0.1:1",
 };
 

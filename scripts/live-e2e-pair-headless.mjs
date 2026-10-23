@@ -182,7 +182,7 @@ function newHome() {
       PATH: `${shimDir}${delimiter}${process.env.PATH ?? ""}`,
       BIRDYBEEP_FAKE_KEYCHAIN: join(home, "fake-keychain"),
       BIRDYBEEP_TEST_SECURITY_SHIM: join(shimDir, "security"),
-      NODE_OPTIONS: `--import=${JSON.stringify(join(REPO, "scripts/fixtures/keychain-shim.mjs"))}`,
+      NODE_OPTIONS: `--import=${JSON.stringify(pathToFileURL(join(REPO, "scripts/fixtures/keychain-shim.mjs")).href)}`,
     },
   };
 }

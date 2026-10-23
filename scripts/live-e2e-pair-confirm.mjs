@@ -268,7 +268,7 @@ esac
         BIRDYBEEP_API_URL: baseUrl,
         BIRDYBEEP_FAKE_KEYCHAIN: join(home, "fake-keychain"),
         BIRDYBEEP_TEST_SECURITY_SHIM: join(shimDir, "security"),
-        NODE_OPTIONS: `--import=${JSON.stringify(join(AGENT_REPO, "scripts/fixtures/keychain-shim.mjs"))}`,
+        NODE_OPTIONS: `--import=${JSON.stringify(pathToFileURL(join(AGENT_REPO, "scripts/fixtures/keychain-shim.mjs")).href)}`,
         BIRDYBEEP_FAKE_KEYCHAIN_DENY_WRITE: denyKeychainWrite ? "1" : "0",
         // A pty makes stderr a tty, which would otherwise wake the npm update notifier.
         NO_UPDATE_NOTIFIER: "1",
