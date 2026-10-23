@@ -873,3 +873,22 @@ describe("claudeCodeSurface", () => {
     );
   });
 });
+
+it.each(["permission_prompt", "idle_prompt", "elicitation_dialog"])(
+  "BIRD-616: %s notification keeps content while removing local URL paths",
+  async (notification_type) => {
+    const event = await normalizeClaudeCodeEvent(
+      {
+        ...base,
+        hook_event_name: "Notification",
+        notification_type,
+        message:
+          "Open https://example.com/view?file=%2FUsers%2Falice%2Fprivate.txt and https://example.com/docs/help",
+      },
+      DET,
+    );
+    expect(decodeURIComponent(event.body)).not.toContain("alice");
+    expect(event.body).toContain("https://example.com/docs/help");
+    expect(event.body).toContain("Open https://example.com/view?file=h_");
+  },
+);

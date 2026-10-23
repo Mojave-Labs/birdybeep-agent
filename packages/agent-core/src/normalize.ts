@@ -115,11 +115,11 @@ const ABSOLUTE_PATH_SRC = [
   // prose; further segments may then contain spaces (`/My Documents`), so the whole run hashes.
   `${POSIX_GLUE_LEAD}/${PATH_SEGMENT_NS}/${PATH_SEGMENT_NS}(?:/${PATH_SEGMENT})*`,
 ].join("|");
-// `scheme://` web URLs are matched FIRST and preserved verbatim: their path is remote and the
+// `scheme://` web URLs are matched FIRST: their ordinary path is remote and the
 // `/a/b/c` tail would otherwise read as a local path. Only genuine `://` authority forms are
 // spared — `file:/…` and scp `host:/…` (no `//`) are NOT URLs and stay subject to the scrub.
 const WEB_URL_SRC = String.raw`\b(?:https?|wss?):\/\/\S+`;
-// Single pass: a web URL (capture group 1, kept as-is) OR an absolute path (hashed). The URL
+// Single pass: a web URL (capture group 1, cleaned by component) OR a path (hashed). The URL
 // alternative wins wherever it starts, so a URL's path-shaped tail is never hashed.
 const SCRUB_RE = new RegExp(`(${WEB_URL_SRC})|(?:${ABSOLUTE_PATH_SRC})`, "gi");
 
@@ -179,13 +179,62 @@ function redactHighEntropyTokens(text: string): string {
   });
 }
 
+/** Decode URL components before looking for local paths, retaining unchanged remote text. */
+function scrubUrl(url: string, depth: number): string {
+  if (depth >= 4) return hashToken(url);
+  const parts = /^(https?:\/\/|wss?:\/\/)([^/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/i.exec(url);
+  if (!parts) return url.replace(new RegExp(ABSOLUTE_PATH_SRC, "gi"), hashToken);
+  const clean = (raw: string, remotePath = false): string => {
+    let decoded = raw;
+    let encodedLocalRoot = false;
+    // Bound decoding work; deeper encoding is replaced wholesale rather than left unsanitized.
+    for (let i = 0; i < 4; i++) {
+      encodedLocalRoot ||= /(?:^|\/)%2f|%5c/i.test(decoded);
+      try {
+        const next = decodeURIComponent(decoded);
+        if (next === decoded) break;
+        decoded = next;
+      } catch {
+        // Malformed escapes must not shield neighboring, valid encoded path text.
+        decoded = decoded.replace(/(?:%[0-9a-f]{2})+/gi, (run) => {
+          try {
+            return decodeURIComponent(run);
+          } catch {
+            return run.replace(/%([0-9a-f]{2})/gi, (_, hex: string) =>
+              String.fromCharCode(parseInt(hex, 16)),
+            );
+          }
+        });
+      }
+    }
+    if (/%[0-9a-f]{2}/i.test(decoded)) return remotePath ? `/${hashToken(raw)}` : hashToken(raw);
+    let cleaned: string;
+    if (remotePath) {
+      // A URL pathname is remote, even /home/help or /users/alice. Only explicit
+      // embedded drives/UNC or an encoded leading slash component indicate local text.
+      if (/[a-z]:[\\/]|\\\\/i.test(decoded) || encodedLocalRoot) {
+        cleaned = hashToken(decoded);
+      } else return raw;
+    } else {
+      cleaned = scrubPathText(decoded, depth + 1);
+    }
+    return cleaned === decoded ? raw : `${remotePath ? "/" : ""}${encodeURIComponent(cleaned)}`;
+  };
+  const query = (parts[4] ?? "").replace(/[^?&;=]+/g, (part) => clean(part));
+  const fragment = parts[5] ? `#${clean(parts[5].slice(1))}` : "";
+  return `${parts[1]}${clean(parts[2]!)}${clean(parts[3]!, true)}${query}${fragment}`;
+}
+
 /**
  * Replace every absolute path in a string with a stable hash (no raw path survives).
- * `http(s)://` / `ws(s)://` URLs are matched and preserved verbatim first, so a URL's remote
- * `/a/b/c` tail is never mistaken for (and hashed as) a local path (birdybeep-agent-yop).
+ * Web URL components are scrubbed separately so ordinary remote routes stay intact.
  */
+function scrubPathText(text: string, depth: number): string {
+  return text.replace(SCRUB_RE, (match, url) => (url ? scrubUrl(match, depth) : hashToken(match)));
+}
+
 export function scrubAbsolutePaths(text: string): string {
-  return text.replace(SCRUB_RE, (match, url) => (url ? match : hashToken(match)));
+  return scrubPathText(text, 0);
 }
 
 /** Replace secret-looking substrings with a redaction marker (explicit shapes + entropy). */

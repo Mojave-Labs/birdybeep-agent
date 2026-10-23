@@ -137,7 +137,8 @@ function defaultInvokeHook(envelope: OpenCodeEventEnvelope): void {
   try {
     // Prefer the absolute launcher install resolved: OpenCode may well have been started without
     // the user's shell PATH, and then the fallback below finds nothing at all.
-    if (spawnRecordedLauncher(JSON.stringify(envelope))) return;
+    const payload = JSON.stringify(envelope);
+    if (spawnRecordedLauncher(payload)) return;
     // SECURITY (sec-review-2026-07 H1): we MUST NOT spawn the bare name `birdybeep`. This
     // plugin's cwd is the repo the developer just opened, and on Windows the OS resolver
     // (cmd.exe under `shell: true`, and libuv for a bare name) searches the CURRENT WORKING
@@ -155,7 +156,7 @@ function defaultInvokeHook(envelope: OpenCodeEventEnvelope): void {
     // grandchild, so every event silently dropped on Windows. `input` routes the payload
     // through a strict-perm temp file the CLI reads as stdin — reliable on all platforms.
     const child = safeSpawn("birdybeep", ["hook", "opencode"], {
-      input: JSON.stringify(envelope),
+      input: payload,
       detached: true,
     });
     if (child === null) {
@@ -173,6 +174,36 @@ function defaultInvokeHook(envelope: OpenCodeEventEnvelope): void {
   }
 }
 
+/** Only fields read by normalizeOpenCodeEvent cross the process boundary (BIRD-616). */
+function projectProperties(properties: unknown): Record<string, unknown> {
+  const record = (v: unknown): Record<string, unknown> =>
+    typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
+  const props = record(properties);
+  // Identity must stay exact; reject oversized identifiers rather than merging sessions by truncation.
+  const text = (v: unknown, max = 500): string | undefined => {
+    if (typeof v !== "string") return undefined;
+    if (v.length > max) throw new Error("OpenCode field exceeds limit");
+    return v;
+  };
+  const info = record(props["info"]);
+  const status = record(props["status"]);
+  const error = record(props["error"]);
+  return {
+    sessionID: text(props["sessionID"], 1024),
+    info: { id: text(info["id"], 1024), directory: text(info["directory"], 32768) },
+    status: {
+      type: text(status["type"]),
+      attempt:
+        typeof status["attempt"] === "number" && Number.isFinite(status["attempt"])
+          ? status["attempt"]
+          : undefined,
+    },
+    error: { name: text(error["name"]) },
+    permission: text(props["permission"]),
+    tool: text(props["tool"]),
+  };
+}
+
 /**
  * Build the BirdyBeep OpenCode plugin. The returned async function is what OpenCode loads
  * and invokes at startup with its PluginInput.
@@ -186,7 +217,8 @@ export function createBirdyBeepPlugin(
     const cwd = input.directory ?? input.worktree ?? "unknown";
     const forward = async (type: string, properties: unknown): Promise<void> => {
       try {
-        await invoke({ type, properties, cwd });
+        if (cwd.length > 32768) return;
+        await invoke({ type, properties: projectProperties(properties), cwd });
       } catch {
         /* never surface as an OpenCode error (§9.3) */
       }

@@ -300,7 +300,7 @@ const spawnSecurity: SecurityRunner = (args, stdin) =>
     // This is invisible to every automated run: CI, vitest and cloud sessions are all TTY-less,
     // which is the one condition under which the un-detached form works. The regression test
     // therefore allocates a pty on purpose — see token-store.pty.test.ts.
-    const child = spawn("security", [...args], SECURITY_SPAWN_OPTIONS);
+    const child = spawn("/usr/bin/security", [...args], SECURITY_SPAWN_OPTIONS);
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");

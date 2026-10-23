@@ -24,6 +24,7 @@ import { closeSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
+import type { Readable } from "node:stream";
 
 import {
   createSender as defaultCreateSender,
@@ -90,6 +91,14 @@ export const HOOK_HARNESSES: readonly HarnessName[] = [
  */
 export const STDIN_READ_TIMEOUT_MS = 3000;
 
+/** Incoming tool inputs/results can exceed the 16 KiB outbound event; allow 1 MiB
+ * (over 60x that cap) before parsing, then discard oversize fires rather than truncate JSON.
+ * All five harness fixture shapes fit; prompts/results are never needed for event identity.
+ */
+export const MAX_HOOK_INPUT_BYTES = 1024 * 1024;
+
+class HookInputTooLarge extends Error {}
+
 /**
  * Runtime available after the hook process starts, before returning control to the harness.
  *
@@ -123,7 +132,12 @@ function configuredHookTimeoutSeconds(harness: HarnessName): number | undefined 
 }
 
 /** Resolve to `fallback` if `promise` does not settle within `ms` (the timer is unref'd). */
-function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  fallback: T,
+  onTimeout: () => void,
+): Promise<T> {
   return new Promise<T>((resolve) => {
     let settled = false;
     const finish = (value: T): void => {
@@ -132,7 +146,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
       clearTimeout(timer);
       resolve(value);
     };
-    const timer = setTimeout(() => finish(fallback), ms);
+    const timer = setTimeout(() => {
+      onTimeout();
+      finish(fallback);
+    }, ms);
     if (typeof timer.unref === "function") timer.unref();
     void promise.then(finish, () => finish(fallback));
   });
@@ -229,19 +246,54 @@ export function runHookCommand(
   return RUNNERS[handler](payload, { sender });
 }
 
-/** Read process.stdin to EOF (the harness pipes a small JSON then closes); never throws. */
-function readStdinDefault(): Promise<string> {
-  return new Promise((resolve) => {
-    if (process.stdin.isTTY) {
-      resolve("");
+/** Bound bytes while streaming, and release the pipe/listeners on overflow or cancellation. */
+export function readBoundedHookStdin(stream: Readable, signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let settled = false;
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      stream.pause();
+      stream.removeListener("data", onData);
+      stream.removeListener("end", onEnd);
+      stream.removeListener("error", onError);
+      stream.removeListener("close", onClose);
+      signal?.removeEventListener("abort", onAbort);
+      if (error) {
+        chunks.length = 0;
+        stream.destroy();
+        reject(error);
+      } else resolve(Buffer.concat(chunks, bytes).toString("utf8"));
+    };
+    const onData = (chunk: Buffer | string): void => {
+      const size = Buffer.byteLength(chunk);
+      if (size > MAX_HOOK_INPUT_BYTES - bytes) {
+        finish(new HookInputTooLarge());
+        return;
+      }
+      bytes += size;
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    };
+    const onEnd = (): void => finish();
+    const onError = (): void => finish(new Error("stdin read failed"));
+    const onClose = (): void => finish(new Error("stdin closed before EOF"));
+    const onAbort = (): void => finish(new Error("stdin read cancelled"));
+    if (signal?.aborted) {
+      onAbort();
       return;
     }
-    let data = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk: string) => (data += chunk));
-    process.stdin.on("end", () => resolve(data));
-    process.stdin.on("error", () => resolve(""));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    stream.on("data", onData);
+    stream.once("end", onEnd);
+    stream.once("error", onError);
+    stream.once("close", onClose);
   });
+}
+
+function readStdinDefault(signal?: AbortSignal): Promise<string> {
+  return process.stdin.isTTY ? Promise.resolve("") : readBoundedHookStdin(process.stdin, signal);
 }
 
 /** Resolve the raw payload: the trailing arg (Codex notify argv) wins, else read stdin. */
@@ -250,7 +302,9 @@ export async function readHookPayload(
   readStdin: () => Promise<string>,
   stdinOnly = false,
 ): Promise<string> {
-  return stdinOnly ? readStdin() : (args[1] ?? (await readStdin()));
+  const raw = stdinOnly ? await readStdin() : (args[1] ?? (await readStdin()));
+  if (Buffer.byteLength(raw, "utf8") > MAX_HOOK_INPUT_BYTES) throw new HookInputTooLarge();
+  return raw;
 }
 
 /**
@@ -288,6 +342,7 @@ export const NOTIFY_STDIN_FILE_ENV = "BIRDYBEEP_CODEX_NOTIFY_STDIN_FILE";
  * spawn throws; an in-line best-effort delivery still beats dropping the event outright.
  */
 export function detachCodexNotifyWorker(payload: string): boolean {
+  if (Buffer.byteLength(payload, "utf8") > MAX_HOOK_INPUT_BYTES) return false;
   if (process.platform === "win32") return false; // no exec-exit reap race on Windows
   let file: string | undefined;
   let fd: number | undefined;
@@ -348,7 +403,7 @@ export interface HookCommandDeps {
   /** Build the sender with the wall-clock budget left for this invocation. */
   createSender?: (baseUrl: string, budgetMs: number) => Sender;
   /** Read the raw payload from stdin (default: real process.stdin). */
-  readStdin?: () => Promise<string>;
+  readStdin?: (signal?: AbortSignal) => Promise<string>;
   /** Hard cap on the payload read (default {@link STDIN_READ_TIMEOUT_MS}); tests shrink it. */
   stdinTimeoutMs?: number;
   /** Injectable monotonic clock for the legacy-hook budget tests. */
@@ -394,6 +449,19 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
         return EXIT.USAGE;
       }
 
+      const drop = (reason: string, detail: string): number => {
+        ctx.io.result({ harness, outcome: "skipped", reason });
+        ctx.io.errline(`birdybeep hook ${harness}: ${detail}. Nothing was sent.`);
+        return EXIT.ERROR;
+      };
+      if (
+        harness !== "copilot" &&
+        ctx.args[1] !== undefined &&
+        Buffer.byteLength(ctx.args[1], "utf8") > MAX_HOOK_INPUT_BYTES
+      ) {
+        return drop("oversize-payload", `payload exceeds ${MAX_HOOK_INPUT_BYTES} bytes`);
+      }
+
       // birdybeep-agent-fuf: a Codex *notify* fire (payload delivered as the trailing argv
       // arg) races `codex exec` exit, which reaps the notify process group. Re-launch the send
       // DETACHED reading the payload on stdin (see {@link detachCodexNotifyWorker}) and return
@@ -432,10 +500,18 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       // stdin falls back after the timeout so the hook ALWAYS returns fast (§9.3). The
       // fallback is `null` rather than "" so a timeout stays distinguishable from a harness
       // that closed stdin without writing — both are drops, and each names itself below.
+      const controller = new AbortController();
+      let readError: unknown;
       const read = await withTimeout<string | null>(
-        readHookPayload(ctx.args, readStdin, harness === "copilot"),
+        readHookPayload(ctx.args, () => readStdin(controller.signal), harness === "copilot").catch(
+          (error: unknown) => {
+            readError = error;
+            return "";
+          },
+        ),
         stdinTimeoutMs,
         null,
+        () => controller.abort(),
       );
 
       // If we ARE the detached notify worker (spawned by detachCodexNotifyWorker), the payload
@@ -461,17 +537,16 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       // into a silent data loss on a loaded machine. Each now names itself on stderr and exits
       // non-zero. The payload itself is never echoed (it holds prompts, commands and tool
       // output); an unparseable one is described by BYTE LENGTH only.
-      const drop = (reason: string, detail: string): number => {
-        ctx.io.result({ harness, outcome: "skipped", reason });
-        ctx.io.errline(`birdybeep hook ${harness}: ${detail}. Nothing was sent.`);
-        return EXIT.ERROR;
-      };
       if (read === null) {
         return drop(
           "stdin-timeout",
           `timed out after ${stdinTimeoutMs}ms waiting for the payload on stdin`,
         );
       }
+      if (readError instanceof HookInputTooLarge) {
+        return drop("oversize-payload", `payload exceeds ${MAX_HOOK_INPUT_BYTES} bytes`);
+      }
+      if (readError !== undefined) return drop("input-read-failed", "could not read the payload");
       const raw = read;
       if (raw.trim().length === 0) {
         return drop("empty-payload", "the payload was empty");
@@ -480,7 +555,10 @@ export function createHookCommand(deps: HookCommandDeps = {}): Command {
       try {
         payload = JSON.parse(raw);
       } catch {
-        return drop("invalid-json", `the ${raw.length}-byte payload is not valid JSON`);
+        return drop(
+          "invalid-json",
+          `the ${Buffer.byteLength(raw, "utf8")}-byte payload is not valid JSON`,
+        );
       }
 
       // A foreign payload is handled by the harness it actually came from (see
