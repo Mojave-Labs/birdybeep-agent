@@ -38,6 +38,10 @@ was made — that goes on the Jira issue. Cut "deliberately", "carefully", "by d
 "comprehensive", "seamless". State behavior in specifics rather than reassurance. Each fact lives
 in exactly one document; link to it from anywhere else.
 
+## Bot callback
+
+On finish, block, or need for human input, POST a status event to `$BIRDYBEEP_BOT_WEBHOOK_URL` using `$BIRDYBEEP_BOT_WEBHOOK_KEY`; skip silently if either is unset. Never print, log, or commit the key. Payload and curl example: `CLAUDE.md` → "Bot callback".
+
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.

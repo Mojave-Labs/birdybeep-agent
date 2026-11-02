@@ -67,6 +67,33 @@ https://mojavelabs.atlassian.net/jira/software/projects/BIRD/boards/103
 
 
 
+## Bot callback
+
+When a session finishes, gets blocked, or needs input from a human, POST an event to the BirdyBeep coordinator bot.
+
+| Item | Value |
+|---|---|
+| URL | `$BIRDYBEEP_BOT_WEBHOOK_URL` |
+| Headers | `Authorization: Bearer $BIRDYBEEP_BOT_WEBHOOK_KEY`, `Content-Type: application/json` |
+| `threadId` | T3 thread id, if known |
+| `status` | `finished`, `blocked`, or `needs_input` |
+| `summary` | One line |
+| `prUrl` | Pull request URL, if any |
+
+```bash
+[ -n "$BIRDYBEEP_BOT_WEBHOOK_URL" ] && [ -n "$BIRDYBEEP_BOT_WEBHOOK_KEY" ] && \
+  curl -s -o /dev/null --max-time 10 -X POST "$BIRDYBEEP_BOT_WEBHOOK_URL" \
+    -H "Authorization: Bearer $BIRDYBEEP_BOT_WEBHOOK_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"threadId":"<thread-id>","status":"finished","summary":"<one line>","prUrl":"<pr-url>"}' \
+    >/dev/null 2>&1 || true
+```
+
+- Read both values from the environment only. Never hardcode the URL, and never print, log, echo, or commit the key.
+- If either variable is unset, skip the callback silently and continue.
+- Failures and timeouts are ignored; the callback must not block or fail the task.
+- Omit `threadId` or `prUrl` when there is no value. Keep `summary` free of double quotes and newlines.
+
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts (`cp -f`, `mv -f`, `rm -f`, `rm -rf`, `ssh -o BatchMode=yes`, `apt-get -y`). Shell `cp`/`mv`/`rm` may be aliased to `-i` on some systems and will hang an agent forever.
