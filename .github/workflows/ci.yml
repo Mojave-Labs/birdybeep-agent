@@ -5,10 +5,11 @@ on:
     branches: [main]
   pull_request:
 
-# Newer pushes to the same ref cancel in-flight runs.
+# Newer pushes to the same PR cancel in-flight runs. Runs on main always finish so they save
+# the dependency and Turbo caches that PR runs restore from.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -24,6 +25,7 @@ jobs:
   # full gate (lint + typecheck + unit/snapshot tests + build + format) must be
   # green everywhere. The adapter E2E suite (A-TEST-HARNESS) and config-snapshot
   # tests plug into `pnpm test` as they land; this matrix already runs them.
+  # Windows is the slowest leg, so it runs on pushes to main only, not on pull requests.
   verify:
     name: verify (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -31,7 +33,7 @@ jobs:
       # Don't cancel the other OSes when one fails — we want to see which OS broke.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
@@ -79,6 +81,15 @@ jobs:
       # + a pty, so it cannot run here. Tolerate exit 2 (SKIP) exactly as above.
       - name: pairing confirm gate — headless branches (live-e2e)
         run: node scripts/live-e2e-pair-headless.mjs || [ "$?" -eq 2 ]
+
+      # Seed the Turbo cache for PR runs (PR caches cannot read each other, only main's).
+      # Runs even when a check above failed, so one red main run does not leave PRs cold.
+      - name: Save Turbo cache (main only)
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo
+          key: turbo-${{ github.job }}-${{ runner.os }}-${{ github.sha }}
 
   # A PR that changes a publishable package must carry a changeset, so versions
   # never drift out of someone's head. Runs on PRs only (on main the changesets

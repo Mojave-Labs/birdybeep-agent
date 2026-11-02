@@ -1,7 +1,9 @@
 // BirdyBeep pre-push gate (A-PREPUSH) — fast local feedback that mirrors CI.
 //
-// Runs the always-on gates (changeset status + lint + typecheck + unit + format:check,
-// exactly what CI enforces) and hard-blocks the push on any failure. The config-snapshot and adapter
+// Runs changeset status, lint + typecheck + tests for the packages affected by the push
+// (`turbo --affected`, diffed against main), and format:check, and hard-blocks the push on any
+// failure. BIRDYBEEP_PREPUSH_FULL=1 runs every package plus the scripts/ tests, as CI does.
+// `git push --no-verify` skips the hook. The config-snapshot and adapter
 // -smoke suites ride INSIDE `pnpm test` as they land (A-TEST-HARNESS / adapter
 // tickets), so they are gated automatically without a separate step here — no
 // hard-gating on suites that don't exist yet. CI + required status checks remain the
@@ -115,15 +117,22 @@ if (branch === baseBranch || branch.startsWith("changeset-release/")) {
   }
 }
 
-// Always-on gates — mirror CI. Run on EVERY push.
-console.error(`${DIM}birdybeep pre-push → lint + typecheck + unit + format (mirrors CI)…${RST}`);
+// Fast tier: only packages affected by the diff against main (turbo resolves dependents through
+// the workspace graph, and a change to a global input such as tsconfig.base.json affects all).
+// CI still runs everything on every PR; BIRDYBEEP_PREPUSH_FULL=1 reproduces that locally.
+const full = process.env.BIRDYBEEP_PREPUSH_FULL === "1";
+console.error(
+  `${DIM}birdybeep pre-push → lint + typecheck + unit + format (${full ? "all packages" : "affected packages"})…${RST}`,
+);
 try {
-  execSync("pnpm -w test:scripts", { stdio: "inherit" });
-  execSync("pnpm -w turbo run lint typecheck test", { stdio: "inherit" });
+  if (full) execSync("pnpm -w test:scripts", { stdio: "inherit" });
+  execSync(`pnpm -w turbo run lint typecheck test${full ? "" : " --affected"}`, {
+    stdio: "inherit",
+  });
 } catch {
   block(
-    `\n${RED}${B}✗ push blocked${RST} — lint/typecheck/unit failed (these mirror the CI gates).\n` +
-      `  Fix the failures above, then push again. Do not bypass with --no-verify.`,
+    `\n${RED}${B}✗ push blocked${RST} — lint/typecheck/unit failed.\n` +
+      `  Fix the failures above, then push again. CI runs the full suite; ${B}BIRDYBEEP_PREPUSH_FULL=1${RST} runs it here.`,
   );
 }
 try {
