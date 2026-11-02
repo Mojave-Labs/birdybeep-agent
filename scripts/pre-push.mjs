@@ -2,7 +2,8 @@
 //
 // Runs changeset status, lint + typecheck + tests for the packages affected by the push
 // (`turbo --affected`, diffed against main), and format:check, and hard-blocks the push on any
-// failure. BIRDYBEEP_PREPUSH_FULL=1 runs every package plus the scripts/ tests, as CI does.
+// failure. The scripts/ tests always run (about a second). BIRDYBEEP_PREPUSH_FULL=1 also runs
+// every package, as CI does.
 // `git push --no-verify` skips the hook. The config-snapshot and adapter
 // -smoke suites ride INSIDE `pnpm test` as they land (A-TEST-HARNESS / adapter
 // tickets), so they are gated automatically without a separate step here — no
@@ -121,13 +122,18 @@ if (branch === baseBranch || branch.startsWith("changeset-release/")) {
 // the workspace graph, and a change to a global input such as tsconfig.base.json affects all).
 // CI still runs everything on every PR; BIRDYBEEP_PREPUSH_FULL=1 reproduces that locally.
 const full = process.env.BIRDYBEEP_PREPUSH_FULL === "1";
+// Diff against the remote base, not local main: pushing from main itself would otherwise compare
+// HEAD with itself and select nothing. If the remote base is unknown, check every package.
+const remoteBase = probe(`git rev-parse --verify --quiet refs/remotes/origin/${baseBranch}`);
+const affectedOnly = !full && remoteBase !== null;
 console.error(
-  `${DIM}birdybeep pre-push → lint + typecheck + unit + format (${full ? "all packages" : "affected packages"})…${RST}`,
+  `${DIM}birdybeep pre-push → lint + typecheck + unit + format (${affectedOnly ? "affected packages" : "all packages"})…${RST}`,
 );
 try {
-  if (full) execSync("pnpm -w test:scripts", { stdio: "inherit" });
-  execSync(`pnpm -w turbo run lint typecheck test${full ? "" : " --affected"}`, {
+  execSync("pnpm -w test:scripts", { stdio: "inherit" });
+  execSync(`pnpm -w turbo run lint typecheck test${affectedOnly ? " --affected" : ""}`, {
     stdio: "inherit",
+    env: { ...process.env, TURBO_SCM_BASE: `origin/${baseBranch}`, TURBO_SCM_HEAD: "HEAD" },
   });
 } catch {
   block(
