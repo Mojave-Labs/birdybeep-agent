@@ -37,13 +37,15 @@ test(
           2,
         )}\n`,
       );
-      const packed = JSON.parse(
+      const packedOutput = JSON.parse(
         npmPack(["pack", "--json", "--pack-destination", fixture], {
           cwd: fixture,
           encoding: "utf8",
         }),
       );
-      const tarball = join(fixture, packed[0].filename);
+      // npm 10 prints an array; newer npm prints an object keyed by package name.
+      const packed = Array.isArray(packedOutput) ? packedOutput[0] : Object.values(packedOutput)[0];
+      const tarball = join(fixture, packed.filename);
       const result = spawnSync(
         process.execPath,
         [join(ROOT, "scripts", "smoke-test.mjs"), "--package-spec", tarball, "--skip-build"],

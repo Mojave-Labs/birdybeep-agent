@@ -630,8 +630,10 @@ pnpm turbo lint typecheck test   # includes adapter snapshot tests
 pnpm test:e2e                    # real install into a temp HOME + fire harness events
 ```
 
-The pre-push hook runs lint, typecheck, unit, snapshot, and adapter smoke tests. CI runs the full
-matrix on macOS, Linux, and Windows.
+The pre-push hook runs lint, typecheck, and tests for the packages affected by your diff against
+`origin/main`, plus the changeset and format checks. `BIRDYBEEP_PREPUSH_FULL=1 git push` runs every package.
+Pull-request CI runs the full suite on macOS and Linux; Windows also runs on `main`, on the Version
+Packages PR, and on manual runs (`workflow_dispatch`).
 
 ### Cross-platform notes
 

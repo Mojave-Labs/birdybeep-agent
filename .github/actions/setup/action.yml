@@ -1,5 +1,5 @@
 name: Setup workspace
-description: Install pnpm + Node, restore the Turbo cache, and install dependencies with a frozen lockfile.
+description: Install pnpm + Node, restore the pnpm store and Turbo caches, and install dependencies with a frozen lockfile.
 
 # Mirrors the private product repo's .github/actions/setup so both halves of
 # BirdyBeep set up identically. Cross-OS safe: pnpm/action-setup + setup-node and
@@ -20,16 +20,50 @@ runs:
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: "22"
-        cache: pnpm
+
+    # Dependency cache. PR caches are only readable by that PR's own ref, so the cache a PR
+    # restores has to be saved from main. Saved right after install on pushes to main (not in a
+    # post step), so a later test failure or a cancelled run cannot skip the save. PRs restore
+    # only; the restore-key prefix still finds main's newest store when the lockfile changed.
+    - name: Locate pnpm store
+      id: pnpm-store
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore pnpm store
+      id: pnpm-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          pnpm-store-${{ runner.os }}-
 
     # Reproducible install — fails if pnpm-lock.yaml is out of sync.
     - name: Install dependencies
       shell: bash
       run: pnpm install --frozen-lockfile
 
-    # Turbo's local cache, restored across runs so unchanged tasks are skipped.
+    # The store is restored from the previous lockfile's entry and installed on top, so drop
+    # packages nothing references any more before saving, or the entry grows with every bump.
+    - name: Prune pnpm store (main only)
+      if: github.ref == 'refs/heads/main' && steps.pnpm-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: pnpm store prune
+
+    - name: Save pnpm store (main only)
+      if: github.ref == 'refs/heads/main' && steps.pnpm-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+    # Turbo's local cache. Restore only: the cache holds task results, which exist only after the
+    # caller's checks have run, so ci.yml saves it at the end of the job on main. PRs fall back
+    # to the newest main entry through the restore-key prefix. The key must match the save step
+    # in ci.yml.
     - name: Restore Turbo cache
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: .turbo
         key: turbo-${{ github.job }}-${{ runner.os }}-${{ github.sha }}
