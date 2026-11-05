@@ -69,30 +69,25 @@ https://mojavelabs.atlassian.net/jira/software/projects/BIRD/boards/103
 
 ## Bot callback
 
-When a session finishes, gets blocked, or needs input from a human, POST an event to the BirdyBeep coordinator bot.
-
-| Item | Value |
-|---|---|
-| URL | `$BIRDYBEEP_BOT_WEBHOOK_URL` |
-| Headers | `Authorization: Bearer $BIRDYBEEP_BOT_WEBHOOK_KEY`, `Content-Type: application/json` |
-| `threadId` | T3 thread id, if known |
-| `status` | `finished`, `blocked`, or `needs_input` |
-| `summary` | One line |
-| `prUrl` | Pull request URL, if any |
+Send one event when the session finishes, is blocked, or needs input from a human:
 
 ```bash
-[ -n "$BIRDYBEEP_BOT_WEBHOOK_URL" ] && [ -n "$BIRDYBEEP_BOT_WEBHOOK_KEY" ] && \
-  curl -s -o /dev/null --max-time 10 -X POST "$BIRDYBEEP_BOT_WEBHOOK_URL" \
-    -H "Authorization: Bearer $BIRDYBEEP_BOT_WEBHOOK_KEY" \
-    -H "Content-Type: application/json" \
-    -d '{"threadId":"<thread-id>","status":"finished","summary":"<one line>","prUrl":"<pr-url>"}' \
-    >/dev/null 2>&1 || true
+~/.local/bin/t3-callback BIRDYBEEP '{"event":"done","ticket":"BIRD-123","thread":"<t3-thread-id>","branch":"feature/example","pr":101,"head":"abc1234","summary":"One-line outcome"}'
 ```
 
-- Read both values from the environment only. Never hardcode the URL, and never print, log, echo, or commit the key.
-- If either variable is unset, skip the callback silently and continue.
-- Failures and timeouts are ignored; the callback must not block or fail the task.
-- Omit `threadId` or `prUrl` when there is no value. Keep `summary` free of double quotes and newlines.
+| Field | Value |
+|---|---|
+| `event` | `done`, `blocked`, `needs-input`, or `error` |
+| `ticket` | Jira key |
+| `thread` | T3 thread id |
+| `branch` | Working branch |
+| `pr` | Pull request number, or `null` |
+| `head` | Short commit SHA |
+| `summary` | One line |
+
+- Use the helper only; do not call the webhook directly.
+- The helper skips silently when its environment is not configured and always exits 0.
+- Never put secrets in the payload.
 
 ## Non-Interactive Shell Commands
 

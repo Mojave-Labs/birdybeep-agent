@@ -40,7 +40,7 @@ in exactly one document; link to it from anywhere else.
 
 ## Bot callback
 
-On finish, block, or need for human input, POST a status event to `$BIRDYBEEP_BOT_WEBHOOK_URL` using `$BIRDYBEEP_BOT_WEBHOOK_KEY`; skip silently if either is unset. Never print, log, or commit the key. Payload and curl example: `CLAUDE.md` → "Bot callback".
+On finish, block, or need for human input, send one event with `~/.local/bin/t3-callback`. Payload and example: `CLAUDE.md` → "Bot callback".
 
 ## Non-Interactive Shell Commands
 
