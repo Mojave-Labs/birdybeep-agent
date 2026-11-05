@@ -1,7 +1,7 @@
 // BirdyBeep pre-push gate (A-PREPUSH) — fast local feedback that mirrors CI.
 //
 // Runs changeset status, lint + typecheck + tests for the packages affected by the push
-// (`turbo --affected`, diffed against main), and format:check, and hard-blocks the push on any
+// (`turbo --affected`, diffed against origin/main), and format:check, and hard-blocks the push on any
 // failure. The scripts/ tests always run (about a second). BIRDYBEEP_PREPUSH_FULL=1 also runs
 // every package, as CI does.
 // `git push --no-verify` skips the hook. The config-snapshot and adapter
@@ -118,9 +118,10 @@ if (branch === baseBranch || branch.startsWith("changeset-release/")) {
   }
 }
 
-// Fast tier: only packages affected by the diff against main (turbo resolves dependents through
+// Fast tier: only packages affected by the diff against origin/main (turbo resolves dependents through
 // the workspace graph, and a change to a global input such as tsconfig.base.json affects all).
-// CI still runs everything on every PR; BIRDYBEEP_PREPUSH_FULL=1 reproduces that locally.
+// CI runs every package (PRs: macOS + Linux; main and the Version PR: + Windows);
+// BIRDYBEEP_PREPUSH_FULL=1 runs every package locally.
 const full = process.env.BIRDYBEEP_PREPUSH_FULL === "1";
 // Diff against the remote base, not local main: pushing from main itself would otherwise compare
 // HEAD with itself and select nothing. If the remote base is unknown, check every package.

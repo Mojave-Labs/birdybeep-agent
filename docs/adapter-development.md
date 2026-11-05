@@ -631,8 +631,9 @@ pnpm test:e2e                    # real install into a temp HOME + fire harness 
 ```
 
 The pre-push hook runs lint, typecheck, and tests for the packages affected by your diff against
-`main`, plus the changeset and format checks. `BIRDYBEEP_PREPUSH_FULL=1 git push` runs every package.
-Pull-request CI runs the full suite on macOS and Linux; Windows runs on pushes to `main`.
+`origin/main`, plus the changeset and format checks. `BIRDYBEEP_PREPUSH_FULL=1 git push` runs every package.
+Pull-request CI runs the full suite on macOS and Linux; Windows also runs on `main`, on the Version
+Packages PR, and on manual runs (`workflow_dispatch`).
 
 ### Cross-platform notes
 

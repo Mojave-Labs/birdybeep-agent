@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A manual run gets all three OSes, so a Windows-sensitive branch can be checked before merge.
+  workflow_dispatch:
 
 # Newer pushes to the same PR cancel in-flight runs. Runs on main always finish so they save
 # the dependency and Turbo caches that PR runs restore from.
@@ -25,7 +27,9 @@ jobs:
   # full gate (lint + typecheck + unit/snapshot tests + build + format) must be
   # green everywhere. The adapter E2E suite (A-TEST-HARNESS) and config-snapshot
   # tests plug into `pnpm test` as they land; this matrix already runs them.
-  # Windows is the slowest leg, so it runs on pushes to main only, not on pull requests.
+  # Windows is the slowest leg, so pull requests skip it. It still runs on main, on manual runs,
+  # and on the Version Packages PR (changeset-release/*), whose merge publishes without waiting
+  # for main's CI.
   verify:
     name: verify (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -33,7 +37,7 @@ jobs:
       # Don't cancel the other OSes when one fails — we want to see which OS broke.
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
+        os: ${{ fromJSON(github.event_name == 'pull_request' && !startsWith(github.head_ref, 'changeset-release/') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
@@ -84,6 +88,7 @@ jobs:
 
       # Seed the Turbo cache for PR runs (PR caches cannot read each other, only main's).
       # Runs even when a check above failed, so one red main run does not leave PRs cold.
+      # The key must match the restore key in .github/actions/setup/action.yml.
       - name: Save Turbo cache (main only)
         if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
