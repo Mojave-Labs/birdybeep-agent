@@ -16,6 +16,9 @@ pnpm build
 node scripts/pre-push.mjs
 ```
 
+`pnpm install` installs the pre-push hook. It checks only the packages your branch changes
+(`BIRDYBEEP_PREPUSH_FULL=1` checks all of them), and `git push --no-verify` skips it.
+
 If a publishable package changes, add a user-facing Changeset with `pnpm changeset`.
 
 ## Adapter changes require real evidence

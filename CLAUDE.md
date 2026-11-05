@@ -28,7 +28,7 @@ This package edits real config files in users' home directories and hooks into r
 - Idempotency is tested: install twice → identical result; install over foreign config → preserved.
 
 ### Cross-platform
-- The CLI must work on **macOS, Linux, and Windows**. CI runs the test matrix on all three (`A-CI`). Don't assume POSIX paths, `$HOME`, or a keychain — use the `agent-core` token store (OS keychain with strict-perm file fallback) and test the fallback.
+- The CLI must work on **macOS, Linux, and Windows**. CI (`A-CI`) runs the test matrix on PRs: macOS + Linux; `main` and the Version PR: + Windows. Don't assume POSIX paths, `$HOME`, or a keychain — use the `agent-core` token store (OS keychain with strict-perm file fallback) and test the fallback.
 
 ### Tokens & privacy (tested invariants)
 - **Never** write a durable token into a repo-local file or commit one. Tokens live in the OS keychain or a strict-perm file in the user config dir only.
@@ -41,7 +41,7 @@ This package edits real config files in users' home directories and hooks into r
 
 ## 🔒 Enforcement
 - **Pre-push hook** (`A-PREPUSH`) runs lint + typecheck + unit + snapshot + adapter smoke and **blocks the push** on failure.
-- **CI** (`A-CI`) re-runs the full matrix and blocks merge. Never bypass.
+- **CI** (`A-CI`) re-runs the suite and blocks merge. PRs: macOS + Linux; `main` and the Version PR: + Windows. Never bypass.
 
 ## Jira workflow
 
