@@ -64,29 +64,33 @@ https://mojavelabs.atlassian.net/jira/software/projects/BIRD/boards/103
 2. Run the quality gates and real-product checks for every changed surface.
 3. Commit, integrate current remote changes, and push with the normal pre-push hook. Never bypass or weaken a gate.
 4. Verify the commits are on the remote and the working tree is clean; then update the Jira issue and hand off any remaining acceptance.
-
-
+5. Send the bot callback (see "Bot callback") with the pushed `head`.
 
 ## Bot callback
 
-Send one event when the session finishes, is blocked, or needs input from a human:
+Send one event per stop point: when the session finishes, is blocked, needs input from a human, or hits an unrecoverable error.
 
 ```bash
-~/.local/bin/t3-callback BIRDYBEEP '{"event":"done","ticket":"BIRD-123","thread":"<t3-thread-id>","branch":"feature/example","pr":101,"head":"abc1234","summary":"One-line outcome"}'
+[ -x ~/.local/bin/t3-callback ] && ~/.local/bin/t3-callback BIRDYBEEP "$(jq -nc \
+  --arg event done --arg ticket BIRD-123 --arg thread "<t3-thread-id>" \
+  --arg branch "$(git branch --show-current)" --argjson pr 101 \
+  --arg head "$(git rev-parse --short HEAD)" --arg summary "One-line outcome" \
+  '{$event,$ticket,$thread,$branch,pr:$pr,$head,$summary}')"
 ```
 
 | Field | Value |
 |---|---|
-| `event` | `done`, `blocked`, `needs-input`, or `error` |
-| `ticket` | Jira key |
-| `thread` | T3 thread id |
+| `event` | `done`, `blocked`, `needs-input`, or `error` (unrecoverable error) |
+| `ticket` | Jira key, or `null` (`--argjson ticket null`) |
+| `thread` | The T3 thread id if the launch prompt or T3 tools give it; otherwise `null`. Don't make one up. |
 | `branch` | Working branch |
 | `pr` | Pull request number, or `null` |
-| `head` | Short commit SHA |
+| `head` | `git rev-parse --short HEAD` |
 | `summary` | One line |
 
-- Use the helper only; do not call the webhook directly.
-- The helper skips silently when its environment is not configured and always exits 0.
+- Build the payload with `jq --arg` as shown; `summary` may then contain apostrophes, quotes, or newlines.
+- Use the helper only; do not call the webhook directly. Skip if the helper is absent.
+- The helper skips silently when its environment is not configured and exits 0.
 - Never put secrets in the payload.
 
 ## Non-Interactive Shell Commands

@@ -26,6 +26,7 @@ https://mojavelabs.atlassian.net/jira/software/projects/BIRD/boards/103
 2. Run the quality gates and real-product checks for every changed surface.
 3. Commit, integrate current remote changes, and push with the normal pre-push hook. Never bypass or weaken a gate.
 4. Verify the commits are on the remote and the working tree is clean; then update the Jira issue and hand off any remaining acceptance.
+5. Send the bot callback (see "Bot callback" in `CLAUDE.md`) with the pushed `head`.
 
 ## ✍️ Writing style for user-facing text
 
@@ -40,7 +41,7 @@ in exactly one document; link to it from anywhere else.
 
 ## Bot callback
 
-On finish, block, or need for human input, send one event with `~/.local/bin/t3-callback`. Payload and example: `CLAUDE.md` → "Bot callback".
+On finish, block, need for human input, or unrecoverable error, send one event per stop point with `~/.local/bin/t3-callback`. Payload and example: `CLAUDE.md` → "Bot callback".
 
 ## Non-Interactive Shell Commands
 
